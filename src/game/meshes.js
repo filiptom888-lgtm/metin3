@@ -1094,6 +1094,13 @@ export function makeNpcMesh(npc) {
   if (role === "blacksmith") {
     // leather apron
     addPart(hips, new THREE.BoxGeometry(0.5, 0.55, 0.08), trim, 0, 0.2, 0.2);
+    // floor anvil — readable from the plaza
+    const anvil = new THREE.Group();
+    anvil.position.set(0.85, 0, 0.35);
+    root.add(anvil);
+    addPart(anvil, new THREE.BoxGeometry(0.55, 0.22, 0.28), accent, 0, 0.45, 0);
+    addPart(anvil, new THREE.BoxGeometry(0.35, 0.35, 0.22), mat("#3a3a40", { metalness: 0.6 }), 0, 0.22, 0);
+    addPart(anvil, new THREE.BoxGeometry(0.5, 0.08, 0.4), mat("#2a2a30"), 0, 0.04, 0);
   }
   if (role === "shop") {
     // goods pack
