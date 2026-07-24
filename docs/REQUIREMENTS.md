@@ -28,9 +28,9 @@ Status: `done` | `phase1` | `later`
 | 21 | Drop system | phase1 | DropService |
 | 22 | Yang economy | phase1 | |
 | 23–24 | Trade / private shops | later | |
-| 25–26 | Party / Guild | later | schema stubs |
+| 25–26 | Party / Guild | phase1 party / guild later | PartyService invite (4 max); guild later |
 | 27–29 | PvP / Karma / Kingdom PvP | later | kingdom select in phase1 |
-| 30–31 | Dungeons / Demon Tower | later | |
+| 30–31 | Dungeons / Demon Tower | phase1 | Demon Tower 7 floors + party enter |
 | 32–33 | Fishing / Mining | later | |
 | 34 | Potions | phase1 | |
 | 35 | Warehouse | later | NPC stub |

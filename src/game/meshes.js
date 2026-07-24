@@ -1153,6 +1153,133 @@ export function animateNpc(mesh, dt) {
   }
 }
 
+/** City entrance — tall demonic tower players can click / E */
+export function makeDemonTowerMesh() {
+  const root = new THREE.Group();
+  const stone = mat("#3a2a28", { roughness: 0.9 });
+  const dark = mat("#1a1010", { roughness: 0.85 });
+  const glow = mat("#8b1e1e", { emissive: "#8b1e1e", emissiveIntensity: 0.55, metalness: 0.3 });
+
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.8, 1.2, 8), stone);
+  base.position.y = 0.6;
+  base.castShadow = true;
+  base.receiveShadow = true;
+  root.add(base);
+
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.9, 8.5, 8), dark);
+  shaft.position.y = 5.4;
+  shaft.castShadow = true;
+  root.add(shaft);
+
+  const mid = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.6, 1.4, 8), stone);
+  mid.position.y = 10.2;
+  mid.castShadow = true;
+  root.add(mid);
+
+  const top = new THREE.Mesh(new THREE.ConeGeometry(2.2, 3.2, 8), glow);
+  top.position.y = 12.5;
+  top.castShadow = true;
+  root.add(top);
+
+  // horns
+  for (const side of [-1, 1]) {
+    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.25, 1.8, 5), glow);
+    horn.position.set(side * 1.3, 11.2, 0.2);
+    horn.rotation.z = side * 0.55;
+    root.add(horn);
+  }
+
+  // door
+  const door = new THREE.Mesh(
+    new THREE.BoxGeometry(1.1, 1.8, 0.2),
+    new THREE.MeshStandardMaterial({ color: "#0a0606", emissive: "#4a1010", emissiveIntensity: 0.4 })
+  );
+  door.position.set(0, 1.1, 2.35);
+  root.add(door);
+
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(2.6, 3.1, 32),
+    new THREE.MeshBasicMaterial({ color: "#c43c2e", transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.08;
+  root.add(ring);
+
+  const light = new THREE.PointLight("#c43c2e", 1.4, 16);
+  light.position.set(0, 6, 0);
+  root.add(light);
+
+  // label sprite
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(20, 8, 216, 48);
+  ctx.font = "bold 22px Cinzel, serif";
+  ctx.fillStyle = "#ff6a4a";
+  ctx.textAlign = "center";
+  ctx.fillText("Demon Tower", 128, 28);
+  ctx.font = "13px Noto Sans KR, sans-serif";
+  ctx.fillStyle = "#e8d48b";
+  ctx.fillText("Click / E — Enter", 128, 48);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  sprite.position.y = 14.2;
+  sprite.scale.set(4.2, 1.05, 1);
+  root.add(sprite);
+
+  root.userData = { kind: "demon_tower", ring, top, interactive: true };
+  return root;
+}
+
+/** Arena platform for Demon Tower floors */
+export function makeDemonArenaMesh() {
+  const root = new THREE.Group();
+  const floor = new THREE.Mesh(
+    new THREE.CylinderGeometry(16, 16, 0.4, 40),
+    new THREE.MeshStandardMaterial({ color: "#2a1818", roughness: 0.92 })
+  );
+  floor.position.y = 0.15;
+  floor.receiveShadow = true;
+  root.add(floor);
+
+  const rim = new THREE.Mesh(
+    new THREE.TorusGeometry(16, 0.35, 8, 48),
+    new THREE.MeshStandardMaterial({ color: "#8b1e1e", emissive: "#4a1010", emissiveIntensity: 0.4 })
+  );
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = 0.4;
+  root.add(rim);
+
+  for (let i = 0; i < 8; i++) {
+    const ang = (i / 8) * Math.PI * 2;
+    const pillar = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.35, 0.45, 4.5, 6),
+      mat("#3a2220", { roughness: 0.9 })
+    );
+    pillar.position.set(Math.cos(ang) * 14.5, 2.3, Math.sin(ang) * 14.5);
+    pillar.castShadow = true;
+    root.add(pillar);
+    const flame = new THREE.Mesh(
+      new THREE.SphereGeometry(0.35, 8, 8),
+      new THREE.MeshBasicMaterial({ color: "#ff4422", transparent: true, opacity: 0.8 })
+    );
+    flame.position.set(Math.cos(ang) * 14.5, 4.7, Math.sin(ang) * 14.5);
+    root.add(flame);
+  }
+
+  const portal = new THREE.Mesh(
+    new THREE.TorusGeometry(1.4, 0.18, 10, 28),
+    new THREE.MeshBasicMaterial({ color: "#6ec8ff", transparent: true, opacity: 0.75 })
+  );
+  portal.position.set(0, 1.6, -13);
+  root.add(portal);
+  root.userData = { portal, kind: "demon_arena" };
+  return root;
+}
+
 export function makeBoltMesh(color = "#e8d48b") {
   const mesh = new THREE.Mesh(
     new THREE.SphereGeometry(0.2, 8, 8),

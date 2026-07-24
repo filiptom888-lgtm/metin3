@@ -9,11 +9,14 @@ import { SkillService } from "./services/SkillService.js";
 import { QuestService } from "./services/QuestService.js";
 import { NpcService } from "./services/NpcService.js";
 import { ItemService } from "./services/ItemService.js";
+import { PartyService } from "./services/PartyService.js";
+import { DungeonService } from "./services/DungeonService.js";
 import { KINGDOMS, SPECS } from "./data/meta.js";
 import { derivedStats, xpForLevel } from "./game/character.js";
 import { EQUIP_SLOTS as SLOTS, RARITY_COLOR, ITEM_TEMPLATES } from "./data/items.js";
 import { SHOP_CATALOG } from "./data/npcs.js";
 import { UPGRADE_TABLE } from "./data/upgrades.js";
+import { floorConfig } from "./data/demonTower.js";
 import { audio } from "./audio/Audio.js";
 
 const $ = (s) => document.querySelector(s);
@@ -515,19 +518,141 @@ function togglePanel(name) {
     menu: "#panel-menu",
     npc: "#panel-npc",
     quests: "#panel-quests",
+    party: "#panel-party",
+    tower: "#panel-tower",
+    dungeon: "#panel-dungeon",
   };
   const el = $(map[name]);
   if (!el) return;
   const open = el.hidden;
   Object.values(map).forEach((sel) => {
-    $(sel).hidden = true;
+    const node = $(sel);
+    if (node) node.hidden = true;
   });
   if (open) {
     el.hidden = false;
     if (name === "char") renderCharacterPanel(game.character);
     if (name === "inv") renderInventory(game.character);
     if (name === "quests") renderQuests(game.character);
+    if (name === "party") renderPartyPanel();
+    if (name === "tower") renderTowerPanel();
+    if (name === "dungeon") renderDungeonPanel();
   }
+}
+
+function renderPartyPanel() {
+  const body = $("#party-body");
+  if (!body) return;
+  body.innerHTML = "";
+  const party = PartyService.party;
+  const banner = $("#party-invite-banner");
+  if (PartyService.pendingInvite) {
+    banner.hidden = false;
+    $("#party-invite-text").textContent = `${PartyService.pendingInvite.fromName} invited you`;
+  } else {
+    banner.hidden = true;
+  }
+
+  if (!party) {
+    body.innerHTML = `<p class="sub">No party. Invite nearby players below.</p>`;
+  } else {
+    for (const m of party.members) {
+      const row = document.createElement("div");
+      row.className = "party-member";
+      const lead = m.id === party.leaderId ? ' <span class="leader">★</span>' : "";
+      row.innerHTML = `<span>${m.name}${lead}</span><small>Lv.${m.level || 1}</small>`;
+      body.appendChild(row);
+    }
+    const leave = document.createElement("button");
+    leave.type = "button";
+    leave.className = "btn btn-ghost-full";
+    leave.textContent = "Leave party";
+    leave.onclick = () => {
+      game.leaveParty();
+      renderPartyPanel();
+    };
+    body.appendChild(leave);
+  }
+
+  const nearby = [...(game.remotes?.values() || [])]
+    .map((r) => r.target || r.state)
+    .filter(Boolean);
+  // Also use net peers
+  const peers = [];
+  if (net.peers) {
+    for (const p of net.peers.values()) {
+      if (p.id !== game.local?.id) peers.push(p);
+    }
+  }
+  const list = peers.length ? peers : nearby;
+  if (list.length) {
+    const h = document.createElement("p");
+    h.className = "field-label";
+    h.textContent = "Nearby players";
+    body.appendChild(h);
+    for (const p of list) {
+      if (party?.members.some((m) => m.id === p.id)) continue;
+      const row = document.createElement("div");
+      row.className = "party-member";
+      row.innerHTML = `<span>${p.name || "Player"}</span>`;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn-mini";
+      btn.textContent = "Invite";
+      btn.onclick = () => {
+        game.inviteToParty(p.id);
+        renderPartyPanel();
+      };
+      row.appendChild(btn);
+      body.appendChild(row);
+    }
+  }
+}
+
+function renderTowerPanel() {
+  const info = $("#tower-party-info");
+  const party = PartyService.party;
+  if (info) {
+    info.textContent = party
+      ? `Party ready · ${party.members.length} members · leader starts the run`
+      : "Solo run — or form a party (P) first";
+  }
+  const partyBtn = $("#btn-dt-party");
+  if (partyBtn) partyBtn.disabled = !party || !PartyService.isLeader(game.local?.id);
+}
+
+function renderDungeonPanel() {
+  const run = DungeonService.run;
+  const title = $("#dungeon-title");
+  const status = $("#dungeon-status");
+  const next = $("#btn-dt-next");
+  if (!run) return;
+  const cfg = floorConfig(run.floor);
+  if (title) title.textContent = cfg?.name || `Floor ${run.floor}`;
+  if (status) {
+    status.textContent = run.cleared
+      ? run.floor >= 7
+        ? "Tower cleared! Claim glory and leave."
+        : "Floor cleared — ascend when ready."
+      : "Defeat all demons on this floor.";
+  }
+  if (next) {
+    next.textContent = run.floor >= 7 && run.cleared ? "Finish tower" : "Next floor";
+    next.disabled = !run.cleared;
+  }
+}
+
+function updateDungeonHud(run) {
+  const hud = $("#dungeon-hud");
+  if (!hud) return;
+  if (!run) {
+    hud.hidden = true;
+    return;
+  }
+  hud.hidden = false;
+  const cfg = floorConfig(run.floor);
+  $("#dungeon-hud-floor").textContent = cfg?.name || `Floor ${run.floor}`;
+  $("#dungeon-hud-hint").textContent = run.cleared ? "Floor clear — open panel / Next floor" : "Slay all demons";
 }
 
 function renderSpecRow() {
@@ -605,8 +730,39 @@ game.onOpenNpc = (npc) => {
   $("#panel-char").hidden = true;
   $("#panel-inv").hidden = true;
   $("#panel-quests").hidden = true;
+  $("#panel-tower").hidden = true;
   $("#panel-npc").hidden = false;
   renderNpcPanel(npc);
+};
+
+game.onOpenTower = () => {
+  if (DungeonService.isInside()) {
+    $("#panel-dungeon").hidden = false;
+    renderDungeonPanel();
+    return;
+  }
+  ["#panel-char", "#panel-inv", "#panel-quests", "#panel-npc", "#panel-party"].forEach((s) => {
+    const el = $(s);
+    if (el) el.hidden = true;
+  });
+  $("#panel-tower").hidden = false;
+  renderTowerPanel();
+};
+
+game.onPartyChange = () => {
+  if (!$("#panel-party").hidden) renderPartyPanel();
+  const banner = $("#party-invite-banner");
+  if (PartyService.pendingInvite) {
+    banner.hidden = false;
+    $("#party-invite-text").textContent = `${PartyService.pendingInvite.fromName} invited you`;
+    // auto-show party panel on invite
+    if ($("#panel-party").hidden) togglePanel("party");
+  }
+};
+
+game.onDungeonChange = (run) => {
+  updateDungeonHud(run);
+  if (!$("#panel-dungeon").hidden) renderDungeonPanel();
 };
 
 ui.requestSave = async (toast = true) => {
@@ -628,7 +784,15 @@ ui.requestSave = async (toast = true) => {
 document.querySelectorAll("[data-close]").forEach((btn) => {
   btn.addEventListener("click", () => {
     const key = btn.getAttribute("data-close");
-    const map = { char: "#panel-char", inv: "#panel-inv", npc: "#panel-npc", quests: "#panel-quests" };
+    const map = {
+      char: "#panel-char",
+      inv: "#panel-inv",
+      npc: "#panel-npc",
+      quests: "#panel-quests",
+      party: "#panel-party",
+      tower: "#panel-tower",
+      dungeon: "#panel-dungeon",
+    };
     if (map[key]) $(map[key]).hidden = true;
   });
 });
@@ -640,11 +804,40 @@ window.addEventListener("keydown", (e) => {
   if (k === "c") togglePanel("char");
   if (k === "i") togglePanel("inv");
   if (k === "q") togglePanel("quests");
-  if (k === "escape") togglePanel("menu");
+  if (k === "p") togglePanel("party");
+  if (k === "escape") {
+    if (DungeonService.isInside()) togglePanel("dungeon");
+    else togglePanel("menu");
+  }
   if (e.key === "Tab") {
     e.preventDefault();
     ui.setScoreboard(true);
   }
+});
+
+$("#btn-dt-solo")?.addEventListener("click", () => {
+  $("#panel-tower").hidden = true;
+  game.enterDemonTower({ withParty: false });
+});
+$("#btn-dt-party")?.addEventListener("click", () => {
+  $("#panel-tower").hidden = true;
+  game.enterDemonTower({ withParty: true });
+});
+$("#btn-dt-next")?.addEventListener("click", () => {
+  game.advanceDemonFloor();
+  renderDungeonPanel();
+});
+$("#btn-dt-exit")?.addEventListener("click", () => {
+  $("#panel-dungeon").hidden = true;
+  game.exitDemonTower();
+});
+$("#btn-party-accept")?.addEventListener("click", () => {
+  game.acceptPartyInvite();
+  renderPartyPanel();
+});
+$("#btn-party-decline")?.addEventListener("click", () => {
+  game.declinePartyInvite();
+  renderPartyPanel();
 });
 window.addEventListener("keyup", (e) => {
   if (e.key === "Tab") ui.setScoreboard(false);

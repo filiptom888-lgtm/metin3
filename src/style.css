@@ -840,8 +840,45 @@ button, input { font: inherit; color: inherit; }
 
 .menu-actions .btn { margin-top: 0.5rem; }
 .panel-menu { width: min(320px, 90vw); text-align: center; }
-.panel-npc, .panel-quests { width: min(420px, 94vw); }
+.panel-npc, .panel-quests, .panel-party, .panel-tower, .panel-dungeon { width: min(420px, 94vw); }
 .panel-death { width: min(360px, 92vw); text-align: center; z-index: 40; }
+.party-invite {
+  margin-top: 0.75rem;
+  padding: 0.55rem;
+  border: 1px solid rgba(201, 162, 39, 0.4);
+  background: rgba(80, 40, 10, 0.35);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+.party-member {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid rgba(201, 162, 39, 0.15);
+  font-size: 0.85rem;
+}
+.party-member .leader { color: var(--gold-soft); }
+.dungeon-hud {
+  position: absolute;
+  top: 58px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  padding: 0.45rem 1rem;
+  background: rgba(40, 10, 10, 0.85);
+  border: 1px solid #c43c2e;
+  text-align: center;
+  pointer-events: none;
+}
+.dungeon-hud b {
+  display: block;
+  font-family: var(--font-d);
+  color: #ff6a4a;
+  letter-spacing: 0.08em;
+}
+.dungeon-hud span { font-size: 0.75rem; color: var(--mist); }
 
 .field-label {
   text-align: left;
