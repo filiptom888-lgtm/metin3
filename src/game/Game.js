@@ -34,6 +34,7 @@ import { SkillService } from "../services/SkillService.js";
 import { MONSTERS } from "../data/monsters.js";
 import { METINS } from "../data/metins.js";
 import { QUESTS } from "../data/quests.js";
+import { audio } from "../audio/Audio.js";
 import * as THREE from "three";
 
 export class Game {
@@ -810,18 +811,19 @@ export class Game {
     }
     const dmg = roll.damage;
     const color = roll.kind === "crit" ? "#ffe08a" : p.color;
-    this.fx?.slash(p.x, p.z, p.rot, color);
+    audio.sfx(roll.kind === "crit" ? "crit" : "slash");
+    this.fx?.skill("slash", p.x, p.z, p.rot, color, 2.2);
 
     if (cls.id === "shaman" || p.range > 4) {
       this.fireBolt(p.id, p.x, p.z, p.rot, dmg, p.color);
       this.net.sendEvent({ type: "bolt", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, color: p.color });
-      this.net.sendEvent({ type: "fx", kind: "slash", x: p.x, z: p.z, rot: p.rot, color: p.color, from: p.id });
+      this.net.sendEvent({ type: "fx", kind: "skill", skill: "bolt", x: p.x, z: p.z, rot: p.rot, color: p.color, from: p.id });
       return;
     }
 
     this.meleeHit(p, dmg, 0.9);
     this.net.sendEvent({ type: "melee", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, cone: 0.9 });
-    this.net.sendEvent({ type: "fx", kind: "slash", x: p.x, z: p.z, rot: p.rot, color: p.color, from: p.id });
+    this.net.sendEvent({ type: "fx", kind: "skill", skill: "slash", x: p.x, z: p.z, rot: p.rot, color, from: p.id });
   }
 
   castSkill(i) {
@@ -843,31 +845,32 @@ export class Game {
       isMagic,
     });
     const dmg = roll.hit ? roll.damage : Math.floor(p.atk * (sk.mul || 1) * p.buffMul);
+    const color = p.color;
+    const sfxMap = { heal: "heal", buff: "buff", aoe: "aoe", burst: "aoe", stealth: "skill", drain: "aoe", dot: "aoe" };
+    audio.sfx(sfxMap[sk.type] || "skill");
+    this.fx?.skill(sk.type, p.x, p.z, p.rot, color, sk.type === "burst" ? 3.8 : sk.type === "aoe" ? 5 : 4);
 
     switch (sk.type) {
       case "cone":
-        this.fx?.slash(p.x, p.z, p.rot, p.color);
         this.meleeHit(p, dmg, 1.1, p.range + 1);
         this.net.sendEvent({ type: "melee", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, cone: 1.1, range: p.range + 1 });
-        this.net.sendEvent({ type: "fx", kind: "slash", x: p.x, z: p.z, rot: p.rot, color: p.color, from: p.id });
+        this.net.sendEvent({ type: "fx", kind: "skill", skill: "cone", x: p.x, z: p.z, rot: p.rot, color, from: p.id });
         break;
       case "aoe":
-        this.fx?.aoe(p.x, p.z, 5, p.color);
         this.aoeHit(p.x, p.z, 5, dmg, p.id);
         this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 5, dmg });
-        this.net.sendEvent({ type: "fx", kind: "aoe", x: p.x, z: p.z, r: 5, color: p.color, from: p.id });
+        this.net.sendEvent({ type: "fx", kind: "skill", skill: "aoe", x: p.x, z: p.z, r: 5, color, from: p.id });
         break;
       case "bolt":
-        this.fx?.boltTrail(p.x, p.z, p.color);
         this.fireBolt(p.id, p.x, p.z, p.rot, dmg, p.color);
         this.net.sendEvent({ type: "bolt", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, color: p.color });
+        this.net.sendEvent({ type: "fx", kind: "skill", skill: "bolt", x: p.x, z: p.z, rot: p.rot, color, from: p.id });
         break;
       case "buff":
         p.buffMul = 1.45;
         p.buffUntil = this.time + 8;
-        this.fx?.buff(p.x, p.z);
         this.ui.toast("Power surges");
-        this.net.sendEvent({ type: "fx", kind: "buff", x: p.x, z: p.z, from: p.id });
+        this.net.sendEvent({ type: "fx", kind: "skill", skill: "buff", x: p.x, z: p.z, color, from: p.id });
         break;
       case "dash": {
         p.x += Math.sin(p.rot) * 7;
@@ -875,34 +878,31 @@ export class Game {
         p.x = clamp(p.x, -MAP_HALF + 1.2, MAP_HALF - 1.2);
         p.z = clamp(p.z, -MAP_HALF + 1.2, MAP_HALF - 1.2);
         p.invulnUntil = this.time + 0.3;
-        this.fx?.slash(p.x, p.z, p.rot, "#e8d48b");
         this.aoeHit(p.x, p.z, 2.8, dmg, p.id);
         this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 2.8, dmg });
+        this.net.sendEvent({ type: "fx", kind: "skill", skill: "dash", x: p.x, z: p.z, rot: p.rot, color, from: p.id });
         break;
       }
       case "stealth":
         p.stealthUntil = this.time + 3.5;
-        this.fx?.aoe(p.x, p.z, 2, "#3a9fd4");
         this.ui.toast("Vanished");
+        this.net.sendEvent({ type: "fx", kind: "skill", skill: "stealth", x: p.x, z: p.z, color: "#3a9fd4", from: p.id });
         break;
       case "burst":
-        this.fx?.aoe(p.x, p.z, 3.8, "#3a9fd4");
         this.aoeHit(p.x, p.z, 3.8, dmg, p.id);
         this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 3.8, dmg });
-        this.net.sendEvent({ type: "fx", kind: "aoe", x: p.x, z: p.z, r: 3.8, color: "#3a9fd4", from: p.id });
+        this.net.sendEvent({ type: "fx", kind: "skill", skill: "burst", x: p.x, z: p.z, r: 3.8, color: "#3a9fd4", from: p.id });
         break;
       case "dot":
       case "drain":
-        this.fx?.aoe(p.x, p.z, 4.5, "#8b3fd4");
         this.aoeHit(p.x, p.z, 4.5, dmg, p.id, sk.type === "drain");
         this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 4.5, dmg, drain: sk.type === "drain" });
-        this.net.sendEvent({ type: "fx", kind: "aoe", x: p.x, z: p.z, r: 4.5, color: "#8b3fd4", from: p.id });
+        this.net.sendEvent({ type: "fx", kind: "skill", skill: sk.type, x: p.x, z: p.z, r: 4.5, color: "#8b3fd4", from: p.id });
         break;
       case "heal":
         p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.4);
-        this.fx?.heal(p.x, p.z);
         this.ui.toast("Healed");
-        this.net.sendEvent({ type: "fx", kind: "heal", x: p.x, z: p.z, from: p.id });
+        this.net.sendEvent({ type: "fx", kind: "skill", skill: "heal", x: p.x, z: p.z, from: p.id });
         break;
       default:
         break;
@@ -1067,6 +1067,7 @@ export class Game {
       this.local.sp = this.local.maxSp;
       this.ui.toast(ups > 1 ? `Level up ×${ups}!` : "Level up!");
       this.fx?.buff(this.local.x, this.local.z);
+      audio.sfx("level");
     }
     this.onCharacterChange(this.character, this.local);
     this.refreshQuestMarkers();
@@ -1166,6 +1167,7 @@ export class Game {
       this.local.gold += l.gold;
       this.character.gold = this.local.gold;
       this.ui.toast(`+${l.gold} Yang`);
+      audio.sfx("loot");
     }
     if (l.item) {
       // Prefer unique instance payload from DropService
@@ -1183,6 +1185,7 @@ export class Game {
       }
       const def = getItem(l.item.itemId);
       this.ui.toast(`Looted ${def?.name || "item"}`);
+      audio.sfx("pickup");
     }
     this.scene.remove(l.mesh);
     this.loot.delete(id);
@@ -1200,6 +1203,7 @@ export class Game {
       this.pendingDeath = true;
       const loss = Math.floor(p.gold * 0.03);
       this._deathYangLoss = loss;
+      audio.sfx("death");
       this.ui.showDeath?.(loss ? `Fallen (−${loss} Yang if you continue)` : "Choose where to return.");
       this.net.sendEvent({ type: "toast", msg: `${p.name} fell`, from: p.id });
     }
@@ -1464,8 +1468,11 @@ export class Game {
     }
 
     if (e.type === "fx" && e.from !== this.local?.id) {
-      if (e.kind === "slash") this.fx?.slash(e.x, e.z, e.rot || 0, e.color || "#e8d48b");
-      if (e.kind === "aoe") this.fx?.aoe(e.x, e.z, e.r || 3, e.color || "#c43c2e");
+      if (e.kind === "skill") {
+        this.fx?.skill(e.skill || "aoe", e.x, e.z, e.rot || 0, e.color || "#e8d48b", e.r || 4);
+      }
+      if (e.kind === "slash") this.fx?.skill("slash", e.x, e.z, e.rot || 0, e.color || "#e8d48b");
+      if (e.kind === "aoe") this.fx?.skill("aoe", e.x, e.z, 0, e.color || "#c43c2e", e.r || 3);
       if (e.kind === "heal") this.fx?.heal(e.x, e.z);
       if (e.kind === "buff") this.fx?.buff(e.x, e.z);
       if (e.kind === "hit") this.fx?.hitSparks(e.x, e.z, "#fff");

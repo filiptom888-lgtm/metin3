@@ -127,26 +127,50 @@
             </div>
           </div>
 
+          <div id="audio-dock" class="audio-dock">
+            <button type="button" id="btn-mute" class="audio-btn" title="Mute">🔊</button>
+            <label class="audio-slider" title="Music">
+              <span>♪</span>
+              <input id="vol-music" type="range" min="0" max="100" value="35" />
+            </label>
+            <label class="audio-slider" title="SFX">
+              <span>⚔</span>
+              <input id="vol-sfx" type="range" min="0" max="100" value="55" />
+            </label>
+          </div>
+
           <div id="chat" class="m2-chat"><div id="chat-log"></div></div>
           <div id="npc-prompt" class="npc-prompt" hidden>Press E — <span id="npc-prompt-name">NPC</span></div>
         </div>
 
-        <div id="panel-char" class="panel m2-panel" hidden>
+        <div id="panel-char" class="panel m2-panel panel-char" hidden>
           <header><h3>Character</h3><button type="button" data-close="char">✕</button></header>
-          <div class="panel-body">
-            <p id="char-title" class="panel-title">—</p>
-            <div class="stat-grid" id="stat-grid"></div>
-            <p class="points">Stat points: <b id="stat-points">0</b></p>
-            <div class="equip-preview" id="equip-preview"></div>
+          <div class="panel-body char-layout">
+            <div class="char-hero">
+              <p id="char-title" class="panel-title">—</p>
+              <div class="paperdoll" id="paperdoll"></div>
+              <p class="points">Stat points: <b id="stat-points">0</b></p>
+            </div>
+            <div class="char-stats">
+              <div class="stat-grid" id="stat-grid"></div>
+              <div class="combat-cards" id="combat-cards"></div>
+            </div>
           </div>
         </div>
 
         <div id="panel-inv" class="panel m2-panel panel-inv" hidden>
           <header><h3>Inventory</h3><button type="button" data-close="inv">✕</button></header>
-          <div class="panel-body">
-            <div class="equip-row" id="equip-slots"></div>
-            <div class="inv-grid" id="inv-grid"></div>
-            <p class="inv-hint">Click: equip / use · Right-click: drop</p>
+          <div class="panel-body inv-layout">
+            <div class="paperdoll paperdoll-sm" id="equip-doll"></div>
+            <div>
+              <div class="bag-toolbar">
+                <span>Bag</span>
+                <b id="inv-count">0/40</b>
+              </div>
+              <div class="inv-grid" id="inv-grid"></div>
+              <p class="inv-hint">Click equip/use · Right-click drop · Hover for bonuses</p>
+              <div id="item-tooltip" class="item-tooltip" hidden></div>
+            </div>
           </div>
         </div>
 

@@ -14,8 +14,12 @@ import { derivedStats, xpForLevel } from "./game/character.js";
 import { EQUIP_SLOTS as SLOTS, RARITY_COLOR, ITEM_TEMPLATES } from "./data/items.js";
 import { SHOP_CATALOG } from "./data/npcs.js";
 import { UPGRADE_TABLE } from "./data/upgrades.js";
+import { audio } from "./audio/Audio.js";
 
 const $ = (s) => document.querySelector(s);
+
+const DOLL_SLOTS = ["helmet", "weapon", "shield", "armor", "bracelet", "necklace", "earring", "shoes"];
+const BAG_SIZE = 40;
 
 let selectedClass = "warrior";
 let selectedSpec = "body";
@@ -201,12 +205,43 @@ function getItem(id) {
   return ITEM_TEMPLATES[id] || null;
 }
 
+function renderDoll(container, ch, { unequip = true } = {}) {
+  if (!container) return;
+  container.innerHTML = "";
+  for (const s of DOLL_SLOTS) {
+    const ref = ch.equipment[s];
+    const id = ref ? ref.itemId || ref : null;
+    const def = id ? getItem(id) : null;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "doll-slot" + (def ? "" : " empty");
+    btn.dataset.slot = s;
+    btn.style.borderColor = def ? RARITY_COLOR[def.rarity] : "";
+    const up = ref?.upgrade ? `+${ref.upgrade}` : "";
+    btn.innerHTML = `<span class="lbl">${s}</span>${
+      def ? `<span class="ico">${def.icon}</span><span class="up">${up}</span>` : `<span class="ico" style="opacity:.35">·</span>`
+    }`;
+    btn.title = def ? ItemService.displayName(ref) : s;
+    if (def && unequip) {
+      btn.addEventListener("click", () => {
+        audio.sfx("ui");
+        game.unequip(s);
+        renderCharacterPanel(game.character);
+        renderInventory(game.character);
+      });
+    }
+    container.appendChild(btn);
+  }
+}
+
 function renderCharacterPanel(ch) {
   if (!ch) return;
   const d = derivedStats(ch);
   const kingdom = KINGDOMS.find((k) => k.id === ch.kingdom)?.name || "";
   $("#char-title").textContent = `${ch.name} · Lv.${ch.level} ${CLASSES[ch.classId]?.name || ""} · ${ch.spec || ""} · ${kingdom}`;
   $("#stat-points").textContent = String(ch.statPoints);
+  renderDoll($("#paperdoll"), ch);
+
   const grid = $("#stat-grid");
   grid.innerHTML = "";
   const rows = [
@@ -224,6 +259,7 @@ function renderCharacterPanel(ch) {
     btn.textContent = "+";
     btn.disabled = ch.statPoints <= 0;
     btn.addEventListener("click", () => {
+      audio.sfx("ui");
       game.allocateStat(key);
       renderCharacterPanel(game.character);
       renderInventory(game.character);
@@ -231,59 +267,65 @@ function renderCharacterPanel(ch) {
     row.appendChild(btn);
     grid.appendChild(row);
   }
-  const extra = document.createElement("div");
-  extra.className = "derived";
-  extra.innerHTML = `ATK ${d.atk} · MATK ${d.matk} · DEF ${d.def} · MDEF ${d.mdef}<br>Crit ${(d.crit * 100).toFixed(0)}% · Pierce ${(d.pierce * 100).toFixed(0)}% · HP ${d.maxHp} · SP ${d.maxSp}`;
-  grid.appendChild(extra);
 
-  const eq = $("#equip-preview");
-  eq.innerHTML = SLOTS.map((s) => {
-    const ref = ch.equipment[s];
-    const id = ref ? ref.itemId || ref : null;
-    const def = id ? getItem(id) : null;
-    const up = ref?.upgrade ? ` +${ref.upgrade}` : "";
-    return `<div class="eq-slot"><span>${s}</span><b style="color:${def ? RARITY_COLOR[def.rarity] : "#666"}">${def ? def.icon + " " + def.name + up : "—"}</b></div>`;
-  }).join("");
+  const cards = $("#combat-cards");
+  if (cards) {
+    cards.innerHTML = [
+      ["ATK", d.atk],
+      ["MATK", d.matk],
+      ["DEF", d.def],
+      ["MDEF", d.mdef],
+      ["CRIT", `${(d.crit * 100).toFixed(0)}%`],
+      ["PIERCE", `${(d.pierce * 100).toFixed(0)}%`],
+      ["HP", d.maxHp],
+      ["SP", d.maxSp],
+    ]
+      .map(
+        ([k, v]) => `<div class="combat-card"><small>${k}</small><b>${v}</b></div>`
+      )
+      .join("");
+  }
 }
 
 function renderInventory(ch) {
   if (!ch) return;
-  const slots = $("#equip-slots");
-  slots.innerHTML = "";
-  for (const s of SLOTS) {
-    const ref = ch.equipment[s];
-    const id = ref ? ref.itemId || ref : null;
-    const def = id ? getItem(id) : null;
-    const el = document.createElement("button");
-    el.type = "button";
-    el.className = "eq-chip";
-    const up = ref?.upgrade ? ` +${ref.upgrade}` : "";
-    el.innerHTML = def
-      ? `<small>${s}</small><span style="color:${RARITY_COLOR[def.rarity]}">${def.icon} ${def.name}${up}</span>`
-      : `<small>${s}</small><span>—</span>`;
-    if (def) {
-      el.addEventListener("click", () => {
-        game.unequip(s);
-        renderInventory(game.character);
-        renderCharacterPanel(game.character);
-      });
-    }
-    slots.appendChild(el);
-  }
-
+  renderDoll($("#equip-doll"), ch);
   const grid = $("#inv-grid");
   grid.innerHTML = "";
-  for (const stack of ch.inventory) {
-    const def = getItem(stack.itemId);
-    if (!def) continue;
+  const tip = $("#item-tooltip");
+  if (tip) tip.hidden = true;
+
+  const filled = ch.inventory.length;
+  const countEl = $("#inv-count");
+  if (countEl) countEl.textContent = `${filled}/${BAG_SIZE}`;
+
+  for (let i = 0; i < BAG_SIZE; i++) {
+    const stack = ch.inventory[i];
     const cell = document.createElement("button");
     cell.type = "button";
+    if (!stack) {
+      cell.className = "inv-cell empty-slot";
+      cell.disabled = true;
+      grid.appendChild(cell);
+      continue;
+    }
+    const def = getItem(stack.itemId);
+    if (!def) continue;
     cell.className = "inv-cell";
     cell.style.borderColor = RARITY_COLOR[def.rarity] || "#666";
-    const up = stack.upgrade ? ` +${stack.upgrade}` : "";
-    cell.innerHTML = `<span class="ico">${def.icon}</span><span class="nm">${def.name}${up}</span><span class="qty">×${stack.qty}</span>`;
+    const up = stack.upgrade ? `+${stack.upgrade}` : "";
+    cell.innerHTML = `${up ? `<span class="up-tag">${up}</span>` : ""}<span class="ico">${def.icon}</span><span class="qty">×${stack.qty}</span>`;
     cell.title = ItemService.displayName(stack);
+    cell.addEventListener("mouseenter", () => {
+      if (!tip) return;
+      const bons = (stack.bonuses || []).map((b) => `${b.stat}+${b.value}`).join(", ");
+      tip.hidden = false;
+      tip.innerHTML = `<b style="color:${RARITY_COLOR[def.rarity]}">${ItemService.displayName(stack)}</b><br>${def.slot}${
+        def.atk ? ` · ATK ${def.atk}` : ""
+      }${def.def ? ` · DEF ${def.def}` : ""}${bons ? `<br>${bons}` : ""}`;
+    });
     cell.addEventListener("click", () => {
+      audio.sfx("ui");
       if (def.slot === "consumable") game.useItem(stack.uid);
       else game.equipItem(stack.uid);
       renderInventory(game.character);
@@ -291,6 +333,7 @@ function renderInventory(ch) {
     });
     cell.addEventListener("contextmenu", (e) => {
       e.preventDefault();
+      audio.sfx("ui");
       game.dropItem(stack.uid);
       renderInventory(game.character);
     });
@@ -664,6 +707,7 @@ async function refreshCharList() {
 }
 
 async function enterWorld(character) {
+  await audio.unlock();
   const cls = CLASSES[character.classId] || CLASSES.warrior;
   currentProfile = {
     id: hasSupabase && sessionUser ? sessionUser.id : `local_${character.id}`,
@@ -804,6 +848,36 @@ $("#btn-leave").addEventListener("click", async () => {
 
 $("#btn-respawn-town").addEventListener("click", () => game.respawn("town"));
 $("#btn-respawn-here").addEventListener("click", () => game.respawn("here"));
+
+// Audio dock
+const volMusic = $("#vol-music");
+const volSfx = $("#vol-sfx");
+const btnMute = $("#btn-mute");
+if (volMusic) {
+  volMusic.value = String(Math.round(audio.musicVol * 100));
+  volSfx.value = String(Math.round(audio.sfxVol * 100));
+  btnMute.textContent = audio.muted ? "🔇" : "🔊";
+  volMusic.addEventListener("input", () => {
+    audio.unlock();
+    audio.setMusicVolume(Number(volMusic.value) / 100);
+  });
+  volSfx.addEventListener("input", () => {
+    audio.unlock();
+    audio.setSfxVolume(Number(volSfx.value) / 100);
+  });
+  btnMute.addEventListener("click", () => {
+    audio.unlock();
+    const m = audio.toggleMute();
+    btnMute.textContent = m ? "🔇" : "🔊";
+  });
+}
+
+// Unlock audio on first interaction
+const unlockAudio = () => {
+  audio.unlock();
+  window.removeEventListener("pointerdown", unlockAudio);
+};
+window.addEventListener("pointerdown", unlockAudio);
 
 // Resume session if already logged in
 (async () => {
