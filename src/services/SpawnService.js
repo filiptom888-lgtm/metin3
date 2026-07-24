@@ -2,11 +2,17 @@ import { MONSTERS } from "../data/monsters.js";
 import { METINS } from "../data/metins.js";
 import { CITY_RADIUS } from "../game/data.js";
 import { MAP_HALF } from "../game/data.js";
+import { inDemonTowerZone } from "../data/demonTower.js";
 
 function wildPoint(minR, maxR) {
-  const ang = Math.random() * Math.PI * 2;
-  const r = minR + Math.random() * (maxR - minR);
-  return { x: Math.cos(ang) * r, z: Math.sin(ang) * r };
+  for (let attempt = 0; attempt < 28; attempt++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = minR + Math.random() * (maxR - minR);
+    const p = { x: Math.cos(ang) * r, z: Math.sin(ang) * r };
+    if (!inDemonTowerZone(p.x, p.z)) return p;
+  }
+  // Fallback: NW wilderness opposite the tower corner
+  return { x: -(CITY_RADIUS + 12), z: CITY_RADIUS + 12 };
 }
 
 export const SpawnService = {

@@ -2,10 +2,15 @@
 export const DEMON_TOWER = {
   id: "demon_tower",
   name: "Demon Tower",
-  /** Entrance in the city */
-  entrance: { x: 0, z: 14 },
-  /** Instance arena (map corner) */
-  arena: { x: 42, z: -42 },
+  /** Overworld entrance — far SE map corner (outside city) */
+  entrance: { x: 54, z: -54 },
+  /** Local origin of the Demon Tower map (separate map root) */
+  arena: { x: 0, z: 0 },
+  mapId: "demon_tower",
+  /** Portal pad offset from arena center (on the platform) */
+  portalOffset: { x: 0, z: 9 },
+  /** No wild mobs / Metins near the overworld entrance */
+  safeRadius: 18,
   maxFloor: 7,
   floors: [
     { floor: 1, name: "Floor 1 — Cursed Hall", mobs: [{ id: "wolf", n: 6 }], boss: null, xp: 80, yang: 400 },
@@ -27,4 +32,19 @@ export const DEMON_TOWER = {
 
 export function floorConfig(n) {
   return DEMON_TOWER.floors.find((f) => f.floor === n) || DEMON_TOWER.floors[0];
+}
+
+export function inDemonTowerZone(x, z, pad = 0) {
+  const e = DEMON_TOWER.entrance;
+  const r = DEMON_TOWER.safeRadius + pad;
+  const dx = x - e.x;
+  const dz = z - e.z;
+  return dx * dx + dz * dz < r * r;
+}
+
+/** World position of the floor portal pad */
+export function demonPortalWorld() {
+  const a = DEMON_TOWER.arena;
+  const o = DEMON_TOWER.portalOffset;
+  return { x: a.x + o.x, z: a.z + o.z };
 }

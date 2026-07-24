@@ -99,9 +99,15 @@ export function inCity(x, z) {
   return dist2(x, z, 0, 0) < CITY_RADIUS;
 }
 
-/** Random point in wilderness (outside city) */
+/** Random point in wilderness (outside city, outside Demon Tower entrance) */
 export function wildPoint(minR = CITY_RADIUS + 6, maxR = MAP_HALF - 6) {
-  const ang = Math.random() * Math.PI * 2;
-  const r = rand(minR, maxR);
-  return { x: Math.cos(ang) * r, z: Math.sin(ang) * r };
+  for (let i = 0; i < 28; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = rand(minR, maxR);
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    // Entrance SE ~(54,-54)
+    if (Math.hypot(x - 54, z + 54) > 18) return { x, z };
+  }
+  return { x: CITY_RADIUS + 14, z: CITY_RADIUS + 14 };
 }

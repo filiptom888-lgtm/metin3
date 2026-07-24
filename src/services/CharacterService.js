@@ -48,15 +48,22 @@ export const CharacterService = {
       respawn_z: spawn.z,
       delete_pin: opts.deletePin || "0000",
       inventory: starterInventory(opts.classId),
-      equipment: {},
+      equipment: { __hotbarPotions: ["red_potion", "blue_potion"] },
       quests: {},
       playtime_sec: 0,
     };
 
     if (!supabase) {
-      const local = { ...ch, id: crypto.randomUUID(), user_id: userId, xpNext: xpForLevel(1) };
+      const local = {
+        ...ch,
+        id: crypto.randomUUID(),
+        user_id: userId,
+        xpNext: xpForLevel(1),
+        hotbarPotions: defaultHotbar(),
+      };
       const client = toClient(local);
       client.inventory = starterInventory(opts.classId);
+      client.hotbarPotions = defaultHotbar();
       const list = await this.list(userId);
       list.push(client);
       localStorage.setItem("metin3_chars", JSON.stringify(list));
@@ -148,7 +155,8 @@ function fromRow(row) {
     respawnZ: row.respawn_z,
     deletePin: row.delete_pin,
     inventory: row.inventory || [],
-    equipment: row.equipment || {},
+    equipment: stripHotbarMeta(row.equipment || {}),
+    hotbarPotions: readHotbar(row.equipment),
     quests: row.quests || {},
     playtimeSec: row.playtime_sec || 0,
     metins: row.metins || 0,
@@ -157,7 +165,32 @@ function fromRow(row) {
   });
 }
 
+function defaultHotbar() {
+  return ["red_potion", "blue_potion"];
+}
+
+function readHotbar(equipment) {
+  const hb = equipment?.__hotbarPotions;
+  if (Array.isArray(hb) && hb.length >= 2) return [hb[0] || null, hb[1] || null];
+  return defaultHotbar();
+}
+
+function stripHotbarMeta(equipment) {
+  if (!equipment || typeof equipment !== "object") return {};
+  const { __hotbarPotions, ...rest } = equipment;
+  return rest;
+}
+
+function withHotbarMeta(ch) {
+  const base = stripHotbarMeta(ch.equipment || {});
+  return {
+    ...base,
+    __hotbarPotions: Array.isArray(ch.hotbarPotions) ? ch.hotbarPotions : defaultHotbar(),
+  };
+}
+
 function toClient(ch) {
+  const equip = ch.equipment || {};
   return {
     id: ch.id,
     name: ch.name,
@@ -180,7 +213,8 @@ function toClient(ch) {
     respawnZ: ch.respawnZ ?? ch.respawn_z ?? ch.z ?? 0,
     deletePin: ch.deletePin || ch.delete_pin || "0000",
     inventory: ch.inventory || [],
-    equipment: ch.equipment || {},
+    equipment: stripHotbarMeta(equip),
+    hotbarPotions: ch.hotbarPotions || readHotbar(equip),
     quests: ch.quests || {},
     playtimeSec: ch.playtimeSec || ch.playtime_sec || 0,
     metins: ch.metins || 0,
@@ -211,7 +245,7 @@ function toRow(userId, ch) {
     respawn_z: ch.respawnZ,
     delete_pin: ch.deletePin || "0000",
     inventory: ch.inventory,
-    equipment: ch.equipment,
+    equipment: withHotbarMeta(ch),
     quests: ch.quests,
     playtime_sec: ch.playtimeSec || 0,
     metins: ch.metins || 0,

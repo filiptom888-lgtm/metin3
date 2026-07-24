@@ -83,8 +83,14 @@
             <div class="brand-mini">METIN3</div>
             <div class="chip-row">
               <div id="room-chip">WORLD</div>
+              <div id="map-chip">Kingdom</div>
               <div id="host-chip">CLIENT</div>
               <div id="players-chip">1</div>
+            </div>
+            <div class="hud-menu-btns">
+              <button type="button" id="btn-hud-inv" class="hud-menu-btn" title="Inventory (I)">Bag</button>
+              <button type="button" id="btn-hud-char" class="hud-menu-btn" title="Character (C)">Char</button>
+              <button type="button" id="btn-hud-quests" class="hud-menu-btn" title="Quests (Q)">Quest</button>
             </div>
           </div>
 
@@ -117,7 +123,7 @@
 
             <div class="m2-hotbar-wrap">
               <div id="skill-bar" class="m2-hotbar"></div>
-              <div class="hotbar-hint">WASD · scroll · RMB orbit · P party · E tower/NPC · Q quests · 1–4 skills</div>
+              <div class="hotbar-hint">1–4 skills · 5–6 potions · I inventory · right-click potion to hotbar</div>
             </div>
 
             <div class="m2-stats-panel">
@@ -168,13 +174,13 @@
                 <b id="inv-count">0/40</b>
               </div>
               <div class="inv-grid" id="inv-grid"></div>
-              <p class="inv-hint">Click equip/use · Right-click drop · Hover for bonuses</p>
+              <p class="inv-hint">Click use/equip · Potion right-click → hotbar 5/6 · Shift+right-click drop</p>
               <div id="item-tooltip" class="item-tooltip" hidden></div>
             </div>
           </div>
         </div>
 
-        <div id="panel-npc" class="panel m2-panel panel-npc" hidden>
+        <div id="panel-npc" class="panel m2-panel panel-npc panel-npc-wide" hidden>
           <header><h3 id="npc-title">NPC</h3><button type="button" data-close="npc">✕</button></header>
           <div class="panel-body" id="npc-body"></div>
         </div>
@@ -187,7 +193,7 @@
         <div id="panel-tower" class="panel m2-panel panel-tower" hidden>
           <header><h3>Demon Tower</h3><button type="button" data-close="tower">✕</button></header>
           <div class="panel-body menu-actions">
-            <p class="sub">Seven floors of demons. Clear each floor to ascend. Parties enter together.</p>
+            <p class="sub">Solo or party. <b>Enter with party</b> warps every member onto the Demon Tower map together.</p>
             <div id="tower-party-info" class="sub"></div>
             <button type="button" id="btn-dt-solo" class="btn btn-primary">Enter alone</button>
             <button type="button" id="btn-dt-party" class="btn btn-ghost-full">Enter with party</button>
@@ -226,6 +232,10 @@
         <div id="dungeon-hud" class="dungeon-hud" hidden>
           <b id="dungeon-hud-floor">Demon Tower</b>
           <span id="dungeon-hud-hint">Clear the floor</span>
+          <div class="dungeon-hud-actions">
+            <button type="button" id="btn-dt-hud-next" class="btn-mini" disabled>Next floor</button>
+            <button type="button" id="btn-dt-hud-exit" class="btn-mini">Leave</button>
+          </div>
         </div>
 
         <div id="panel-death" class="panel m2-panel panel-death" hidden>

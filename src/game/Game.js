@@ -8,7 +8,7 @@ import {
   makeMobMesh,
   makeNpcMesh,
   makeDemonTowerMesh,
-  makeDemonArenaMesh,
+  makeDungeonMapRoot,
   makeBoltMesh,
   setNameplate,
   animateCharacter,
@@ -35,7 +35,8 @@ import { SpawnService } from "../services/SpawnService.js";
 import { SkillService } from "../services/SkillService.js";
 import { PartyService } from "../services/PartyService.js";
 import { DungeonService } from "../services/DungeonService.js";
-import { DEMON_TOWER } from "../data/demonTower.js";
+import { MapService } from "../services/MapService.js";
+import { DEMON_TOWER, demonPortalWorld } from "../data/demonTower.js";
 import { MONSTERS } from "../data/monsters.js";
 import { METINS } from "../data/metins.js";
 import { QUESTS } from "../data/quests.js";
@@ -51,10 +52,14 @@ export class Game {
     this.profile = null;
 
     this.renderer = createRenderer(canvas);
-    const { scene } = createScene();
+    const { scene, overworld } = createScene();
     this.scene = scene;
+    this.overworld = overworld || null;
+    this.dungeonRoot = null;
+    this.arenaMesh = null;
     this.camera = createCamera();
     this.fx = new FxSystem(scene);
+    MapService.set("overworld");
 
     this.keys = new Set();
     this.mouse = { x: 0, y: 0, down: false, ndc: new THREE.Vector2() };
@@ -79,10 +84,10 @@ export class Game {
     this.onDungeonChange = () => {};
     this.nearNpc = null;
     this.nearTower = false;
+    this.nearPortal = false;
     this.pendingDeath = false;
     this.npcMeshes = [];
     this.towerMesh = null;
-    this.arenaMesh = null;
     this._dtFloorMobs = 0;
 
     this.camDist = 38;
@@ -107,7 +112,8 @@ export class Game {
       if ([" ", "tab"].includes(k) || e.key === "Tab") e.preventDefault();
       if (e.key === "Tab") this.ui.setScoreboard(true);
       if (k === "e" && !this.pendingDeath) {
-        if (this.nearTower) this.onOpenTower();
+        if (this.nearPortal) this.useDemonPortal();
+        else if (this.nearTower) this.onOpenTower();
         else if (this.nearNpc) this.onOpenNpc(this.nearNpc);
       }
     };
@@ -215,7 +221,7 @@ export class Game {
       pierce: d.pierce,
       range: cls.range,
       atkCd: 0,
-      skillCd: [0, 0, 0, 0],
+      skillCd: [0, 0, 0, 0, 0, 0], // 0-3 skills, 4-5 potion hotbar
       buffUntil: 0,
       buffMul: 1,
       stealthUntil: 0,
@@ -224,7 +230,12 @@ export class Game {
       kills: character.kills || 0,
       gold: character.gold || 0,
       attacking: 0,
+      mapId: "overworld",
     };
+
+    if (!Array.isArray(this.character.hotbarPotions) || this.character.hotbarPotions.length < 2) {
+      this.character.hotbarPotions = ["red_potion", "blue_potion"];
+    }
 
     this.localMesh = makePlayerMesh(character.classId, true);
     setNameplate(this.localMesh, character.name, 1, character.level, character.classId);
@@ -282,36 +293,113 @@ export class Game {
   }
 
   spawnNpcs() {
-    for (const m of this.npcMeshes) this.scene.remove(m);
+    const parent = this.overworld || this.scene;
+    for (const m of this.npcMeshes) parent.remove(m);
     this.npcMeshes = [];
     for (const npc of NpcService.list) {
       const mesh = makeNpcMesh(npc);
       mesh.position.set(npc.x, 0, npc.z);
       mesh.rotation.y = Math.atan2(-npc.x, -npc.z);
-      this.scene.add(mesh);
+      parent.add(mesh);
       this.npcMeshes.push(mesh);
     }
     this.refreshQuestMarkers();
   }
 
   spawnDemonTower() {
-    if (this.towerMesh) this.scene.remove(this.towerMesh);
-    if (this.arenaMesh) this.scene.remove(this.arenaMesh);
+    const ow = this.overworld || this.scene;
+    if (this.towerMesh) ow.remove(this.towerMesh);
+    if (this.dungeonRoot) this.scene.remove(this.dungeonRoot);
+
+    // Overworld landmark only
     this.towerMesh = makeDemonTowerMesh();
     this.towerMesh.position.set(DEMON_TOWER.entrance.x, 0, DEMON_TOWER.entrance.z);
-    this.scene.add(this.towerMesh);
-    this.arenaMesh = makeDemonArenaMesh();
-    this.arenaMesh.position.set(DEMON_TOWER.arena.x, 0, DEMON_TOWER.arena.z);
-    this.arenaMesh.visible = false;
-    this.scene.add(this.arenaMesh);
+    ow.add(this.towerMesh);
+
+    // Separate dungeon map root (own ground + arena)
+    this.dungeonRoot = makeDungeonMapRoot();
+    this.arenaMesh = this.dungeonRoot.userData.arena;
+    const off = DEMON_TOWER.portalOffset;
+    if (this.arenaMesh?.userData?.portal) {
+      this.arenaMesh.userData.portal.position.set(off.x, 0, off.z);
+      this.arenaMesh.userData.portal.visible = false;
+    }
+    if (this.arenaMesh?.userData?.portalLabel) {
+      this.arenaMesh.userData.portalLabel.position.set(off.x, 3.2, off.z);
+      this.arenaMesh.userData.portalLabel.visible = false;
+    }
+    this.scene.add(this.dungeonRoot);
+    this.switchMap("overworld");
+  }
+
+  /** True map switch — overworld vs Demon Tower instance */
+  switchMap(mapId) {
+    const map = MapService.set(mapId);
+    if (this.overworld) this.overworld.visible = mapId === "overworld";
+    if (this.dungeonRoot) this.dungeonRoot.visible = mapId === "demon_tower";
+    if (this.local) this.local.mapId = mapId;
+    if (this.scene) {
+      this.scene.background = new THREE.Color(map.background);
+      this.scene.fog = new THREE.Fog(map.fog, map.fogNear, map.fogFar);
+    }
+    this.ui.setMap?.(map.name, mapId);
+    // Hide remotes that are on another map
+    for (const [, r] of this.remotes) {
+      const mid = r.target?.mapId || r.state?.mapId || "overworld";
+      if (r.mesh) r.mesh.visible = mid === mapId && !r.target?.stealth;
+    }
   }
 
   _tryClickTower() {
+    if (!this.local || this.pendingDeath) return;
+    if (DungeonService.isInside() && DungeonService.run?.cleared) {
+      this.raycaster.setFromCamera(this.mouse.ndc, this.camera);
+      const portal = this.arenaMesh?.userData?.portal;
+      if (portal?.visible) {
+        const hits = this.raycaster.intersectObject(portal, true);
+        if (hits.length) {
+          this.useDemonPortal();
+          return;
+        }
+      }
+      return;
+    }
     if (!this.towerMesh || DungeonService.isInside()) return;
     this.raycaster.setFromCamera(this.mouse.ndc, this.camera);
     const hits = this.raycaster.intersectObject(this.towerMesh, true);
-    if (hits.length && dist2(this.local.x, this.local.z, DEMON_TOWER.entrance.x, DEMON_TOWER.entrance.z) < 10) {
+    if (
+      hits.length &&
+      dist2(this.local.x, this.local.z, DEMON_TOWER.entrance.x, DEMON_TOWER.entrance.z) < 14
+    ) {
       this.onOpenTower();
+    }
+  }
+
+  /** Local client owns Demon Tower combat while inside (host world sync must not wipe it). */
+  isDungeonAuthority() {
+    return DungeonService.isInside();
+  }
+
+  _setDungeonMapActive(active) {
+    this.switchMap(active ? "demon_tower" : "overworld");
+  }
+
+  useDemonPortal() {
+    if (!DungeonService.isInside()) return;
+    if (!DungeonService.run?.cleared) {
+      this.ui.toast("Clear the floor first");
+      return;
+    }
+    // Cooldown so standing on the pad does not spam
+    if (this._portalCd && this.time < this._portalCd) return;
+    this._portalCd = this.time + 1.4;
+    if (DungeonService.canAdvance()) {
+      this.advanceDemonFloor();
+      return;
+    }
+    if (DungeonService.isFinal()) {
+      this.ui.toast("Demon Tower conquered!");
+      this.exitDemonTower();
     }
   }
 
@@ -370,16 +458,19 @@ export class Game {
     cancelAnimationFrame(this._raf);
     if (unbind) this.bindInput(false);
     this.clearWorldEntities();
-    for (const m of this.npcMeshes || []) this.scene.remove(m);
+    const ow = this.overworld || this.scene;
+    for (const m of this.npcMeshes || []) ow.remove(m);
     this.npcMeshes = [];
     if (this.towerMesh) {
-      this.scene.remove(this.towerMesh);
+      ow.remove(this.towerMesh);
       this.towerMesh = null;
     }
-    if (this.arenaMesh) {
-      this.scene.remove(this.arenaMesh);
+    if (this.dungeonRoot) {
+      this.scene.remove(this.dungeonRoot);
+      this.dungeonRoot = null;
       this.arenaMesh = null;
     }
+    MapService.set("overworld");
     DungeonService.exit();
     if (this.localMesh) {
       this.scene.remove(this.localMesh);
@@ -404,7 +495,7 @@ export class Game {
   }
 
   seedWorld() {
-    if (DungeonService.isInside()) return;
+    if (DungeonService.isInside() || !MapService.isOverworld()) return;
     const seed = SpawnService.seedWild(this.character?.level || 1);
     for (const m of seed.metins) this.spawnMetin(m.x, m.z, m.templateId);
     for (const m of seed.mobs) this.spawnMob(m.x, m.z, m.templateId);
@@ -467,51 +558,135 @@ export class Game {
   // —— Demon Tower ——
   enterDemonTower({ withParty = false } = {}) {
     if (!this.local) return;
-    const gate = DungeonService.canEnter(this.local.id);
+    if (DungeonService.isInside()) {
+      this.ui.toast("Already inside the Demon Tower");
+      return;
+    }
+    const gate = DungeonService.canEnter(this.local.id, { withParty });
     if (!gate.ok) {
       this.ui.toast(gate.reason);
       return;
     }
-    const partyId = withParty && PartyService.party ? PartyService.party.id : null;
+
+    // Snapshot party before enter (leader pulls everyone on this list)
+    const partySnap =
+      withParty && PartyService.party
+        ? {
+            id: PartyService.party.id,
+            leaderId: PartyService.party.leaderId,
+            members: PartyService.party.members.map((m) => ({ ...m })),
+          }
+        : null;
+    const members = partySnap?.members?.length
+      ? partySnap.members
+      : [{ id: this.local.id, name: this.local.name }];
+    const memberIds = members.map((m) => m.id);
+    const partyId = partySnap?.id || null;
+
     const run = DungeonService.start({
       leaderId: this.local.id,
       partyId,
     });
-    const members = withParty && PartyService.party ? PartyService.party.members : [{ id: this.local.id }];
     this._beginDungeonFloor(1, true);
-    this.net.sendEvent({
+    const floorCfg = DungeonService.floorConfig(1);
+
+    const payload = {
       type: "dt_enter",
       from: this.local.id,
       instanceId: run.instanceId,
       floor: 1,
+      cfg: floorCfg,
+      arena: DEMON_TOWER.arena,
+      mapId: "demon_tower",
       partyId,
       leaderId: this.local.id,
-      members: members.map((m) => m.id),
-      party: PartyService.party,
-    });
+      members: memberIds,
+      party: partySnap,
+      // Spawn slots so every client lands on the same pad layout
+      slots: members.map((m, i) => ({
+        id: m.id,
+        ...DungeonService.arenaPos(i, members.length),
+      })),
+    };
+
+    // Reliable pull — party members must receive this to switch maps
+    if (this.net.sendEventReliable) this.net.sendEventReliable(payload);
+    else this.net.sendEvent(payload);
+
     audio.sfx("buff");
-    this.ui.toast("Entered Demon Tower — Floor 1");
+    if (withParty && memberIds.length > 1) {
+      this.ui.toast(`Pulling party (${memberIds.length}) into Demon Tower`);
+    } else {
+      this.ui.toast("Switched to Demon Tower map — Floor 1");
+    }
     this.onDungeonChange(DungeonService.run);
   }
 
+  /** Called on party members when leader starts a run */
   joinDemonTower(payload) {
-    if (!this.local || DungeonService.isInside()) return;
+    if (!this.local) return;
+    if (DungeonService.isInside()) {
+      // Already inside same instance — just sync floor
+      if (payload.instanceId && DungeonService.run?.instanceId === payload.instanceId) {
+        if (payload.floor && payload.floor !== DungeonService.run.floor) {
+          this._beginDungeonFloor(payload.floor, false);
+          if (payload.cfg) this._spawnDungeonFloor(payload.cfg);
+        }
+      }
+      return;
+    }
     DungeonService.start({
       leaderId: payload.leaderId,
       partyId: payload.partyId,
       instanceId: payload.instanceId,
     });
     if (payload.party) PartyService.applyRemoteParty(payload.party);
+
     this._beginDungeonFloor(payload.floor || 1, false);
-    this.ui.toast(`Joined Demon Tower — Floor ${payload.floor || 1}`);
+
+    // Land on assigned party slot if provided
+    const slot = (payload.slots || []).find((s) => s.id === this.local.id);
+    if (slot) {
+      this.local.x = slot.x;
+      this.local.z = slot.z;
+    }
+    this.local.mapId = "demon_tower";
+
+    if (payload.cfg) this._spawnDungeonFloor(payload.cfg);
+    // Immediate pose sync so leader sees you on the dungeon map
+    this.net.sendPlayer?.({
+      id: this.local.id,
+      name: this.local.name,
+      classId: this.local.classId,
+      x: this.local.x,
+      z: this.local.z,
+      rot: this.local.rot || 0,
+      hp: this.local.hp,
+      maxHp: this.local.maxHp,
+      level: this.local.level,
+      mapId: "demon_tower",
+      t: this.time,
+    });
+    this.ui.toast(`Party warped to Demon Tower — Floor ${payload.floor || 1}`);
     this.onDungeonChange(DungeonService.run);
     this.onPartyChange(PartyService.party);
+  }
+
+  /** True if this local player should be pulled by a dt_enter payload */
+  _shouldJoinDemonEnter(e) {
+    if (!this.local || !e) return false;
+    if ((e.members || []).includes(this.local.id)) return true;
+    if (e.party?.members?.some((m) => m.id === this.local.id)) return true;
+    if (e.partyId && PartyService.party?.id === e.partyId && PartyService.isInParty(this.local.id)) {
+      return true;
+    }
+    return false;
   }
 
   _beginDungeonFloor(floor, isLeader) {
     const cfg = DungeonService.setFloor(floor);
     this._clearDungeonMobs();
-    // Clear wild entities while inside
+    // Clear wild entities while inside (local instance view)
     for (const [id, m] of [...this.mobs]) {
       if (!m.dungeon) {
         this.scene.remove(m.mesh);
@@ -522,15 +697,24 @@ export class Game {
       this.scene.remove(m.mesh);
       this.metins.delete(id);
     }
-    if (this.arenaMesh) this.arenaMesh.visible = true;
-    const members = PartyService.party?.members || [{ id: this.local.id }];
+    this._setDungeonMapActive(true);
+    if (this.arenaMesh?.userData?.portal) this.arenaMesh.userData.portal.visible = false;
+    if (this.arenaMesh?.userData?.portalLabel) this.arenaMesh.userData.portalLabel.visible = false;
+
+    // Teleport whole party onto the dungeon map pad
+    const members =
+      (DungeonService.run?.partyId && PartyService.party?.members) ||
+      PartyService.party?.members ||
+      [{ id: this.local.id }];
     const idx = Math.max(0, members.findIndex((m) => m.id === this.local.id));
-    const pos = DungeonService.arenaPos(idx, members.length);
+    const pos = DungeonService.arenaPos(idx < 0 ? 0 : idx, Math.max(1, members.length));
     this.local.x = pos.x;
     this.local.z = pos.z;
-    this.local.invulnUntil = this.time + 1.2;
+    this.local.invulnUntil = this.time + 1.4;
+    this._portalCd = this.time + 0.8;
 
-    if (isLeader || this.net.isHost) {
+    // Leader (or solo) spawns the floor; party followers wait for dt_floor / payload.cfg
+    if (isLeader) {
       this._spawnDungeonFloor(cfg);
       this.net.sendEvent({
         type: "dt_floor",
@@ -538,6 +722,7 @@ export class Game {
         instanceId: DungeonService.run.instanceId,
         floor,
         cfg,
+        arena: DEMON_TOWER.arena,
       });
     }
     this.onDungeonChange(DungeonService.run);
@@ -623,30 +808,52 @@ export class Game {
     }
     const next = DungeonService.run.floor + 1;
     this._beginDungeonFloor(next, true);
-    this.net.sendEvent({
+    const cfg = DungeonService.floorConfig(next);
+    const members = PartyService.party?.members || [{ id: this.local.id }];
+    const payload = {
       type: "dt_advance",
       from: this.local.id,
       instanceId: DungeonService.run.instanceId,
       floor: next,
+      cfg,
+      arena: DEMON_TOWER.arena,
+      mapId: "demon_tower",
       party: PartyService.party,
-    });
-    this.ui.toast(`Ascending to Floor ${next}`);
+      members: members.map((m) => m.id),
+      slots: members.map((m, i) => ({
+        id: m.id,
+        ...DungeonService.arenaPos(i, members.length),
+      })),
+    };
+    if (this.net.sendEventReliable) this.net.sendEventReliable(payload);
+    else this.net.sendEvent(payload);
+    this.ui.toast(`Portal — Floor ${next}`);
   }
 
   exitDemonTower() {
     if (!DungeonService.isInside()) return;
     this._clearDungeonMobs();
     DungeonService.exit();
-    if (this.arenaMesh) this.arenaMesh.visible = false;
-    const spawn = {
-      x: this.character?.respawnX ?? DEMON_TOWER.entrance.x,
-      z: this.character?.respawnZ ?? DEMON_TOWER.entrance.z,
-    };
-    this.local.x = spawn.x;
-    this.local.z = spawn.z;
+    this.nearPortal = false;
+    if (this.arenaMesh?.userData?.portal) this.arenaMesh.userData.portal.visible = false;
+    if (this.arenaMesh?.userData?.portalLabel) this.arenaMesh.userData.portalLabel.visible = false;
+    this._setDungeonMapActive(false);
+    // Teleport back to overworld entrance
+    this.local.x = DEMON_TOWER.entrance.x - 5;
+    this.local.z = DEMON_TOWER.entrance.z + 5;
     this.local.invulnUntil = this.time + 2;
-    this.net.sendEvent({ type: "dt_exit", from: this.local.id });
-    this.ui.toast("Left Demon Tower");
+    const exitPayload = {
+      type: "dt_exit",
+      from: this.local.id,
+      members: PartyService.memberIds(),
+      mapId: "overworld",
+      exit: { x: this.local.x, z: this.local.z },
+    };
+    if (this.net.sendEventReliable) this.net.sendEventReliable(exitPayload);
+    else this.net.sendEvent(exitPayload);
+    this.ui.toast(
+      PartyService.size() > 1 ? "Party returned to the overworld" : "Returned to the overworld"
+    );
     this.onDungeonChange(null);
     if (this.net.isHost) setTimeout(() => this.seedWorld(), 400);
   }
@@ -737,7 +944,7 @@ export class Game {
     // Timers
     p.atkCd = Math.max(0, p.atkCd - dt);
     p.attacking = Math.max(0, p.attacking - dt);
-    for (let i = 0; i < 4; i++) p.skillCd[i] = Math.max(0, p.skillCd[i] - dt);
+    for (let i = 0; i < p.skillCd.length; i++) p.skillCd[i] = Math.max(0, p.skillCd[i] - dt);
     p.sp = Math.min(p.maxSp, p.sp + 5 * dt);
     if (this.time > p.buffUntil) p.buffMul = 1;
 
@@ -758,26 +965,65 @@ export class Game {
     } else {
       p.moving = false;
     }
-    p.x = clamp(p.x, -MAP_HALF + 1.2, MAP_HALF - 1.2);
-    p.z = clamp(p.z, -MAP_HALF + 1.2, MAP_HALF - 1.2);
+    if (MapService.is("demon_tower")) {
+      // Keep players on the dungeon platform
+      const a = DEMON_TOWER.arena;
+      const dPad = dist2(p.x, p.z, a.x, a.z);
+      if (dPad > 15.2) {
+        const pull = 15.2 / (dPad || 1);
+        p.x = a.x + (p.x - a.x) * pull;
+        p.z = a.z + (p.z - a.z) * pull;
+      }
+    } else {
+      const half = MapService.current.half || MAP_HALF;
+      p.x = clamp(p.x, -half + 1.2, half - 1.2);
+      p.z = clamp(p.z, -half + 1.2, half - 1.2);
+    }
     p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
 
-    // NPC / tower proximity
-    const near = NpcService.near(p.x, p.z, 3.5)[0] || null;
+    // NPC / tower / portal proximity
+    const near = !DungeonService.isInside() ? NpcService.near(p.x, p.z, 3.5)[0] || null : null;
     this.nearNpc = near;
     this.nearTower =
       !DungeonService.isInside() &&
-      dist2(p.x, p.z, DEMON_TOWER.entrance.x, DEMON_TOWER.entrance.z) < 5.5;
-    if (this.nearTower) this.ui.setNpcPrompt?.({ name: "Demon Tower" });
-    else this.ui.setNpcPrompt?.(near);
+      dist2(p.x, p.z, DEMON_TOWER.entrance.x, DEMON_TOWER.entrance.z) < 7.5;
+    const portalPos = demonPortalWorld();
+    const portalDist = dist2(p.x, p.z, portalPos.x, portalPos.z);
+    this.nearPortal =
+      DungeonService.isInside() && !!DungeonService.run?.cleared && portalDist < 2.8;
+    // Standing on the portal pad auto-triggers (Metin-style)
+    if (this.nearPortal) {
+      this.useDemonPortal();
+      this.ui.setNpcPrompt?.({
+        name: DungeonService.canAdvance() || !DungeonService.isInside()
+          ? "Portal — ascending…"
+          : "Portal — leaving…",
+      });
+    } else if (DungeonService.isInside() && DungeonService.run?.cleared && portalDist < 8) {
+      this.ui.setNpcPrompt?.({
+        name: DungeonService.canAdvance() ? "Blue portal — walk in / E" : "Exit portal — walk in / E",
+      });
+    } else if (this.nearTower) {
+      this.ui.setNpcPrompt?.({ name: "Demon Tower — Enter (E)" });
+    } else {
+      this.ui.setNpcPrompt?.(near);
+    }
 
-    // Demon Tower floor clear check
+    // Demon Tower floor clear check + VFX
     if (DungeonService.isInside()) {
       this._checkDungeonClear();
-      if (this.towerMesh?.userData?.top) this.towerMesh.userData.top.rotation.y += dt * 0.4;
       if (this.arenaMesh?.userData?.portal) {
-        this.arenaMesh.userData.portal.rotation.y += dt * 1.5;
-        this.arenaMesh.userData.portal.visible = !!DungeonService.run?.cleared;
+        const show = !!DungeonService.run?.cleared;
+        this.arenaMesh.userData.portal.visible = show;
+        if (this.arenaMesh.userData.portalLabel) this.arenaMesh.userData.portalLabel.visible = show;
+        if (show) {
+          const ring = this.arenaMesh.userData.portalRing;
+          if (ring) ring.rotation.z += dt * 1.8;
+          const col = this.arenaMesh.userData.portal.children?.find?.(
+            (c) => c.geometry?.type === "TorusGeometry" && c.position.y > 1
+          );
+          if (col) col.rotation.y += dt * 1.5;
+        }
       }
     }
 
@@ -789,6 +1035,13 @@ export class Game {
       if (this.keys.has(String(i + 1)) && p.skillCd[i] <= 0) {
         this.keys.delete(String(i + 1));
         this.castSkill(i);
+      }
+    }
+    for (let i = 0; i < 2; i++) {
+      const key = String(i + 5);
+      if (this.keys.has(key) && (p.skillCd[4 + i] || 0) <= 0) {
+        this.keys.delete(key);
+        this.useHotbarPotion(i);
       }
     }
     if (this.keys.has("f")) {
@@ -836,7 +1089,8 @@ export class Game {
       r.state.maxHp = t.maxHp || r.state.maxHp || 100;
       r.mesh.position.set(r.state.x, 0, r.state.z);
       r.mesh.rotation.y = r.state.rot;
-      r.mesh.visible = !t.stealth;
+      const sameMap = (t.mapId || "overworld") === MapService.currentId;
+      r.mesh.visible = sameMap && !t.stealth;
       setNameplate(r.mesh, t.name || "Player", (t.hp || 0) / (t.maxHp || 100), t.level || 1, t.classId);
       const moving =
         Math.hypot((t.x || 0) - (r._lx ?? t.x), (t.z || 0) - (r._lz ?? t.z)) > 0.02;
@@ -849,8 +1103,10 @@ export class Game {
       });
     }
 
-    // Host sim
-    if (this.net.isHost) {
+    // Host sim — Demon Tower uses local authority while inside
+    if (this.isDungeonAuthority()) {
+      this.updateDungeonWorld(dt);
+    } else if (this.net.isHost) {
       this.updateHostWorld(dt);
       this.worldAcc += dt;
       // ~6 Hz world sync — lighter on Realtime than 8–12 Hz under multiplayer load
@@ -908,6 +1164,7 @@ export class Game {
         stealth: stealth,
         attacking: p.attacking > 0,
         moving: p.moving,
+        mapId: p.mapId || MapService.currentId,
         t: this.time,
       });
     }
@@ -919,6 +1176,7 @@ export class Game {
         metins: p.metins,
         kills: p.kills,
         level: p.level,
+        mapId: p.mapId || MapService.currentId,
         name: p.name,
         classId: p.classId,
         color: p.color,
@@ -982,45 +1240,56 @@ export class Game {
     }
   }
 
+  updateDungeonWorld(dt) {
+    const players = this.allCombatants();
+    for (const [, mob] of this.mobs) {
+      if (!mob.dungeon) continue;
+      mob.atkT -= dt;
+      let best = null;
+      let bestD = 999;
+      for (const pl of players) {
+        if (pl.stealth) continue;
+        const d = dist2(mob.x, mob.z, pl.x, pl.z);
+        if (d < bestD) {
+          bestD = d;
+          best = pl;
+        }
+      }
+      let moving = false;
+      if (best && bestD < 22) {
+        const ang = Math.atan2(best.x - mob.x, best.z - mob.z);
+        if (bestD > 1.4) {
+          mob.x += Math.sin(ang) * mob.speed * dt;
+          mob.z += Math.cos(ang) * mob.speed * dt;
+          moving = true;
+        } else if (mob.atkT <= 0) {
+          mob.atkT = 1.1;
+          this.applyDamageToPlayer(best.id, mob.atk, "mob");
+        }
+        mob.mesh.rotation.y = ang;
+      }
+      // Keep mobs on the arena pad
+      const a = DEMON_TOWER.arena;
+      const dPad = dist2(mob.x, mob.z, a.x, a.z);
+      if (dPad > 14.5) {
+        const pull = 14.5 / (dPad || 1);
+        mob.x = a.x + (mob.x - a.x) * pull;
+        mob.z = a.z + (mob.z - a.z) * pull;
+      }
+      mob.mesh.position.set(mob.x, 0, mob.z);
+      animateMob(mob.mesh, dt, moving);
+    }
+    for (const [id, m] of [...this.mobs]) {
+      if (m.hp <= 0) {
+        this.scene.remove(m.mesh);
+        this.mobs.delete(id);
+      }
+    }
+  }
+
   updateHostWorld(dt) {
     if (DungeonService.isInside()) {
-      // Only simulate dungeon mobs while inside
-      const players = this.allCombatants();
-      for (const [, mob] of this.mobs) {
-        if (!mob.dungeon) continue;
-        mob.atkT -= dt;
-        let best = null;
-        let bestD = 999;
-        for (const pl of players) {
-          if (pl.stealth) continue;
-          const d = dist2(mob.x, mob.z, pl.x, pl.z);
-          if (d < bestD) {
-            bestD = d;
-            best = pl;
-          }
-        }
-        let moving = false;
-        if (best && bestD < 22) {
-          const ang = Math.atan2(best.x - mob.x, best.z - mob.z);
-          if (bestD > 1.4) {
-            mob.x += Math.sin(ang) * mob.speed * dt;
-            mob.z += Math.cos(ang) * mob.speed * dt;
-            moving = true;
-          } else if (mob.atkT <= 0) {
-            mob.atkT = 1.1;
-            this.applyDamageToPlayer(best.id, mob.atk, "mob");
-          }
-          mob.mesh.rotation.y = ang;
-        }
-        mob.mesh.position.set(mob.x, 0, mob.z);
-        animateMob(mob.mesh, dt, moving);
-      }
-      for (const [id, m] of [...this.mobs]) {
-        if (m.hp <= 0) {
-          this.scene.remove(m.mesh);
-          this.mobs.delete(id);
-        }
-      }
+      this.updateDungeonWorld(dt);
       return;
     }
 
@@ -1255,16 +1524,18 @@ export class Game {
   }
 
   meleeHit(p, dmg, cone, range = p.range) {
-    // Only host applies world damage; local player requests via events — but for responsiveness host OR local if host
-    if (!this.net.isHost) {
-      // still show local swing; host will also receive event and apply
+    const dungeonAuth = this.isDungeonAuthority();
+    if (!this.net.isHost && !dungeonAuth) {
+      // Host applies open-world damage from the melee event
       return;
     }
     for (const [, mob] of this.mobs) {
+      if (dungeonAuth && !mob.dungeon) continue;
       if (this.inCone(p.x, p.z, p.rot, mob.x, mob.z, range + 0.6, cone)) {
         this.damageMob(mob, dmg, p.id);
       }
     }
+    if (dungeonAuth) return;
     for (const [, met] of this.metins) {
       if (this.inCone(p.x, p.z, p.rot, met.x, met.z, range + 1, cone)) {
         this.damageMetin(met, dmg, p.id);
@@ -1273,18 +1544,22 @@ export class Game {
   }
 
   aoeHit(x, z, r, dmg, fromId, drain = false) {
-    if (!this.net.isHost) return;
+    const dungeonAuth = this.isDungeonAuthority();
+    if (!this.net.isHost && !dungeonAuth) return;
     let healed = 0;
     for (const [, mob] of this.mobs) {
+      if (dungeonAuth && !mob.dungeon) continue;
       if (dist2(x, z, mob.x, mob.z) <= r) {
         this.damageMob(mob, dmg, fromId);
         healed += dmg * 0.2;
       }
     }
-    for (const [, met] of this.metins) {
-      if (dist2(x, z, met.x, met.z) <= r) {
-        this.damageMetin(met, dmg, fromId);
-        healed += dmg * 0.15;
+    if (!dungeonAuth) {
+      for (const [, met] of this.metins) {
+        if (dist2(x, z, met.x, met.z) <= r) {
+          this.damageMetin(met, dmg, fromId);
+          healed += dmg * 0.15;
+        }
       }
     }
     if (drain && fromId === this.local?.id) {
@@ -1319,8 +1594,10 @@ export class Game {
   }
 
   resolveBolt(b) {
-    if (b.hit || !this.net.isHost) return;
+    const dungeonAuth = this.isDungeonAuthority() && b.owner === this.local?.id;
+    if (b.hit || (!this.net.isHost && !dungeonAuth)) return;
     for (const [, mob] of this.mobs) {
+      if (dungeonAuth && !mob.dungeon) continue;
       if (dist2(b.x, b.z, mob.x, mob.z) < 0.9) {
         this.damageMob(mob, b.dmg, b.owner);
         b.hit = true;
@@ -1328,6 +1605,7 @@ export class Game {
         return;
       }
     }
+    if (dungeonAuth) return;
     for (const [, met] of this.metins) {
       if (dist2(b.x, b.z, met.x, met.z) < 1.3) {
         this.damageMetin(met, b.dmg, b.owner);
@@ -1364,7 +1642,9 @@ export class Game {
         gold,
         xp,
       });
-      if (this.net.isHost) this.spawnLootAt(mob.x, mob.z, mob.dropTable || mob.kind, 1, gold);
+      if (this.net.isHost || (this.isDungeonAuthority() && fromId === this.local?.id)) {
+        this.spawnLootAt(mob.x, mob.z, mob.dropTable || mob.kind, 1, gold);
+      }
       if (fromId === this.local?.id) this.rewardKill(xp, gold, mob.kind === "ork" ? "ork" : "wolf");
     }
   }
@@ -1564,6 +1844,12 @@ export class Game {
     const xpLoss = Math.floor((this.character.xp || 0) * 0.05);
     this.character.xp = Math.max(0, this.character.xp - xpLoss);
 
+    if (DungeonService.isInside() || MapService.isDungeon()) {
+      this._clearDungeonMobs();
+      DungeonService.exit();
+      this.switchMap("overworld");
+      this.onDungeonChange(null);
+    }
     if (mode === "town") {
       p.x = this.character.respawnX ?? 0;
       p.z = this.character.respawnZ ?? 0;
@@ -1623,6 +1909,59 @@ export class Game {
     }
   }
 
+  /** Assign potion template to hotbar slot 0/1 (keys 5/6). Returns slot index or -1. */
+  assignPotionToHotbar(itemId) {
+    if (!this.character) return -1;
+    const def = getItem(itemId);
+    if (!def || def.slot !== "consumable" || !(def.heal || def.mana)) return -1;
+    if (!Array.isArray(this.character.hotbarPotions)) {
+      this.character.hotbarPotions = [null, null];
+    }
+    const hb = this.character.hotbarPotions;
+    // Prefer empty slot, else replace the other if same already equipped, else slot 0
+    let slot = hb.findIndex((id) => !id);
+    if (slot < 0) {
+      const same = hb.findIndex((id) => id === itemId);
+      slot = same >= 0 ? same : 0;
+    }
+    hb[slot] = itemId;
+    this.onCharacterChange(this.character, this.local);
+    return slot;
+  }
+
+  clearHotbarPotion(slot) {
+    if (!this.character?.hotbarPotions) return;
+    if (slot < 0 || slot > 1) return;
+    this.character.hotbarPotions[slot] = null;
+    this.onCharacterChange(this.character, this.local);
+  }
+
+  useHotbarPotion(slot) {
+    if (!this.character || !this.local) return;
+    if (slot < 0 || slot > 1) return;
+    if ((this.local.skillCd[4 + slot] || 0) > 0) return;
+    const itemId = this.character.hotbarPotions?.[slot];
+    if (!itemId) {
+      this.ui.toast("Empty potion slot — right-click a potion in Inventory");
+      return;
+    }
+    const stack = this.character.inventory.find((x) => x.itemId === itemId && (x.qty || 0) > 0);
+    if (!stack) {
+      this.ui.toast("No potions left");
+      return;
+    }
+    const err = useConsumable(this.character, stack.uid, this.local);
+    if (err) {
+      this.ui.toast(err);
+      return;
+    }
+    this.local.skillCd[4 + slot] = 0.8;
+    this.fx?.heal(this.local.x, this.local.z);
+    audio.sfx("heal");
+    this.ui.toast(`Used ${getItem(itemId)?.name || "potion"}`);
+    this.onCharacterChange(this.character, this.local);
+  }
+
   dropItem(uid) {
     if (!this.character || !this.local) return;
     const stack = this.character.inventory.find((x) => x.uid === uid);
@@ -1662,6 +2001,8 @@ export class Game {
 
   onWorldState(w) {
     if (!w) return;
+    // While inside Demon Tower, ignore open-world sync (would wipe the instance)
+    if (DungeonService.isInside()) return;
     const seenM = new Set();
     for (const m of w.mobs || []) {
       seenM.add(m.id);
@@ -1728,7 +2069,7 @@ export class Game {
       this.scene.add(mesh);
       r = {
         mesh,
-        state: { x: s.x, z: s.z, rot: s.rot || 0, hp: s.hp, maxHp: s.maxHp || 100 },
+        state: { x: s.x, z: s.z, rot: s.rot || 0, hp: s.hp, maxHp: s.maxHp || 100, mapId: s.mapId || "overworld" },
         target: s,
       };
       this.remotes.set(s.id, r);
@@ -1736,6 +2077,8 @@ export class Game {
       setNameplate(r.mesh, s.name || "Player", (s.hp || 100) / (s.maxHp || 100), s.level || 1, s.classId);
       r.target = s;
     }
+    const sameMap = (s.mapId || "overworld") === MapService.currentId;
+    r.mesh.visible = sameMap && !s.stealth;
   }
 
   onPeers(peers) {
@@ -1795,7 +2138,8 @@ export class Game {
     }
 
     if (e.type === "kill" && e.from === this.local?.id) {
-      if (!this.net.isHost) {
+      // Dungeon authority already rewarded locally; avoid double XP
+      if (!this.net.isHost && !DungeonService.isInside()) {
         if (e.kind === "metin") {
           this.local.metins += 1;
           this.character.metins = this.local.metins;
@@ -1852,29 +2196,52 @@ export class Game {
       this.onPartyChange(PartyService.party);
     }
 
-    // Demon Tower
+    // Demon Tower — leader pull teleports whole party onto the dungeon map
     if (e.type === "dt_enter" && e.from !== this.local?.id) {
-      const invited = (e.members || []).includes(this.local?.id);
-      if (invited && !DungeonService.isInside()) {
+      if (this._shouldJoinDemonEnter(e)) {
         this.joinDemonTower(e);
       }
     }
     if (e.type === "dt_floor" && e.from !== this.local?.id && DungeonService.isInside()) {
-      DungeonService.setFloor(e.floor);
-      this._clearDungeonMobs();
-      // Followers don't re-spawn; wait for world sync of mobs — spawn locally for responsiveness
-      if (!this.net.isHost && e.cfg) this._spawnDungeonFloor(e.cfg);
-      this.onDungeonChange(DungeonService.run);
+      // Same instance only
+      if (e.instanceId && DungeonService.run?.instanceId && e.instanceId !== DungeonService.run.instanceId) {
+        /* ignore other runs */
+      } else {
+        DungeonService.setFloor(e.floor);
+        this._clearDungeonMobs();
+        if (e.cfg) this._spawnDungeonFloor(e.cfg);
+        this.onDungeonChange(DungeonService.run);
+      }
     }
     if (e.type === "dt_advance" && e.from !== this.local?.id && DungeonService.isInside()) {
       this._beginDungeonFloor(e.floor, false);
+      if (e.cfg) this._spawnDungeonFloor(e.cfg);
+      const slot = (e.slots || []).find((s) => s.id === this.local?.id);
+      if (slot) {
+        this.local.x = slot.x;
+        this.local.z = slot.z;
+      }
+      this.local.mapId = "demon_tower";
     }
     if (e.type === "dt_cleared" && DungeonService.isInside()) {
       DungeonService.markCleared();
       this.onDungeonChange(DungeonService.run);
     }
-    if (e.type === "dt_exit" && e.from === this.local?.id) {
-      /* self */
+    if (
+      e.type === "dt_exit" &&
+      e.from !== this.local?.id &&
+      DungeonService.isInside() &&
+      Array.isArray(e.members) &&
+      e.members.includes(this.local?.id)
+    ) {
+      this._clearDungeonMobs();
+      DungeonService.exit();
+      this.switchMap("overworld");
+      this.local.x = e.exit?.x ?? DEMON_TOWER.entrance.x - 5;
+      this.local.z = e.exit?.z ?? DEMON_TOWER.entrance.z + 5;
+      this.local.mapId = "overworld";
+      this.onDungeonChange(null);
+      this.ui.toast("Party left Demon Tower");
     }
   }
 }

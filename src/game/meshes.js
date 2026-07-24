@@ -178,13 +178,18 @@ export function createScene() {
   sun.shadow.camera.bottom = -75;
   scene.add(sun);
 
+  // Full overworld map root (ground + city + wilderness) — swapped vs dungeon maps
+  const overworld = new THREE.Group();
+  overworld.name = "overworld";
+
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 64, 64),
     new THREE.MeshStandardMaterial({ map: makeGrassTexture(), roughness: 0.95 })
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
-  scene.add(ground);
+  ground.name = "world_ground";
+  overworld.add(ground);
 
   const stoneTex = texNoise("#8a7a5c", 40);
   stoneTex.repeat.set(10, 10);
@@ -195,7 +200,7 @@ export function createScene() {
   plaza.rotation.x = -Math.PI / 2;
   plaza.position.y = 0.04;
   plaza.receiveShadow = true;
-  scene.add(plaza);
+  overworld.add(plaza);
 
   const roadMat = mat("#6a5f4e", { roughness: 0.95, flat: false });
   for (const rot of [0, Math.PI / 2]) {
@@ -203,10 +208,9 @@ export function createScene() {
     road.position.y = 0.08;
     road.rotation.y = rot;
     road.receiveShadow = true;
-    scene.add(road);
+    overworld.add(road);
   }
 
-  // Fountain
   const fountain = new THREE.Group();
   const fbase = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.7, 0.5, 12), mat("#7a7568"));
   fbase.position.y = 0.25;
@@ -227,7 +231,7 @@ export function createScene() {
   const fpillar = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.38, 2.3, 8), mat("#9a9080"));
   fpillar.position.y = 1.45;
   fountain.add(fpillar);
-  scene.add(fountain);
+  overworld.add(fountain);
 
   const colors = ["#6a5a48", "#5a4a3a", "#7a6a55", "#4a4035"];
   const layouts = [
@@ -242,10 +246,10 @@ export function createScene() {
     const b = makeBuilding(3.8 + (i % 3) * 0.8, 3.4 + (i % 4) * 0.7, 3.8 + (i % 2) * 1.1, colors[i % colors.length]);
     b.position.set(bx, 0, bz);
     b.rotation.y = (i * 0.7) % Math.PI;
-    scene.add(b);
+    overworld.add(b);
   });
 
-  addCityWalls(scene);
+  addCityWalls(overworld);
 
   const cliff = mat("#4a453c", { roughness: 1 });
   const wallGeo = new THREE.BoxGeometry(MAP_SIZE + 2, 2.6, 1.5);
@@ -259,7 +263,7 @@ export function createScene() {
     w.position.set(x, 1.3, z);
     w.rotation.y = ry;
     w.castShadow = true;
-    scene.add(w);
+    overworld.add(w);
   }
 
   const leaf = mat("#2d5a28");
@@ -267,6 +271,10 @@ export function createScene() {
   for (let i = 0; i < 80; i++) {
     const ang = Math.random() * Math.PI * 2;
     const r = CITY_RADIUS + 6 + Math.random() * (MAP_HALF - CITY_RADIUS - 8);
+    // Keep SE corner clear for Demon Tower entrance
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (Math.hypot(x - 54, z + 54) < 16) continue;
     const g = new THREE.Group();
     const t = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, 1.5, 5), trunk);
     t.position.y = 0.75;
@@ -279,23 +287,98 @@ export function createScene() {
     const c2 = new THREE.Mesh(new THREE.SphereGeometry(0.8, 6, 5), leaf);
     c2.position.set(0.45, 2.75, -0.25);
     g.add(c2);
-    g.position.set(Math.cos(ang) * r, 0, Math.sin(ang) * r);
+    g.position.set(x, 0, z);
     g.scale.setScalar(0.8 + Math.random() * 0.55);
-    scene.add(g);
+    overworld.add(g);
   }
 
   const rockMat = mat("#5c564c");
   for (let i = 0; i < 45; i++) {
     const ang = Math.random() * Math.PI * 2;
     const r = CITY_RADIUS + 5 + Math.random() * 42;
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (Math.hypot(x - 54, z + 54) < 14) continue;
     const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.55 + Math.random() * 1.3, 0), rockMat);
-    rock.position.set(Math.cos(ang) * r, 0.45, Math.sin(ang) * r);
+    rock.position.set(x, 0.45, z);
     rock.rotation.set(Math.random(), Math.random(), Math.random());
     rock.castShadow = true;
-    scene.add(rock);
+    overworld.add(rock);
   }
 
-  return { scene, sun };
+  scene.add(overworld);
+  return { scene, sun, overworld, ground };
+}
+
+/** Separate Demon Tower map — own ground, lighting accent, arena. Not the city. */
+export function makeDungeonMapRoot() {
+  const root = new THREE.Group();
+  root.name = "map_demon_tower";
+  root.visible = false;
+
+  const voidFloor = new THREE.Mesh(
+    new THREE.CircleGeometry(28, 56),
+    new THREE.MeshStandardMaterial({ color: "#0c080a", roughness: 1, metalness: 0.05 })
+  );
+  voidFloor.rotation.x = -Math.PI / 2;
+  voidFloor.position.y = -0.02;
+  voidFloor.receiveShadow = true;
+  root.add(voidFloor);
+
+  // Ring of void stones so the map edge is obvious
+  const stone = mat("#2a1818", { roughness: 0.95 });
+  for (let i = 0; i < 24; i++) {
+    const ang = (i / 24) * Math.PI * 2;
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(1.4, 5 + (i % 3), 1.4), stone);
+    pillar.position.set(Math.cos(ang) * 24, 2.2, Math.sin(ang) * 24);
+    pillar.rotation.y = ang;
+    pillar.castShadow = true;
+    root.add(pillar);
+  }
+
+  const ember = new THREE.PointLight("#c43c2e", 1.1, 40);
+  ember.position.set(0, 8, 0);
+  root.add(ember);
+  const cool = new THREE.PointLight("#3a60aa", 0.55, 30);
+  cool.position.set(0, 4, 10);
+  root.add(cool);
+
+  const arena = makeDemonArenaMesh();
+  arena.position.set(0, 0, 0);
+  arena.visible = true;
+  root.add(arena);
+
+  // Floor label
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 96;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.fillRect(40, 16, 432, 64);
+  ctx.font = "bold 28px Cinzel, serif";
+  ctx.fillStyle = "#ff6a4a";
+  ctx.textAlign = "center";
+  ctx.fillText("DEMON TOWER", 256, 44);
+  ctx.font = "16px Noto Sans KR, sans-serif";
+  ctx.fillStyle = "#e8d48b";
+  ctx.fillText("Instance map — clear floor · blue portal", 256, 68);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const title = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  title.position.set(0, 9.5, 0);
+  title.scale.set(8, 1.5, 1);
+  root.add(title);
+
+  root.userData = {
+    kind: "dungeon_map",
+    mapId: "demon_tower",
+    arena,
+    portal: arena.userData.portal,
+    portalLabel: arena.userData.portalLabel,
+    portalRing: arena.userData.portalRing,
+    title,
+  };
+  return root;
 }
 
 export function createCamera() {
@@ -1222,7 +1305,7 @@ export function makeDemonTowerMesh() {
   ctx.fillText("Demon Tower", 128, 28);
   ctx.font = "13px Noto Sans KR, sans-serif";
   ctx.fillStyle = "#e8d48b";
-  ctx.fillText("Click / E — Enter", 128, 48);
+  ctx.fillText("SE wilderness · E", 128, 48);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
@@ -1270,13 +1353,58 @@ export function makeDemonArenaMesh() {
     root.add(flame);
   }
 
-  const portal = new THREE.Mesh(
-    new THREE.TorusGeometry(1.4, 0.18, 10, 28),
-    new THREE.MeshBasicMaterial({ color: "#6ec8ff", transparent: true, opacity: 0.75 })
+  // Walkable floor portal pad (offset set by Game via portalOffset)
+  const portal = new THREE.Group();
+  const pad = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.4, 2.6, 0.25, 28),
+    new THREE.MeshStandardMaterial({
+      color: "#1a3a66",
+      emissive: "#2a6aaa",
+      emissiveIntensity: 0.85,
+      roughness: 0.45,
+    })
   );
-  portal.position.set(0, 1.6, -13);
+  pad.position.y = 0.2;
+  pad.receiveShadow = true;
+  portal.add(pad);
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(2.35, 0.16, 10, 32),
+    new THREE.MeshBasicMaterial({ color: "#7ec8ff", transparent: true, opacity: 0.95 })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.36;
+  portal.add(ring);
+  const column = new THREE.Mesh(
+    new THREE.TorusGeometry(1.35, 0.14, 10, 28),
+    new THREE.MeshBasicMaterial({ color: "#9fd4ff", transparent: true, opacity: 0.85 })
+  );
+  column.position.y = 1.7;
+  portal.add(column);
+  const glow = new THREE.PointLight("#6ec8ff", 1.6, 14);
+  glow.position.set(0, 1.4, 0);
+  portal.add(glow);
+  // Default local offset; Game repositions to DEMON_TOWER.portalOffset
+  portal.position.set(0, 0, 9);
   root.add(portal);
-  root.userData = { portal, kind: "demon_arena" };
+
+  const pc = document.createElement("canvas");
+  pc.width = 256;
+  pc.height = 64;
+  const pctx = pc.getContext("2d");
+  pctx.fillStyle = "rgba(0,0,0,0.6)";
+  pctx.fillRect(16, 8, 224, 48);
+  pctx.font = "bold 18px Cinzel, serif";
+  pctx.fillStyle = "#9fd4ff";
+  pctx.textAlign = "center";
+  pctx.fillText("Stand here · Next", 128, 38);
+  const ptex = new THREE.CanvasTexture(pc);
+  ptex.colorSpace = THREE.SRGBColorSpace;
+  const psprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: ptex, transparent: true, depthWrite: false }));
+  psprite.position.set(0, 3.2, 9);
+  psprite.scale.set(3.8, 0.95, 1);
+  root.add(psprite);
+
+  root.userData = { portal, portalLabel: psprite, portalRing: ring, kind: "demon_arena" };
   return root;
 }
 

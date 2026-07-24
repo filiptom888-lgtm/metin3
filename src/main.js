@@ -14,9 +14,10 @@ import { DungeonService } from "./services/DungeonService.js";
 import { KINGDOMS, SPECS } from "./data/meta.js";
 import { derivedStats, xpForLevel } from "./game/character.js";
 import { EQUIP_SLOTS as SLOTS, RARITY_COLOR, ITEM_TEMPLATES } from "./data/items.js";
-import { SHOP_CATALOG } from "./data/npcs.js";
+import { SHOP_CATALOG, SHOP_TABS } from "./data/npcs.js";
 import { UPGRADE_TABLE } from "./data/upgrades.js";
-import { floorConfig } from "./data/demonTower.js";
+import { DEMON_TOWER, floorConfig } from "./data/demonTower.js";
+import { MapService } from "./services/MapService.js";
 import { audio } from "./audio/Audio.js";
 
 const $ = (s) => document.querySelector(s);
@@ -37,18 +38,61 @@ const ui = {
   toastTimer: 0,
   bindLocal(p, cls) {
     $("#hud-name").textContent = p.name;
-    const skills = SkillService.listFor(p.classId, game.character?.spec).slice(0, 4);
-    const list = skills.length ? skills : cls.skills;
     $("#hud-level").textContent = `Lv.${p.level} ${cls.name}`;
+    this.renderHotbar(p, game.character);
+    this.chat(`${p.name} entered the kingdom`, "sys");
+  },
+  renderHotbar(p, ch) {
+    const cls = CLASSES[p?.classId] || CLASSES.warrior;
+    const skills = SkillService.listFor(p.classId, ch?.spec).slice(0, 4);
+    const list = skills.length ? skills : cls.skills;
     const bar = $("#skill-bar");
+    if (!bar) return;
     bar.innerHTML = "";
     list.forEach((sk, i) => {
       const el = document.createElement("div");
       el.className = "skill-slot";
+      el.dataset.slot = String(i);
       el.innerHTML = `<span class="k">${i + 1}</span><span class="sk-name">${sk.name}</span><div class="cd" hidden></div>`;
       bar.appendChild(el);
     });
-    this.chat(`${p.name} entered the kingdom`, "sys");
+    const sep = document.createElement("div");
+    sep.className = "hotbar-sep";
+    sep.setAttribute("aria-hidden", "true");
+    bar.appendChild(sep);
+
+    const potions = ensureHotbar(ch);
+    for (let i = 0; i < 2; i++) {
+      const itemId = potions[i];
+      const def = itemId ? getItem(itemId) : null;
+      const qty = itemId
+        ? (ch?.inventory || []).filter((s) => s.itemId === itemId).reduce((n, s) => n + (s.qty || 0), 0)
+        : 0;
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "skill-slot potion-slot" + (def ? "" : " empty");
+      el.dataset.potionSlot = String(i);
+      el.title = def ? `${def.name} (key ${i + 5}) — click use · right-click clear` : `Empty potion slot ${i + 5}`;
+      el.innerHTML = `
+        <span class="k">${i + 5}</span>
+        <span class="sk-ico">${def?.icon || "·"}</span>
+        ${def ? `<span class="sk-qty">×${qty}</span>` : `<span class="sk-name">Pot</span>`}
+        <div class="cd" hidden></div>
+      `;
+      el.addEventListener("click", () => {
+        game.useHotbarPotion(i);
+        this.renderHotbar(game.local, game.character);
+        if (!$("#panel-inv").hidden) renderInventory(game.character);
+      });
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        game.clearHotbarPotion(i);
+        audio.sfx("ui");
+        this.renderHotbar(game.local, game.character);
+        ui.toast(`Cleared hotbar ${i + 5}`);
+      });
+      bar.appendChild(el);
+    }
   },
   updateHud(p, ch) {
     const cls = CLASSES[p.classId];
@@ -78,14 +122,42 @@ const ui = {
       const xpR = Math.max(0, Math.min(1, ch.xp / xpNext));
       $("#bar-xp").style.transform = `scaleX(${xpR})`;
     }
-    const slots = $("#skill-bar").children;
-    for (let i = 0; i < slots.length; i++) {
-      const cd = p.skillCd[i];
-      const cdEl = slots[i].querySelector(".cd");
-      if (cd > 0.05) {
-        cdEl.hidden = false;
-        cdEl.textContent = cd.toFixed(1);
-      } else cdEl.hidden = true;
+    // Refresh potion qty icons cheaply
+    const bar = $("#skill-bar");
+    if (bar && ch) {
+      const potionBtns = bar.querySelectorAll("[data-potion-slot]");
+      const potions = ensureHotbar(ch);
+      potionBtns.forEach((el) => {
+        const i = Number(el.dataset.potionSlot);
+        const itemId = potions[i];
+        const def = itemId ? getItem(itemId) : null;
+        const qty = itemId
+          ? (ch.inventory || []).filter((s) => s.itemId === itemId).reduce((n, s) => n + (s.qty || 0), 0)
+          : 0;
+        const ico = el.querySelector(".sk-ico");
+        const qEl = el.querySelector(".sk-qty");
+        if (ico) ico.textContent = def?.icon || "·";
+        if (qEl) qEl.textContent = def ? `×${qty}` : "";
+        el.classList.toggle("empty", !def);
+        const cd = p.skillCd?.[4 + i] || 0;
+        const cdEl = el.querySelector(".cd");
+        if (cdEl) {
+          if (cd > 0.05) {
+            cdEl.hidden = false;
+            cdEl.textContent = cd.toFixed(1);
+          } else cdEl.hidden = true;
+        }
+      });
+      const skillSlots = bar.querySelectorAll(".skill-slot:not(.potion-slot)");
+      skillSlots.forEach((el, i) => {
+        const cd = p.skillCd?.[i] || 0;
+        const cdEl = el.querySelector(".cd");
+        if (!cdEl) return;
+        if (cd > 0.05) {
+          cdEl.hidden = false;
+          cdEl.textContent = cd.toFixed(1);
+        } else cdEl.hidden = true;
+      });
     }
   },
   chat(msg, kind = "msg") {
@@ -113,6 +185,12 @@ const ui = {
   },
   setRoom(code) {
     $("#room-chip").textContent = code;
+  },
+  setMap(name, mapId) {
+    const el = $("#map-chip");
+    if (!el) return;
+    el.textContent = name || "Kingdom";
+    el.classList.toggle("dungeon", mapId === "demon_tower");
   },
   setHost(isHost) {
     const el = $("#host-chip");
@@ -161,28 +239,50 @@ const ui = {
     ctx.beginPath();
     ctx.arc(w / 2, h / 2, w / 2 - 2, 0, Math.PI * 2);
     ctx.clip();
-    ctx.fillStyle = "#1a2e18";
+    const dungeon = MapService.is("demon_tower");
+    ctx.fillStyle = dungeon ? "#1a0a0e" : "#1a2e18";
     ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = "rgba(201,162,39,0.45)";
-    ctx.beginPath();
-    const cr = (22 / MAP_SIZE) * w;
-    ctx.arc(w / 2, h / 2, cr, 0, Math.PI * 2);
-    ctx.stroke();
-    const to = (x, z) => [((x + MAP_SIZE / 2) / MAP_SIZE) * w, ((z + MAP_SIZE / 2) / MAP_SIZE) * h];
-    ctx.fillStyle = "#c43c2e";
-    for (const [, m] of metins) {
-      const [px, py] = to(m.x, m.z);
+    const mapSize = dungeon ? 40 : MAP_SIZE;
+    const to = (x, z) => [((x + mapSize / 2) / mapSize) * w, ((z + mapSize / 2) / mapSize) * h];
+    if (!dungeon) {
+      ctx.strokeStyle = "rgba(201,162,39,0.45)";
       ctx.beginPath();
-      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      const cr = (22 / MAP_SIZE) * w;
+      ctx.arc(w / 2, h / 2, cr, 0, Math.PI * 2);
+      ctx.stroke();
+      const [tx, ty] = to(DEMON_TOWER.entrance.x, DEMON_TOWER.entrance.z);
+      ctx.fillStyle = "#ff6a4a";
+      ctx.beginPath();
+      ctx.moveTo(tx, ty - 4);
+      ctx.lineTo(tx + 3.5, ty + 3);
+      ctx.lineTo(tx - 3.5, ty + 3);
+      ctx.closePath();
       ctx.fill();
+    } else {
+      ctx.strokeStyle = "rgba(196,60,46,0.7)";
+      ctx.beginPath();
+      ctx.arc(w / 2, h / 2, w * 0.38, 0, Math.PI * 2);
+      ctx.stroke();
     }
-    ctx.fillStyle = "#6b8f3a";
+    if (!dungeon) {
+      ctx.fillStyle = "#c43c2e";
+      for (const [, m] of metins) {
+        const [px, py] = to(m.x, m.z);
+        ctx.beginPath();
+        ctx.arc(px, py, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.fillStyle = dungeon ? "#e23a2e" : "#6b8f3a";
     for (const [, m] of mobs) {
+      if (dungeon && !m.dungeon) continue;
       const [px, py] = to(m.x, m.z);
       ctx.fillRect(px - 1, py - 1, 2, 2);
     }
     ctx.fillStyle = "#4db0ff";
     for (const [, r] of remotes) {
+      const mid = r.target?.mapId || r.state?.mapId || "overworld";
+      if (mid !== MapService.currentId) continue;
       const [px, py] = to(r.state.x, r.state.z);
       ctx.beginPath();
       ctx.arc(px, py, 2.5, 0, Math.PI * 2);
@@ -290,8 +390,21 @@ function renderCharacterPanel(ch) {
   }
 }
 
+function ensureHotbar(ch) {
+  if (!ch) return [null, null];
+  if (!Array.isArray(ch.hotbarPotions) || ch.hotbarPotions.length < 2) {
+    ch.hotbarPotions = ["red_potion", "blue_potion"];
+  }
+  return ch.hotbarPotions;
+}
+
+function isPotionItem(def) {
+  return !!(def && def.slot === "consumable" && (def.heal || def.mana) && def.id !== "upgrade_ore");
+}
+
 function renderInventory(ch) {
   if (!ch) return;
+  ensureHotbar(ch);
   renderDoll($("#equip-doll"), ch);
   const grid = $("#inv-grid");
   grid.innerHTML = "";
@@ -318,14 +431,18 @@ function renderInventory(ch) {
     cell.style.borderColor = RARITY_COLOR[def.rarity] || "#666";
     const up = stack.upgrade ? `+${stack.upgrade}` : "";
     cell.innerHTML = `${up ? `<span class="up-tag">${up}</span>` : ""}<span class="ico">${def.icon}</span><span class="qty">×${stack.qty}</span>`;
-    cell.title = ItemService.displayName(stack);
+    cell.title = isPotionItem(def)
+      ? `${ItemService.displayName(stack)} — click use · right-click hotbar`
+      : ItemService.displayName(stack);
     cell.addEventListener("mouseenter", () => {
       if (!tip) return;
       const bons = (stack.bonuses || []).map((b) => `${b.stat}+${b.value}`).join(", ");
       tip.hidden = false;
       tip.innerHTML = `<b style="color:${RARITY_COLOR[def.rarity]}">${ItemService.displayName(stack)}</b><br>${def.slot}${
         def.atk ? ` · ATK ${def.atk}` : ""
-      }${def.def ? ` · DEF ${def.def}` : ""}${bons ? `<br>${bons}` : ""}`;
+      }${def.def ? ` · DEF ${def.def}` : ""}${bons ? `<br>${bons}` : ""}${
+        isPotionItem(def) ? "<br><i>Right-click → hotbar 5/6</i>" : ""
+      }`;
     });
     cell.addEventListener("click", () => {
       audio.sfx("ui");
@@ -333,11 +450,20 @@ function renderInventory(ch) {
       else game.equipItem(stack.uid);
       renderInventory(game.character);
       renderCharacterPanel(game.character);
+      ui.renderHotbar(game.local, game.character);
     });
     cell.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       audio.sfx("ui");
-      game.dropItem(stack.uid);
+      if (e.shiftKey || !isPotionItem(def)) {
+        game.dropItem(stack.uid);
+        renderInventory(game.character);
+        ui.renderHotbar(game.local, game.character);
+        return;
+      }
+      const slot = game.assignPotionToHotbar(stack.itemId);
+      ui.toast(slot >= 0 ? `${def.name} → hotbar ${slot + 5}` : "Hotbar full");
+      ui.renderHotbar(game.local, game.character);
       renderInventory(game.character);
     });
     grid.appendChild(cell);
@@ -390,114 +516,244 @@ function renderQuests(ch) {
   body.appendChild(list);
 }
 
+let shopTab = "potions";
+let smithSelectedUid = null;
+
+function sellPrice(stack) {
+  const t = getItem(stack.itemId);
+  if (!t) return 0;
+  return Math.floor((t.sell || 10) * (1 + (stack.upgrade || 0) * 0.15));
+}
+
 function renderNpcPanel(npc) {
   $("#npc-title").textContent = npc.name;
   const body = $("#npc-body");
   body.innerHTML = "";
   const ch = game.character;
   if (npc.role === "shop") {
-    const list = document.createElement("div");
-    list.className = "shop-list";
-    for (const offer of SHOP_CATALOG) {
-      const def = getItem(offer.id);
-      const row = document.createElement("div");
-      row.className = "npc-line";
-      row.innerHTML = `<span>${def?.icon || ""} ${def?.name || offer.id}</span><span>${offer.price} Yang</span>`;
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "btn-mini";
-      btn.textContent = "Buy";
-      btn.onclick = () => {
-        const err = NpcService.buy(ch, offer.id);
-        if (err) ui.toast(err);
-        else {
-          game.local.gold = ch.gold;
-          ui.toast(`Bought ${def?.name}`);
-          renderInventory(ch);
-        }
-      };
-      row.appendChild(btn);
-      list.appendChild(row);
-    }
-    body.appendChild(list);
-    const sellHint = document.createElement("p");
-    sellHint.className = "inv-hint";
-    sellHint.textContent = "Open Inventory (I) and use Sell near this NPC, or click items below.";
-    body.appendChild(sellHint);
-    for (const stack of ch.inventory.slice(0, 12)) {
-      const def = getItem(stack.itemId);
-      if (!def) continue;
-      const row = document.createElement("div");
-      row.className = "npc-line";
-      row.innerHTML = `<span>Sell ${def.name}</span>`;
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "btn-mini";
-      btn.textContent = "Sell";
-      btn.onclick = () => {
-        const err = NpcService.sell(ch, stack.uid);
-        if (err) ui.toast(err);
-        else {
-          game.local.gold = ch.gold;
-          ui.toast("Sold");
-          renderNpcPanel(npc);
-          renderInventory(ch);
-        }
-      };
-      row.appendChild(btn);
-      body.appendChild(row);
-    }
+    renderShopUi(body, npc, ch);
   } else if (npc.role === "blacksmith") {
-    const intro = document.createElement("p");
-    intro.className = "sub";
-    intro.textContent = "Upgrade gear +0…+9. Higher levels can downgrade or destroy.";
-    body.appendChild(intro);
-    for (const stack of ch.inventory) {
-      const def = getItem(stack.itemId);
-      if (!def || def.slot === "consumable") continue;
-      const level = stack.upgrade || 0;
-      if (level >= 9) continue;
-      const recipe = UPGRADE_TABLE[level];
-      const row = document.createElement("div");
-      row.className = "npc-line";
-      row.innerHTML = `<span>${def.icon} ${def.name} +${level} → +${level + 1}<br><small>${Math.floor(recipe.chance * 100)}% · ${recipe.yang} Yang</small></span>`;
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "btn-mini";
-      btn.textContent = "Upgrade";
-      btn.onclick = () => {
-        const res = NpcService.upgrade(ch, stack.uid);
-        game.local.gold = ch.gold;
-        ui.toast(res.msg);
-        game.syncDerived();
-        renderNpcPanel(npc);
-        renderInventory(ch);
-      };
-      row.appendChild(btn);
-      body.appendChild(row);
-    }
+    renderSmithUi(body, npc, ch);
   } else if (npc.role === "teleport") {
+    const wrap = document.createElement("div");
+    wrap.className = "tele-grid";
     for (const k of KINGDOMS) {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "btn btn-ghost-full";
-      btn.textContent = `Gate to ${k.name}`;
+      btn.className = "tele-card";
+      btn.innerHTML = `<b>${k.name}</b><span>Gate</span>`;
       btn.onclick = () => {
         game.local.x = k.village.x;
         game.local.z = k.village.z;
         ui.toast(`Teleported to ${k.name}`);
         $("#panel-npc").hidden = true;
       };
-      body.appendChild(btn);
+      wrap.appendChild(btn);
     }
+    body.appendChild(wrap);
   } else if (npc.role === "quest") {
-    renderQuests(ch);
-    body.appendChild($("#quest-body").cloneNode(true));
-    // simpler: just open quests
     $("#panel-npc").hidden = true;
     $("#panel-quests").hidden = false;
     renderQuests(ch);
   }
+}
+
+function renderShopUi(body, npc, ch) {
+  const head = document.createElement("div");
+  head.className = "npc-yang";
+  head.innerHTML = `<span>Your Yang</span><b>${ch.gold ?? 0}</b>`;
+  body.appendChild(head);
+
+  const tabs = document.createElement("div");
+  tabs.className = "npc-tabs";
+  for (const t of SHOP_TABS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "npc-tab" + (shopTab === t.id ? " active" : "");
+    btn.textContent = t.label;
+    btn.onclick = () => {
+      shopTab = t.id;
+      renderNpcPanel(npc);
+    };
+    tabs.appendChild(btn);
+  }
+  body.appendChild(tabs);
+
+  const grid = document.createElement("div");
+  grid.className = "shop-grid";
+
+  if (shopTab === "sell") {
+    const sellable = (ch.inventory || []).filter((s) => getItem(s.itemId));
+    if (!sellable.length) {
+      const empty = document.createElement("p");
+      empty.className = "sub shop-empty";
+      empty.textContent = "Nothing to sell.";
+      body.appendChild(empty);
+      return;
+    }
+    for (const stack of sellable) {
+      const def = getItem(stack.itemId);
+      const price = sellPrice(stack);
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "shop-card sell";
+      card.style.borderColor = RARITY_COLOR[def.rarity] || "";
+      card.innerHTML = `
+        <span class="ico">${def.icon || "·"}</span>
+        <span class="nm">${def.name}${stack.upgrade ? ` +${stack.upgrade}` : ""}</span>
+        <span class="pr">+${price}</span>
+        ${stack.qty > 1 ? `<span class="qty">${stack.qty}</span>` : ""}
+      `;
+      card.title = `Sell for ${price} Yang`;
+      card.onclick = () => {
+        const err = NpcService.sell(ch, stack.uid);
+        if (err) ui.toast(err);
+        else {
+          game.local.gold = ch.gold;
+          audio.sfx("ui");
+          ui.toast(`Sold for ${price} Yang`);
+          renderNpcPanel(npc);
+          renderInventory(ch);
+        }
+      };
+      grid.appendChild(card);
+    }
+  } else {
+    const offers = SHOP_CATALOG.filter((o) => o.tab === shopTab);
+    for (const offer of offers) {
+      const def = getItem(offer.id);
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "shop-card";
+      card.style.borderColor = RARITY_COLOR[def?.rarity] || "";
+      const can = (ch.gold ?? 0) >= offer.price;
+      if (!can) card.classList.add("cant");
+      card.innerHTML = `
+        <span class="ico">${def?.icon || "·"}</span>
+        <span class="nm">${def?.name || offer.id}</span>
+        <span class="pr">${offer.price}</span>
+      `;
+      card.title = `Buy ${def?.name || offer.id} — ${offer.price} Yang`;
+      card.onclick = () => {
+        const err = NpcService.buy(ch, offer.id);
+        if (err) ui.toast(err);
+        else {
+          game.local.gold = ch.gold;
+          audio.sfx("ui");
+          ui.toast(`Bought ${def?.name}`);
+          renderNpcPanel(npc);
+          renderInventory(ch);
+        }
+      };
+      grid.appendChild(card);
+    }
+  }
+  body.appendChild(grid);
+}
+
+function renderSmithUi(body, npc, ch) {
+  const gear = (ch.inventory || []).filter((stack) => {
+    const def = getItem(stack.itemId);
+    return def && def.slot !== "consumable" && (stack.upgrade || 0) < 9;
+  });
+
+  if (smithSelectedUid && !gear.some((g) => g.uid === smithSelectedUid)) {
+    smithSelectedUid = null;
+  }
+  if (!smithSelectedUid && gear[0]) smithSelectedUid = gear[0].uid;
+
+  const head = document.createElement("div");
+  head.className = "npc-yang";
+  head.innerHTML = `<span>Your Yang</span><b>${ch.gold ?? 0}</b>`;
+  body.appendChild(head);
+
+  const layout = document.createElement("div");
+  layout.className = "smith-layout";
+
+  const pick = document.createElement("div");
+  pick.className = "smith-pick";
+  const pickLabel = document.createElement("div");
+  pickLabel.className = "field-label";
+  pickLabel.textContent = "Select gear";
+  pick.appendChild(pickLabel);
+
+  if (!gear.length) {
+    const empty = document.createElement("p");
+    empty.className = "sub shop-empty";
+    empty.textContent = "No upgradable gear in your bag.";
+    pick.appendChild(empty);
+  } else {
+    const grid = document.createElement("div");
+    grid.className = "smith-grid";
+    for (const stack of gear) {
+      const def = getItem(stack.itemId);
+      const level = stack.upgrade || 0;
+      const cell = document.createElement("button");
+      cell.type = "button";
+      cell.className = "smith-cell" + (stack.uid === smithSelectedUid ? " selected" : "");
+      cell.style.borderColor = RARITY_COLOR[def.rarity] || "";
+      cell.innerHTML = `
+        <span class="ico">${def.icon || "·"}</span>
+        <span class="up-tag">+${level}</span>
+      `;
+      cell.title = `${def.name} +${level}`;
+      cell.onclick = () => {
+        smithSelectedUid = stack.uid;
+        renderNpcPanel(npc);
+      };
+      grid.appendChild(cell);
+    }
+    pick.appendChild(grid);
+  }
+  layout.appendChild(pick);
+
+  const forge = document.createElement("div");
+  forge.className = "smith-forge";
+  const selected = gear.find((g) => g.uid === smithSelectedUid);
+  if (!selected) {
+    forge.innerHTML = `<p class="sub">Bring gear to the anvil to raise +0…+9.</p>`;
+  } else {
+    const def = getItem(selected.itemId);
+    const level = selected.upgrade || 0;
+    const recipe = UPGRADE_TABLE[level];
+    const chance = Math.floor((recipe?.chance || 0) * 100);
+    const risk = [];
+    if (recipe?.downgrade) risk.push("can drop");
+    if (recipe?.destroyOnFail) risk.push("can break");
+    forge.innerHTML = `
+      <div class="forge-item" style="border-color:${RARITY_COLOR[def.rarity] || ""}">
+        <span class="ico">${def.icon || "·"}</span>
+        <div>
+          <b>${def.name}</b>
+          <span>+${level} → +${level + 1}</span>
+        </div>
+      </div>
+      <div class="forge-stats">
+        <div><em>Success</em><b>${chance}%</b></div>
+        <div><em>Cost</em><b>${recipe?.yang ?? 0}</b></div>
+      </div>
+      ${risk.length ? `<p class="forge-risk">${risk.join(" · ")}</p>` : `<p class="forge-safe">Safe fail</p>`}
+    `;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-primary forge-btn";
+    btn.textContent = `Upgrade (+${level + 1})`;
+    btn.disabled = (ch.gold ?? 0) < (recipe?.yang ?? 0);
+    btn.onclick = () => {
+      const res = NpcService.upgrade(ch, selected.uid);
+      game.local.gold = ch.gold;
+      audio.sfx(res.ok ? "buff" : "ui");
+      ui.toast(res.msg);
+      game.syncDerived();
+      // Keep selection if item still exists
+      if (!ch.inventory.some((s) => s.uid === selected.uid)) smithSelectedUid = null;
+      renderNpcPanel(npc);
+      renderInventory(ch);
+    };
+    forge.appendChild(btn);
+  }
+  layout.appendChild(forge);
+  body.appendChild(layout);
 }
 
 function showLobbyView(name) {
@@ -613,12 +869,24 @@ function renderTowerPanel() {
   const info = $("#tower-party-info");
   const party = PartyService.party;
   if (info) {
-    info.textContent = party
-      ? `Party ready · ${party.members.length} members · leader starts the run`
-      : "Solo run — or form a party (P) first";
+    if (party) {
+      const names = party.members.map((m) => m.name || "Player").join(", ");
+      info.textContent = PartyService.isLeader(game.local?.id)
+        ? `Party enter pulls everyone: ${names}`
+        : `In party — wait for leader to Enter with party (${party.members.length})`;
+    } else {
+      info.textContent = "Solo run — or form a party (P), then Enter with party";
+    }
   }
   const partyBtn = $("#btn-dt-party");
-  if (partyBtn) partyBtn.disabled = !party || !PartyService.isLeader(game.local?.id);
+  if (partyBtn) {
+    const ok = !!party && PartyService.isLeader(game.local?.id) && party.members.length >= 1;
+    partyBtn.disabled = !ok;
+    partyBtn.textContent =
+      party && party.members.length > 1
+        ? `Enter with party (${party.members.length})`
+        : "Enter with party";
+  }
 }
 
 function renderDungeonPanel() {
@@ -632,14 +900,22 @@ function renderDungeonPanel() {
   if (status) {
     status.textContent = run.cleared
       ? run.floor >= 7
-        ? "Tower cleared! Claim glory and leave."
-        : "Floor cleared — ascend when ready."
+        ? "Tower cleared! Use the portal or Finish tower."
+        : "Floor cleared — use the blue portal (E) or Next floor."
       : "Defeat all demons on this floor.";
   }
   if (next) {
     next.textContent = run.floor >= 7 && run.cleared ? "Finish tower" : "Next floor";
     next.disabled = !run.cleared;
   }
+  syncDungeonHudButtons(run);
+}
+
+function syncDungeonHudButtons(run) {
+  const next = $("#btn-dt-hud-next");
+  if (!next || !run) return;
+  next.textContent = run.floor >= 7 && run.cleared ? "Finish" : "Next floor";
+  next.disabled = !run.cleared;
 }
 
 function updateDungeonHud(run) {
@@ -652,7 +928,12 @@ function updateDungeonHud(run) {
   hud.hidden = false;
   const cfg = floorConfig(run.floor);
   $("#dungeon-hud-floor").textContent = cfg?.name || `Floor ${run.floor}`;
-  $("#dungeon-hud-hint").textContent = run.cleared ? "Floor clear — open panel / Next floor" : "Slay all demons";
+  $("#dungeon-hud-hint").textContent = run.cleared
+    ? run.floor >= 7
+      ? "Walk onto exit portal"
+      : "Walk onto the blue portal"
+    : "Slay all demons";
+  syncDungeonHudButtons(run);
 }
 
 function renderSpecRow() {
@@ -762,7 +1043,15 @@ game.onPartyChange = () => {
 
 game.onDungeonChange = (run) => {
   updateDungeonHud(run);
-  if (!$("#panel-dungeon").hidden) renderDungeonPanel();
+  if (run) {
+    // Keep dungeon panel in sync; open it on enter / floor clear so buttons are obvious
+    if ($("#panel-dungeon").hidden && run.cleared) {
+      $("#panel-dungeon").hidden = false;
+    }
+    renderDungeonPanel();
+  } else {
+    $("#panel-dungeon").hidden = true;
+  }
 };
 
 ui.requestSave = async (toast = true) => {
@@ -815,22 +1104,45 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
+$("#btn-hud-inv")?.addEventListener("click", () => {
+  audio.sfx("ui");
+  togglePanel("inv");
+});
+$("#btn-hud-char")?.addEventListener("click", () => {
+  audio.sfx("ui");
+  togglePanel("char");
+});
+$("#btn-hud-quests")?.addEventListener("click", () => {
+  audio.sfx("ui");
+  togglePanel("quests");
+});
+
 $("#btn-dt-solo")?.addEventListener("click", () => {
   $("#panel-tower").hidden = true;
   game.enterDemonTower({ withParty: false });
+  $("#panel-dungeon").hidden = false;
+  renderDungeonPanel();
 });
 $("#btn-dt-party")?.addEventListener("click", () => {
   $("#panel-tower").hidden = true;
   game.enterDemonTower({ withParty: true });
-});
-$("#btn-dt-next")?.addEventListener("click", () => {
-  game.advanceDemonFloor();
+  $("#panel-dungeon").hidden = false;
   renderDungeonPanel();
 });
-$("#btn-dt-exit")?.addEventListener("click", () => {
+function onNextFloorClick() {
+  game.advanceDemonFloor();
+  renderDungeonPanel();
+  updateDungeonHud(DungeonService.run);
+}
+$("#btn-dt-next")?.addEventListener("click", onNextFloorClick);
+$("#btn-dt-hud-next")?.addEventListener("click", onNextFloorClick);
+function onExitTowerClick() {
   $("#panel-dungeon").hidden = true;
   game.exitDemonTower();
-});
+  updateDungeonHud(null);
+}
+$("#btn-dt-exit")?.addEventListener("click", onExitTowerClick);
+$("#btn-dt-hud-exit")?.addEventListener("click", onExitTowerClick);
 $("#btn-party-accept")?.addEventListener("click", () => {
   game.acceptPartyInvite();
   renderPartyPanel();

@@ -314,7 +314,7 @@ button, input { font: inherit; color: inherit; }
   text-shadow: 0 2px 8px #000;
 }
 .chip-row { display: flex; gap: 0.35rem; flex-wrap: wrap; }
-#room-chip, #host-chip, #players-chip {
+#room-chip, #map-chip, #host-chip, #players-chip {
   font-size: 0.65rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -324,6 +324,34 @@ button, input { font: inherit; color: inherit; }
   color: #e8d48b;
 }
 #host-chip.host { border-color: #e8d48b; box-shadow: 0 0 8px rgba(201, 162, 39, 0.35); }
+#map-chip.dungeon {
+  border-color: #c43c2e;
+  color: #ff6a4a;
+  background: linear-gradient(180deg, rgba(60, 18, 14, 0.92), rgba(18, 6, 6, 0.95));
+}
+.hud-menu-btns {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.15rem;
+  pointer-events: auto;
+}
+.hud-menu-btn {
+  min-width: 52px;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid #a8841a;
+  background: linear-gradient(180deg, rgba(70, 52, 18, 0.95), rgba(22, 14, 6, 0.96));
+  color: #ffe9a0;
+  font-family: var(--font-d);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+.hud-menu-btn:hover {
+  border-color: #e8d48b;
+  filter: brightness(1.12);
+}
 
 .m2-minimap {
   position: absolute;
@@ -443,7 +471,17 @@ button, input { font: inherit; color: inherit; }
   text-align: center;
   line-height: 1.1;
   padding: 0.2rem;
+  cursor: default;
 }
+.skill-slot.potion-slot {
+  cursor: pointer;
+  border-color: #3a6a4a;
+  background:
+    radial-gradient(circle at 30% 25%, rgba(120, 255, 180, 0.12), transparent 50%),
+    linear-gradient(180deg, #1e2e22, #0c120e);
+}
+.skill-slot.potion-slot:hover { filter: brightness(1.15); }
+.skill-slot.potion-slot.empty { opacity: 0.55; }
 .skill-slot .k {
   position: absolute;
   top: 2px;
@@ -453,6 +491,15 @@ button, input { font: inherit; color: inherit; }
   text-shadow: 0 0 4px #000;
 }
 .skill-slot .sk-name { max-width: 100%; }
+.skill-slot .sk-ico { font-size: 1.25rem; line-height: 1; }
+.skill-slot .sk-qty {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  font-size: 0.58rem;
+  color: #ffe9a0;
+  text-shadow: 0 1px 2px #000;
+}
 .skill-slot .cd {
   position: absolute;
   inset: 0;
@@ -461,6 +508,13 @@ button, input { font: inherit; color: inherit; }
   place-items: center;
   font-size: 0.75rem;
   color: #ffe08a;
+}
+.hotbar-sep {
+  width: 3px;
+  align-self: stretch;
+  margin: 4px 2px;
+  background: linear-gradient(180deg, transparent, #a8841a, transparent);
+  opacity: 0.7;
 }
 .hotbar-hint {
   margin-top: 0.35rem;
@@ -841,6 +895,7 @@ button, input { font: inherit; color: inherit; }
 .menu-actions .btn { margin-top: 0.5rem; }
 .panel-menu { width: min(320px, 90vw); text-align: center; }
 .panel-npc, .panel-quests, .panel-party, .panel-tower, .panel-dungeon { width: min(420px, 94vw); }
+.panel-npc-wide { width: min(460px, 94vw); }
 .panel-death { width: min(360px, 92vw); text-align: center; z-index: 40; }
 .party-invite {
   margin-top: 0.75rem;
@@ -866,11 +921,12 @@ button, input { font: inherit; color: inherit; }
   left: 50%;
   transform: translateX(-50%);
   z-index: 12;
-  padding: 0.45rem 1rem;
-  background: rgba(40, 10, 10, 0.85);
+  padding: 0.5rem 1rem 0.55rem;
+  background: rgba(40, 10, 10, 0.9);
   border: 1px solid #c43c2e;
   text-align: center;
-  pointer-events: none;
+  pointer-events: auto;
+  min-width: 220px;
 }
 .dungeon-hud b {
   display: block;
@@ -879,6 +935,16 @@ button, input { font: inherit; color: inherit; }
   letter-spacing: 0.08em;
 }
 .dungeon-hud span { font-size: 0.75rem; color: var(--mist); }
+.dungeon-hud-actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: center;
+  margin-top: 0.45rem;
+}
+.dungeon-hud-actions .btn-mini:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 .field-label {
   text-align: left;
@@ -959,6 +1025,191 @@ button, input { font: inherit; color: inherit; }
   font-size: 0.85rem;
 }
 .shop-list, .quest-list { margin-top: 0.4rem; }
+
+.npc-yang {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.55rem;
+  font-size: 0.8rem;
+  color: var(--mist);
+}
+.npc-yang b {
+  font-family: var(--font-d);
+  color: var(--gold-soft);
+  font-size: 1rem;
+}
+.npc-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.3rem;
+  margin-bottom: 0.65rem;
+}
+.npc-tab {
+  border: 1px solid rgba(201, 162, 39, 0.28);
+  background: rgba(12, 18, 14, 0.9);
+  color: var(--mist);
+  padding: 0.4rem 0.2rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.npc-tab.active {
+  border-color: var(--gold);
+  color: var(--gold-soft);
+  background: rgba(60, 42, 12, 0.55);
+}
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+}
+.shop-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.55rem 0.3rem 0.45rem;
+  min-height: 88px;
+  border: 2px solid #666;
+  background: linear-gradient(180deg, rgba(40, 32, 18, 0.9), rgba(8, 8, 6, 0.96));
+  color: inherit;
+  cursor: pointer;
+}
+.shop-card:hover { filter: brightness(1.12); }
+.shop-card.cant { opacity: 0.45; }
+.shop-card .ico { font-size: 1.55rem; line-height: 1; }
+.shop-card .nm {
+  font-size: 0.68rem;
+  text-align: center;
+  line-height: 1.15;
+  color: var(--mist);
+  max-width: 100%;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.shop-card .pr {
+  font-size: 0.72rem;
+  color: var(--gold-soft);
+  font-family: var(--font-d);
+}
+.shop-card.sell .pr { color: #8fd49a; }
+.shop-card .qty {
+  position: absolute;
+  right: 4px;
+  bottom: 3px;
+  font-size: 0.62rem;
+  color: var(--gold-soft);
+}
+.shop-empty { text-align: center; padding: 1rem 0.5rem; }
+
+.smith-layout {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr;
+  gap: 0.65rem;
+  align-items: start;
+}
+.smith-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.35rem;
+}
+.smith-cell {
+  position: relative;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border: 2px solid #666;
+  background: linear-gradient(180deg, rgba(40, 32, 18, 0.9), rgba(8, 8, 6, 0.96));
+  color: inherit;
+  cursor: pointer;
+}
+.smith-cell .ico { font-size: 1.4rem; }
+.smith-cell .up-tag {
+  position: absolute;
+  left: 3px;
+  top: 2px;
+  font-size: 0.6rem;
+  color: #ffe28a;
+}
+.smith-cell.selected {
+  outline: 1px solid var(--gold);
+  box-shadow: inset 0 0 0 1px rgba(201, 162, 39, 0.35);
+}
+.smith-forge {
+  padding: 0.65rem;
+  border: 1px solid rgba(201, 162, 39, 0.3);
+  background: rgba(20, 12, 8, 0.55);
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.forge-item {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.45rem;
+  border: 1px solid rgba(201, 162, 39, 0.25);
+  background: rgba(0, 0, 0, 0.25);
+}
+.forge-item .ico { font-size: 1.6rem; }
+.forge-item b { display: block; font-family: var(--font-d); font-size: 0.9rem; }
+.forge-item span { font-size: 0.75rem; color: var(--mist); }
+.forge-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
+.forge-stats div {
+  padding: 0.4rem;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(201, 162, 39, 0.15);
+}
+.forge-stats em {
+  display: block;
+  font-style: normal;
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mist);
+}
+.forge-stats b {
+  font-family: var(--font-d);
+  color: var(--gold-soft);
+}
+.forge-risk { margin: 0; font-size: 0.72rem; color: #e08a6a; }
+.forge-safe { margin: 0; font-size: 0.72rem; color: #8fd49a; }
+.forge-btn { margin-top: auto; width: 100%; }
+.tele-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.4rem;
+}
+.tele-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid rgba(201, 162, 39, 0.28);
+  background: rgba(12, 18, 14, 0.9);
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.tele-card:hover { border-color: var(--gold); }
+.tele-card b { font-family: var(--font-d); }
+.tele-card span { font-size: 0.75rem; color: var(--mist); }
+
+@media (max-width: 520px) {
+  .shop-grid { grid-template-columns: repeat(3, 1fr); }
+  .smith-layout { grid-template-columns: 1fr; }
+  .npc-tabs { grid-template-columns: repeat(2, 1fr); }
+}
 
 @media (max-width: 800px) {
   .m2-bottom { grid-template-columns: 1fr; gap: 0.5rem; }

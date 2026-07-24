@@ -210,7 +210,18 @@ export class WorldNet {
   }
 
   sendEvent(evt) {
-    this._broadcast("evt", evt);
+    return this._broadcast("evt", evt);
+  }
+
+  /** Retry broadcast a few times — used for party dungeon pulls */
+  sendEventReliable(evt, tries = 6, gapMs = 180) {
+    let n = 0;
+    const attempt = () => {
+      if (this._broadcast("evt", evt)) return;
+      n += 1;
+      if (n < tries) setTimeout(attempt, gapMs);
+    };
+    attempt();
   }
 
   async updatePresence(patch) {

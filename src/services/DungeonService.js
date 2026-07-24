@@ -5,7 +5,7 @@ import { PartyService } from "./PartyService.js";
 export const DungeonService = {
   enabled: true,
   tower: DEMON_TOWER,
-  /** @type {{ instanceId: string, floor: number, leaderId: string, partyId: string|null, active: boolean } | null} */
+  /** @type {{ instanceId: string, floor: number, leaderId: string, partyId: string|null, active: boolean, cleared: boolean } | null} */
   run: null,
 
   floorConfig,
@@ -49,11 +49,18 @@ export const DungeonService = {
     this.run = null;
   },
 
-  /** Party may enter together if local is leader or solo */
-  canEnter(localId) {
-    if (!PartyService.party) return { ok: true, withParty: false };
-    if (PartyService.isLeader(localId)) return { ok: true, withParty: true };
-    return { ok: false, reason: "Only the party leader can enter the Demon Tower" };
+  /**
+   * Solo always allowed. Party enter only for the leader.
+   * @param {string} localId
+   * @param {{ withParty?: boolean }} opts
+   */
+  canEnter(localId, { withParty = false } = {}) {
+    if (!withParty) return { ok: true, withParty: false };
+    if (!PartyService.party) return { ok: false, reason: "Form a party first (P)" };
+    if (!PartyService.isLeader(localId)) {
+      return { ok: false, reason: "Only the party leader can start a party run" };
+    }
+    return { ok: true, withParty: true };
   },
 
   arenaPos(index = 0, total = 1) {
