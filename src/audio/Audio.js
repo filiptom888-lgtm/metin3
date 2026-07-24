@@ -1,7 +1,12 @@
 /**
- * BGM from /music/bgm.mp3 when available, procedural village theme as fallback.
+ * BGM prefers /music/bgm.mp3; if Vercel serves a Git LFS pointer, falls back to
+ * the GitHub media URL. Procedural theme is last resort only.
  * SFX stay procedural via Web Audio.
  */
+const BGM_LOCAL = "/music/bgm.mp3";
+const BGM_REMOTE =
+  "https://media.githubusercontent.com/media/filiptom888-lgtm/metin3/master/public/music/bgm.mp3";
+
 export class AudioManager {
   constructor() {
     this.ctx = null;
@@ -18,7 +23,6 @@ export class AudioManager {
     this._melodyTimer = 0;
     this._bassTimer = 0;
     this._bgmEl = null;
-    this._bgmMedia = null;
     this._usingFileBgm = false;
   }
 
@@ -30,16 +34,9 @@ export class AudioManager {
     this.master = this.ctx.createGain();
     this.musicGain = this.ctx.createGain();
     this.sfxGain = this.ctx.createGain();
-    // Soft music bus with gentle high shelf warmth
-    const musicFilter = this.ctx.createBiquadFilter();
-    musicFilter.type = "lowpass";
-    musicFilter.frequency.value = 5200;
-    musicFilter.Q.value = 0.35;
-    this.musicGain.connect(musicFilter);
-    musicFilter.connect(this.master);
+    this.musicGain.connect(this.master);
     this.sfxGain.connect(this.master);
     this.master.connect(this.ctx.destination);
-    this._musicFilter = musicFilter;
     this._applyVolumes();
     if (this.ctx.state === "suspended") await this.ctx.resume();
     this._started = true;
@@ -51,7 +48,11 @@ export class AudioManager {
     this.master.gain.value = this.muted ? 0 : 1;
     if (this.musicGain) this.musicGain.gain.value = this.musicVol;
     if (this.sfxGain) this.sfxGain.gain.value = this.sfxVol;
-    if (this._bgmEl) this._bgmEl.volume = 1; // routed through musicGain
+    // File BGM uses the element volume (not Web Audio graph — avoids CORS/LFS issues)
+    if (this._bgmEl) {
+      this._bgmEl.muted = this.muted;
+      this._bgmEl.volume = this.muted ? 0 : this.musicVol;
+    }
   }
 
   setMusicVolume(v) {
@@ -90,41 +91,81 @@ export class AudioManager {
     if (!this.ctx || this._bgmNodes.length || this._bgmEl) return;
     this._bgmOn = true;
 
-    const startedFile = await this._startFileBgm();
-    if (startedFile) return;
+    const url = await this._resolveBgmUrl();
+    if (url) {
+      const ok = await this._playFileBgm(url);
+      if (ok) return;
+    }
 
     this._startProceduralBgm();
   }
 
-  async _startFileBgm() {
+  /** Prefer local asset; skip Git LFS pointer stubs and use GitHub media instead. */
+  async _resolveBgmUrl() {
     try {
-      const el = new Audio("/music/bgm.mp3");
+      const res = await fetch(BGM_LOCAL, { method: "HEAD", cache: "no-store" });
+      if (res.ok) {
+        const len = Number(res.headers.get("content-length") || 0);
+        // Real OST is ~100MB; LFS pointer is ~130 bytes
+        if (len > 100_000) return BGM_LOCAL;
+      }
+    } catch {
+      /* try GET probe */
+    }
+
+    try {
+      const res = await fetch(BGM_LOCAL, {
+        headers: { Range: "bytes=0-63" },
+        cache: "no-store",
+      });
+      if (res.ok || res.status === 206) {
+        const text = await res.text();
+        if (!text.startsWith("version https://git-lfs.github.com")) {
+          const len = Number(res.headers.get("content-length") || text.length);
+          if (len > 100_000 || (!text.startsWith("version https://") && text.length > 64)) {
+            return BGM_LOCAL;
+          }
+        }
+      }
+    } catch {
+      /* remote fallback */
+    }
+
+    // Production without Vercel Git LFS enabled
+    return BGM_REMOTE;
+  }
+
+  async _playFileBgm(url) {
+    try {
+      const el = new Audio(url);
       el.loop = true;
       el.preload = "auto";
-      el.crossOrigin = "anonymous";
+      el.muted = this.muted;
+      el.volume = this.muted ? 0 : this.musicVol;
 
-      const ok = await new Promise((resolve) => {
+      const canPlay = await new Promise((resolve) => {
         let settled = false;
         const done = (v) => {
           if (settled) return;
           settled = true;
           resolve(v);
         };
-        el.addEventListener("canplaythrough", () => done(true), { once: true });
+        el.addEventListener("canplay", () => done(true), { once: true });
         el.addEventListener("error", () => done(false), { once: true });
-        // Timeout — fall back to procedural if the big file is slow
-        setTimeout(() => done(el.readyState >= 2), 4000);
+        // Large file — don't require canplaythrough; give it time to buffer
+        setTimeout(() => done(el.readyState >= 2), 12000);
         el.load();
       });
-      if (!ok) return false;
+      if (!canPlay) {
+        el.removeAttribute("src");
+        el.load();
+        return false;
+      }
 
-      // MediaElementSource can only be created once per element
-      const src = this.ctx.createMediaElementSource(el);
-      src.connect(this.musicGain);
       this._bgmEl = el;
-      this._bgmMedia = src;
       this._usingFileBgm = true;
-      this._bgmNodes.push(src);
+      // Marker so startBgm won't double-start procedural
+      this._bgmNodes.push({ kind: "file" });
 
       await el.play();
       return true;
@@ -141,12 +182,10 @@ export class AudioManager {
         this._bgmEl.removeAttribute("src");
         this._bgmEl.load();
       }
-      this._bgmMedia?.disconnect?.();
     } catch {
       /* ignore */
     }
     this._bgmEl = null;
-    this._bgmMedia = null;
     this._usingFileBgm = false;
   }
 
@@ -155,8 +194,7 @@ export class AudioManager {
     this._step = 0;
     const t0 = this.ctx.currentTime + 0.05;
 
-    // Warm major pad (C major-ish open voicing) — airy, not dark
-    const padNotes = [261.63, 329.63, 392.0, 523.25]; // C4 E4 G4 C5
+    const padNotes = [261.63, 329.63, 392.0, 523.25];
     for (let i = 0; i < padNotes.length; i++) {
       const osc = this.ctx.createOscillator();
       const g = this.ctx.createGain();
@@ -212,7 +250,6 @@ export class AudioManager {
     this._bgmNodes = [];
   }
 
-  /** Lead melody — plucked pentatonic phrases */
   _melodyStep() {
     if (!this.ctx || this.muted || !this._bgmOn || this._usingFileBgm) return;
     const scale = [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5];
