@@ -971,6 +971,30 @@ export function setNameplate(mesh, name, hpRatio = 1, level = 1, classId) {
   drawPlate(mesh, name, cls.name, level, hpRatio);
 }
 
+/** Attach HUD nameplate to any root (low-poly or skinned GLB). */
+export function attachPlayerNameplate(root, classId, y = 2.15) {
+  if (!root) return;
+  if (root.userData?.labelCanvas) return;
+  const canvas = document.createElement("canvas");
+  canvas.width = 320;
+  canvas.height = 96;
+  const ctx = canvas.getContext("2d");
+  const tex = new THREE.CanvasTexture(canvas);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+  sprite.position.y = y;
+  sprite.scale.set(2.8, 0.85, 1);
+  root.add(sprite);
+  root.userData = {
+    ...root.userData,
+    labelCanvas: canvas,
+    labelCtx: ctx,
+    labelTex: tex,
+    classId,
+    animPhase: 0,
+    attacking: 0,
+  };
+}
+
 export function makeMetinMesh(tier = 1, colorOverride = null) {
   const colors = ["#8b1e1e", "#1e4a8b", "#6b1e8b", "#8b6b1e", "#1e8b4a"];
   const color = colorOverride || colors[(tier - 1) % colors.length];

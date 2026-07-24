@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Hero model test</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.185.1/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.185.1/examples/jsm/"
+        }
+      }
+    </script>
+    <style>
+      html, body { margin: 0; height: 100%; background: #1a1814; color: #e8d48b; font-family: Georgia, serif; }
+      #hud { position: fixed; left: 12px; top: 12px; z-index: 2; background: rgba(0,0,0,.55); padding: 10px 14px; border: 1px solid #c9a227; }
+      canvas { display: block; width: 100%; height: 100%; }
+      button { margin-right: 6px; margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="hud">
+      <div><b>Hero GLB test</b></div>
+      <div id="status">Loading…</div>
+      <div>
+        <button id="btn-idle">Idle</button>
+        <button id="btn-walk">Walk</button>
+        <button id="btn-run">Run</button>
+      </div>
+    </div>
+    <script type="module">
+      import * as THREE from "three";
+      import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+      import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+      const status = document.getElementById("status");
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color("#2a2418");
+      scene.fog = new THREE.Fog("#2a2418", 8, 28);
+      const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 80);
+      camera.position.set(2.2, 1.6, 3.4);
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.shadowMap.enabled = true;
+      document.body.appendChild(renderer.domElement);
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 0.9, 0);
+
+      scene.add(new THREE.HemisphereLight(0xfff2d8, 0x3a2a18, 1.1));
+      const sun = new THREE.DirectionalLight(0xffe6b0, 1.4);
+      sun.position.set(4, 8, 3);
+      sun.castShadow = true;
+      scene.add(sun);
+      const ground = new THREE.Mesh(
+        new THREE.CircleGeometry(6, 40),
+        new THREE.MeshStandardMaterial({ color: "#4a3a28", roughness: 1 })
+      );
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      const draco = new DRACOLoader();
+      draco.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.7/");
+      const loader = new GLTFLoader();
+      loader.setDRACOLoader(draco);
+
+      let mixer, walkAction, runAction, mode = "idle";
+      const clock = new THREE.Clock();
+
+      function setMode(next) {
+        mode = next;
+        if (!walkAction) return;
+        if (mode === "idle") {
+          runAction?.fadeOut(0.2);
+          walkAction.fadeIn(0.15);
+          walkAction.paused = true;
+          walkAction.time = 0;
+          walkAction.setEffectiveWeight(1);
+        } else if (mode === "walk") {
+          walkAction.paused = false;
+          walkAction.reset().fadeIn(0.2).play();
+          runAction?.fadeOut(0.2);
+        } else {
+          runAction?.reset().fadeIn(0.2).play();
+          walkAction.fadeOut(0.2);
+        }
+        status.textContent = `Mode: ${mode}`;
+      }
+
+      try {
+        const walk = await loader.loadAsync("/models/hero-walk.glb");
+        const run = await loader.loadAsync("/models/hero-run.glb");
+        scene.add(walk.scene);
+        walk.scene.traverse((o) => {
+          if (o.isMesh) {
+            o.castShadow = true;
+            o.receiveShadow = true;
+          }
+        });
+        mixer = new THREE.AnimationMixer(walk.scene);
+        walkAction = mixer.clipAction(walk.animations[0]);
+        // Retarget run clip onto walk skeleton (identical bone names)
+        runAction = mixer.clipAction(run.animations[0]);
+        walkAction.play();
+        runAction.play();
+        runAction.setEffectiveWeight(0);
+        const box = new THREE.Box3().setFromObject(walk.scene);
+        const size = box.getSize(new THREE.Vector3());
+        status.textContent = `OK · h=${size.y.toFixed(2)}m · walk+run clips`;
+        setMode("walk");
+      } catch (e) {
+        status.textContent = "Load failed: " + e.message;
+        console.error(e);
+      }
+
+      document.getElementById("btn-idle").onclick = () => setMode("idle");
+      document.getElementById("btn-walk").onclick = () => setMode("walk");
+      document.getElementById("btn-run").onclick = () => setMode("run");
+
+      function tick() {
+        const dt = clock.getDelta();
+        mixer?.update(dt);
+        controls.update();
+        renderer.render(scene, camera);
+        requestAnimationFrame(tick);
+      }
+      tick();
+      addEventListener("resize", () => {
+        camera.aspect = innerWidth / innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(innerWidth, innerHeight);
+      });
+    </script>
+  </body>
+</html>

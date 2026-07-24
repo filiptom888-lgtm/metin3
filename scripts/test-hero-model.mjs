@@ -1,0 +1,24 @@
+import { chromium } from "playwright";
+
+const browser = await chromium.launch();
+const page = await browser.newPage();
+page.on("console", (m) => console.log("CONSOLE", m.type(), m.text()));
+page.on("pageerror", (e) => console.log("PAGEERROR", e.message));
+await page.goto("http://127.0.0.1:4173/model-test.html", { waitUntil: "networkidle", timeout: 120000 });
+await page.waitForTimeout(10000);
+const status = await page.textContent("#status");
+console.log("STATUS:", status);
+await page.click("#btn-run");
+await page.waitForTimeout(1200);
+console.log("STATUS_RUN:", await page.textContent("#status"));
+await page.click("#btn-walk");
+await page.waitForTimeout(800);
+console.log("STATUS_WALK:", await page.textContent("#status"));
+await page.click("#btn-idle");
+await page.waitForTimeout(500);
+console.log("STATUS_IDLE:", await page.textContent("#status"));
+const final = await page.textContent("#status");
+const ok = final && !final.toLowerCase().includes("fail") && !final.includes("Loading");
+console.log("RESULT:", ok ? "PASS" : "FAIL", final);
+await browser.close();
+process.exit(ok ? 0 : 1);

@@ -16,6 +16,11 @@ dist-ssr
 !.env.example
 .agents
 
+# Raw Meshy exports (~62MB each); optimized copies live in public/models/
+models/*.glb
+playwright-report
+test-results
+
 
 # Editor directories and files
 .vscode/*
