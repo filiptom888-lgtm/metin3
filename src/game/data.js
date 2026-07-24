@@ -1,5 +1,8 @@
-export const MAP_SIZE = 48;
+export const MAP_SIZE = 120;
 export const MAP_HALF = MAP_SIZE / 2;
+/** Safe zone — no wild mobs / metins inside */
+export const CITY_RADIUS = 22;
+export const CITY_GATE = 4.5;
 
 export const CLASSES = {
   warrior: {
@@ -81,9 +84,7 @@ export function clamp(v, a, b) {
 }
 
 export function dist2(ax, az, bx, bz) {
-  const dx = ax - bx;
-  const dz = az - bz;
-  return Math.hypot(dx, dz);
+  return Math.hypot(ax - bx, az - bz);
 }
 
 export function rand(a, b) {
@@ -92,4 +93,15 @@ export function rand(a, b) {
 
 export function uid(prefix = "e") {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+export function inCity(x, z) {
+  return dist2(x, z, 0, 0) < CITY_RADIUS;
+}
+
+/** Random point in wilderness (outside city) */
+export function wildPoint(minR = CITY_RADIUS + 6, maxR = MAP_HALF - 6) {
+  const ang = Math.random() * Math.PI * 2;
+  const r = rand(minR, maxR);
+  return { x: Math.cos(ang) * r, z: Math.sin(ang) * r };
 }

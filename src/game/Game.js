@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { CLASSES, MAP_HALF, clamp, dist2, rand, uid } from "./data.js";
+import { CLASSES, MAP_HALF, clamp, dist2, rand, uid, wildPoint, CITY_RADIUS, inCity } from "./data.js";
 import {
   createRenderer,
   createScene,
@@ -9,6 +9,8 @@ import {
   makeMobMesh,
   makeBoltMesh,
   setNameplate,
+  animateCharacter,
+  animateMob,
 } from "./meshes.js";
 
 export class Game {
@@ -38,7 +40,7 @@ export class Game {
     this.bolts = [];
     this.particles = [];
 
-    this.camOffset = new THREE.Vector3(0, 20, 20);
+    this.camOffset = new THREE.Vector3(0, 26, 26);
     this.time = 0;
     this.sendAcc = 0;
     this.worldAcc = 0;
@@ -107,10 +109,11 @@ export class Game {
       name: profile.name,
       classId: profile.classId,
       color: cls.color,
-      x: rand(-3, 3),
-      z: rand(-3, 3),
+      x: rand(-2, 2),
+      z: rand(-2, 2),
       y: 0,
       rot: 0,
+      moving: false,
       hp: cls.hp,
       maxHp: cls.hp,
       sp: cls.sp,
@@ -185,17 +188,16 @@ export class Game {
   }
 
   seedWorld() {
-    // 3 metins around map
-    for (let i = 0; i < 3; i++) {
-      const ang = (i / 3) * Math.PI * 2 + 0.4;
-      this.spawnMetin(Math.cos(ang) * 14, Math.sin(ang) * 14, 1 + (i % 3));
+    // Metins + mobs live OUTSIDE the city walls
+    for (let i = 0; i < 5; i++) {
+      const p = wildPoint(CITY_RADIUS + 8, MAP_HALF - 8);
+      this.spawnMetin(p.x, p.z, 1 + (i % 4));
     }
-    for (let i = 0; i < 8; i++) {
-      const ang = rand(0, Math.PI * 2);
-      const r = rand(8, 18);
-      this.spawnMob(Math.cos(ang) * r, Math.sin(ang) * r, Math.random() < 0.3 ? "ork" : "wolf");
+    for (let i = 0; i < 22; i++) {
+      const p = wildPoint(CITY_RADIUS + 5, MAP_HALF - 6);
+      this.spawnMob(p.x, p.z, Math.random() < 0.35 ? "ork" : "wolf");
     }
-    this.ui.toast("Metins awakened");
+    this.ui.toast("Leave the city gates to hunt");
   }
 
   spawnMetin(x, z, tier = 1) {
@@ -282,6 +284,9 @@ export class Game {
       const len = Math.hypot(mx, mz);
       p.x += (mx / len) * speed * dt;
       p.z += (mz / len) * speed * dt;
+      p.moving = true;
+    } else {
+      p.moving = false;
     }
     p.x = clamp(p.x, -MAP_HALF + 1.2, MAP_HALF - 1.2);
     p.z = clamp(p.z, -MAP_HALF + 1.2, MAP_HALF - 1.2);
@@ -298,19 +303,16 @@ export class Game {
       }
     }
 
-    // Mesh
+    // Mesh + animation
     this.localMesh.position.set(p.x, 0, p.z);
     this.localMesh.rotation.y = p.rot;
     this.localMesh.visible = !stealth || Math.sin(this.time * 20) > -0.2;
     setNameplate(this.localMesh, p.name, p.hp / p.maxHp, p.level, p.classId);
-    if (p.attacking > 0) {
-      this.localMesh.userData.blade.rotation.x = Math.sin(p.attacking * 40) * 0.8;
-    } else {
-      this.localMesh.userData.blade.rotation.x = 0;
-    }
-    if (this.localMesh.userData.aura) {
-      this.localMesh.userData.aura.rotation.z += dt * 1.5;
-    }
+    animateCharacter(this.localMesh, dt, {
+      moving: p.moving,
+      attacking: p.attacking,
+      speed: p.buffMul,
+    });
 
     // Camera follow
     const desired = new THREE.Vector3(p.x, 0, p.z).add(this.camOffset);
@@ -330,8 +332,15 @@ export class Game {
       r.mesh.rotation.y = r.state.rot;
       r.mesh.visible = !t.stealth;
       setNameplate(r.mesh, t.name || "Player", (t.hp || 0) / (t.maxHp || 100), t.level || 1, t.classId);
-      if (t.attacking) r.mesh.userData.blade.rotation.x = Math.sin(this.time * 30) * 0.7;
-      else r.mesh.userData.blade.rotation.x = 0;
+      const moving =
+        Math.hypot((t.x || 0) - (r._lx ?? t.x), (t.z || 0) - (r._lz ?? t.z)) > 0.02;
+      r._lx = t.x;
+      r._lz = t.z;
+      animateCharacter(r.mesh, dt, {
+        moving: !!t.moving || moving,
+        attacking: t.attacking ? 0.22 : 0,
+        speed: 1,
+      });
     }
 
     // Host sim
@@ -343,13 +352,16 @@ export class Game {
         this.net.sendWorld(this.serializeWorld());
       }
     } else {
-      // animate metins locally from last state
+      // clients still animate synced entities
       for (const [, m] of this.metins) {
-        m.pulse += dt * 2;
+        m.pulse = (m.pulse || 0) + dt * 2;
         if (m.mesh?.userData.crystal) {
-          m.mesh.userData.crystal.rotation.y += dt * 1.2;
-          m.mesh.userData.crystal.position.y = 1.3 + Math.sin(m.pulse) * 0.08;
+          m.mesh.userData.crystal.rotation.y += dt * 1.4;
+          m.mesh.userData.crystal.position.y = 1.55 + Math.sin(m.pulse) * 0.12;
         }
+      }
+      for (const [, mob] of this.mobs) {
+        animateMob(mob.mesh, dt, true);
       }
     }
 
@@ -387,6 +399,7 @@ export class Game {
         kills: p.kills,
         stealth: stealth,
         attacking: p.attacking > 0,
+        moving: p.moving,
         t: this.time,
       });
     }
@@ -415,64 +428,79 @@ export class Game {
       m.pulse += dt * 2;
       m.spawnT -= dt;
       if (m.mesh?.userData.crystal) {
-        m.mesh.userData.crystal.rotation.y += dt * 1.2;
-        m.mesh.userData.crystal.position.y = 1.3 + Math.sin(m.pulse) * 0.08;
+        m.mesh.userData.crystal.rotation.y += dt * 1.4;
+        m.mesh.userData.crystal.position.y = 1.55 + Math.sin(m.pulse) * 0.12;
+        if (m.mesh.userData.shard) {
+          m.mesh.userData.shard.rotation.y -= dt * 2;
+          m.mesh.userData.shard.position.y = 1.2 + Math.cos(m.pulse) * 0.1;
+        }
       }
       if (m.spawnT <= 0) {
-        m.spawnT = 5;
-        if (this.mobs.size < 20) {
+        m.spawnT = 6;
+        if (this.mobs.size < 35 && !inCity(m.x, m.z)) {
           const a = rand(0, Math.PI * 2);
-          this.spawnMob(m.x + Math.cos(a) * 3, m.z + Math.sin(a) * 3, "wolf");
+          this.spawnMob(m.x + Math.cos(a) * 4, m.z + Math.sin(a) * 4, Math.random() < 0.4 ? "ork" : "wolf");
         }
       }
     }
 
     for (const [, mob] of this.mobs) {
       mob.atkT -= dt;
-      // chase nearest player
       let best = null;
       let bestD = 999;
       for (const pl of players) {
         if (pl.stealth) continue;
+        // Mobs ignore players deep in the city
+        if (inCity(pl.x, pl.z) && dist2(pl.x, pl.z, 0, 0) < CITY_RADIUS - 3) continue;
         const d = dist2(mob.x, mob.z, pl.x, pl.z);
         if (d < bestD) {
           bestD = d;
           best = pl;
         }
       }
-      if (best && bestD < 16) {
+
+      let moving = false;
+      if (best && bestD < 22) {
         const ang = Math.atan2(best.x - mob.x, best.z - mob.z);
         if (bestD > 1.4) {
           mob.x += Math.sin(ang) * mob.speed * dt;
           mob.z += Math.cos(ang) * mob.speed * dt;
+          moving = true;
         } else if (mob.atkT <= 0) {
           mob.atkT = 1.1;
           this.applyDamageToPlayer(best.id, mob.atk, "mob");
         }
         mob.mesh.rotation.y = ang;
       }
+
+      // Push mobs out if they wander into city core
+      const cd = dist2(mob.x, mob.z, 0, 0);
+      if (cd < CITY_RADIUS - 1) {
+        const push = (CITY_RADIUS - 1) / (cd || 1);
+        mob.x *= push;
+        mob.z *= push;
+      }
+
       mob.x = clamp(mob.x, -MAP_HALF + 1, MAP_HALF - 1);
       mob.z = clamp(mob.z, -MAP_HALF + 1, MAP_HALF - 1);
       mob.mesh.position.set(mob.x, 0, mob.z);
+      animateMob(mob.mesh, dt, moving);
     }
 
     this.waveTimer -= dt;
-    if (this.waveTimer <= 0 && this.mobs.size < 6) {
-      this.waveTimer = 12;
-      for (let i = 0; i < 4; i++) {
-        const a = rand(0, Math.PI * 2);
-        const r = rand(10, 18);
-        this.spawnMob(Math.cos(a) * r, Math.sin(a) * r);
+    if (this.waveTimer <= 0 && this.mobs.size < 12) {
+      this.waveTimer = 14;
+      for (let i = 0; i < 6; i++) {
+        const p = wildPoint(CITY_RADIUS + 6, MAP_HALF - 7);
+        this.spawnMob(p.x, p.z, Math.random() < 0.35 ? "ork" : "wolf");
       }
-      // refresh metin if few left
-      if (this.metins.size < 2) {
-        const a = rand(0, Math.PI * 2);
-        this.spawnMetin(Math.cos(a) * 14, Math.sin(a) * 14, 1 + ((Math.random() * 3) | 0));
-        this.net.sendEvent({ type: "toast", msg: "A new Metin rises", from: this.local.id });
+      if (this.metins.size < 3) {
+        const p = wildPoint(CITY_RADIUS + 10, MAP_HALF - 8);
+        this.spawnMetin(p.x, p.z, 1 + ((Math.random() * 4) | 0));
+        this.net.sendEvent({ type: "toast", msg: "A new Metin rises beyond the walls", from: this.local.id });
       }
     }
 
-    // cleanup dead
     for (const [id, m] of [...this.mobs]) {
       if (m.hp <= 0) {
         this.scene.remove(m.mesh);
