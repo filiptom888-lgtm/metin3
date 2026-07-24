@@ -708,6 +708,88 @@ button, input { font: inherit; color: inherit; }
 .menu-actions .btn { margin-top: 0.5rem; }
 .panel-inv { width: min(520px, 94vw); }
 .panel-menu { width: min(320px, 90vw); text-align: center; }
+.panel-npc, .panel-quests { width: min(420px, 94vw); }
+.panel-death { width: min(360px, 92vw); text-align: center; z-index: 40; }
+
+.field-label {
+  text-align: left;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gold-soft);
+  margin: 0.4rem 0 0.35rem;
+}
+.opt-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+  justify-content: center;
+}
+.opt-btn {
+  border: 1px solid rgba(201, 162, 39, 0.25);
+  background: rgba(20, 36, 28, 0.85);
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.opt-btn.selected {
+  border-color: var(--gold);
+  color: var(--gold-soft);
+}
+.char-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0.75rem 0 1rem;
+  max-height: 240px;
+  overflow: auto;
+  text-align: left;
+}
+.char-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.char-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.35rem 0.6rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgba(201, 162, 39, 0.25);
+  background: rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.char-card:hover { border-color: var(--gold); }
+.char-card b { font-family: var(--font-d); }
+.char-card small { color: var(--mist); display: block; }
+.char-card .del {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+.npc-prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 210px;
+  transform: translateX(-50%);
+  padding: 0.45rem 0.9rem;
+  background: rgba(8, 14, 12, 0.85);
+  border: 1px solid var(--line);
+  font-size: 0.85rem;
+  pointer-events: none;
+}
+.npc-line, .quest-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid rgba(201, 162, 39, 0.15);
+  font-size: 0.85rem;
+}
+.shop-list, .quest-list { margin-top: 0.4rem; }
 
 @media (max-width: 800px) {
   .m2-bottom { grid-template-columns: 1fr; gap: 0.5rem; }

@@ -1,50 +1,56 @@
 import { CLASSES } from "./data.js";
-import { getItem, SLOTS } from "./items.js";
+import { InventoryService } from "../services/InventoryService.js";
+import { CombatService } from "../services/CombatService.js";
+import { xpForLevel, baseStatsFor } from "../data/stats.js";
+import { villageSpawn } from "../data/meta.js";
+import { ItemService } from "../services/ItemService.js";
 
-export function xpForLevel(level) {
-  return Math.floor(100 + level * 55 + level * level * 12);
-}
+export { xpForLevel };
 
-export function createNewCharacter(name, classId) {
+export function createNewCharacter(name, classId, opts = {}) {
   const cls = CLASSES[classId] || CLASSES.warrior;
-  const base = baseStats(classId);
-  return {
+  const spec = opts.spec || defaultSpec(classId);
+  const kingdom = opts.kingdom || 1;
+  const spawn = villageSpawn(kingdom);
+  const base = baseStatsFor(cls.id, spec);
+  const ch = {
     name: name.slice(0, 16),
     classId: cls.id,
+    spec,
+    gender: opts.gender || "m",
+    kingdom,
     level: 1,
     xp: 0,
     xpNext: xpForLevel(1),
-    gold: 200,
+    gold: 500,
     str: base.str,
     vit: base.vit,
     intel: base.intel,
     dex: base.dex,
-    statPoints: 3,
-    x: 0,
-    z: 0,
-    inventory: [
-      { uid: "start_pot1", itemId: "red_potion", qty: 5 },
-      { uid: "start_pot2", itemId: "blue_potion", qty: 3 },
-      { uid: "start_wep", itemId: starterWeapon(classId), qty: 1 },
-      { uid: "start_arm", itemId: "cloth_vest", qty: 1 },
-    ],
+    statPoints: 5,
+    x: spawn.x,
+    z: spawn.z,
+    respawnX: spawn.x,
+    respawnZ: spawn.z,
+    deletePin: opts.deletePin || "0000",
+    inventory: [],
     equipment: {},
+    quests: {},
+    playtimeSec: 0,
     metins: 0,
     kills: 0,
   };
+  InventoryService.add(ch, "red_potion", 5);
+  InventoryService.add(ch, "blue_potion", 3);
+  InventoryService.add(ch, starterWeapon(classId), 1);
+  InventoryService.add(ch, "cloth_vest", 1);
+  InventoryService.add(ch, "upgrade_ore", 2);
+  return ch;
 }
 
-function baseStats(classId) {
-  switch (classId) {
-    case "ninja":
-      return { str: 2, vit: 2, intel: 1, dex: 5 };
-    case "sura":
-      return { str: 3, vit: 3, intel: 3, dex: 2 };
-    case "shaman":
-      return { str: 1, vit: 2, intel: 5, dex: 2 };
-    default:
-      return { str: 5, vit: 4, intel: 1, dex: 2 };
-  }
+function defaultSpec(classId) {
+  const map = { warrior: "body", ninja: "blade", sura: "weaponry", shaman: "dragon" };
+  return map[classId] || "body";
 }
 
 function starterWeapon(classId) {
@@ -54,45 +60,17 @@ function starterWeapon(classId) {
 }
 
 export function equipBonuses(equipment = {}) {
-  const b = { atk: 0, def: 0, str: 0, vit: 0, intel: 0, dex: 0 };
-  for (const slot of SLOTS) {
-    const uid = equipment[slot];
-    if (!uid) continue;
-    // equipment map stores itemId or {itemId} — we store itemId string in slot
-  }
-  // equipment values are item instance refs: { itemId } or itemId
-  for (const key of Object.keys(equipment)) {
-    const ref = equipment[key];
-    if (!ref) continue;
-    const itemId = typeof ref === "string" ? ref : ref.itemId;
-    const def = getItem(itemId);
-    if (!def) continue;
-    b.atk += def.atk || 0;
-    b.def += def.def || 0;
-    b.str += def.str || 0;
-    b.vit += def.vit || 0;
-    b.intel += def.intel || 0;
-    b.dex += def.dex || 0;
-  }
-  return b;
+  return InventoryService.equipBonuses({ equipment });
 }
 
 export function derivedStats(ch) {
-  const eq = equipBonuses(ch.equipment);
-  const str = ch.str + eq.str;
-  const vit = ch.vit + eq.vit;
-  const intel = ch.intel + eq.intel;
-  const dex = ch.dex + eq.dex;
-  const cls = CLASSES[ch.classId] || CLASSES.warrior;
-
-  const maxHp = Math.floor(cls.hp + vit * 18 + ch.level * 12 + eq.def * 2);
-  const maxSp = Math.floor(cls.sp + intel * 10 + ch.level * 4);
-  const atk = Math.floor(cls.atk + str * 2.2 + dex * 0.8 + eq.atk + ch.level * 1.5);
-  const def = Math.floor(eq.def + vit * 0.8 + ch.level * 0.5);
-  const speed = cls.speed + dex * 0.12;
-  const crit = Math.min(0.45, 0.05 + dex * 0.008 + (ch.classId === "ninja" ? 0.08 : 0));
-
-  return { str, vit, intel, dex, maxHp, maxSp, atk, def, speed, crit, eq };
+  const eq = InventoryService.equipBonuses(ch);
+  const d = CombatService.derive(ch, eq);
+  return {
+    ...d,
+    speed: d.mspd,
+    eq,
+  };
 }
 
 export function applyLevelUps(ch, gainedXp) {
@@ -111,9 +89,13 @@ export function applyLevelUps(ch, gainedXp) {
 
 export function toDbRow(userId, ch) {
   return {
+    id: ch.id,
     user_id: userId,
     name: ch.name,
     class_id: ch.classId,
+    spec: ch.spec,
+    gender: ch.gender || "m",
+    kingdom: ch.kingdom || 1,
     level: ch.level,
     xp: ch.xp,
     gold: ch.gold,
@@ -124,8 +106,13 @@ export function toDbRow(userId, ch) {
     stat_points: ch.statPoints,
     x: ch.x,
     z: ch.z,
+    respawn_x: ch.respawnX ?? ch.x,
+    respawn_z: ch.respawnZ ?? ch.z,
+    delete_pin: ch.deletePin || "0000",
     inventory: ch.inventory,
     equipment: ch.equipment,
+    quests: ch.quests || {},
+    playtime_sec: ch.playtimeSec || 0,
     metins: ch.metins,
     kills: ch.kills,
     updated_at: new Date().toISOString(),
@@ -135,9 +122,13 @@ export function toDbRow(userId, ch) {
 export function fromDbRow(row) {
   if (!row) return null;
   return {
+    id: row.id,
     dbId: row.id,
     name: row.name,
     classId: row.class_id,
+    spec: row.spec || defaultSpec(row.class_id),
+    gender: row.gender || "m",
+    kingdom: row.kingdom || 1,
     level: row.level,
     xp: row.xp,
     xpNext: xpForLevel(row.level),
@@ -149,9 +140,16 @@ export function fromDbRow(row) {
     statPoints: row.stat_points,
     x: row.x,
     z: row.z,
+    respawnX: row.respawn_x ?? row.x,
+    respawnZ: row.respawn_z ?? row.z,
+    deletePin: row.delete_pin || "0000",
     inventory: row.inventory || [],
     equipment: row.equipment || {},
+    quests: row.quests || {},
+    playtimeSec: row.playtime_sec || 0,
     metins: row.metins || 0,
     kills: row.kills || 0,
   };
 }
+
+export { ItemService };

@@ -540,9 +540,9 @@ export function setNameplate(mesh, name, hpRatio = 1, level = 1, classId) {
   drawPlate(mesh, name, cls.name, level, hpRatio);
 }
 
-export function makeMetinMesh(tier = 1) {
+export function makeMetinMesh(tier = 1, colorOverride = null) {
   const colors = ["#8b1e1e", "#1e4a8b", "#6b1e8b", "#8b6b1e", "#1e8b4a"];
-  const color = colors[(tier - 1) % colors.length];
+  const color = colorOverride || colors[(tier - 1) % colors.length];
   const root = new THREE.Group();
 
   const crystal = new THREE.Mesh(

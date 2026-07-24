@@ -1,15 +1,12 @@
 # METIN3
 
-3D open-world Metin-style arena — Three.js + Supabase Realtime + saved progression. Deploy free on Vercel.
+3D open-world Metin-style arena — Vite + Three.js + Supabase (Auth / Realtime / Postgres / Edge) + Vercel.
 
-## Play flow
+## Phase 1 loop
 
-1. Enter name + class → **Enter the Kingdom**
-2. Everyone shares **one open world** (no rooms)
-3. Hunt outside city walls, loot gear, allocate stats, equip items
-4. Progress auto-saves ~every 20s (and on menu Save)
+Login → multi-character select/create (kingdom · gender · class · spec) → village spawn → hunt mobs/Metins → unique loot → equip → stats/skills → NPC shop / blacksmith +0–+9 → quests → death town/here → save.
 
-### Controls
+## Controls
 
 | Key | Action |
 |-----|--------|
@@ -17,17 +14,29 @@
 | Click / Space | Attack |
 | 1–4 | Skills |
 | F | Pick up loot |
+| E | Talk to NPC |
+| Q | Quest log |
 | C | Character / stats |
 | I | Inventory / equip |
 | Esc | Menu (save / leave) |
 | Tab | Who's online |
-| Right-click item | Drop |
 
 ## Supabase setup
 
-1. Enable **Authentication → Anonymous**
-2. SQL Editor → run [`supabase/schema.sql`](supabase/schema.sql)
-3. Env (local `.env` + Vercel):
+1. Enable **Authentication → Anonymous** (and Email if you want accounts)
+2. SQL Editor → run the full [`supabase/schema.sql`](supabase/schema.sql) (multi-char; drops old `unique(user_id)` if present)
+3. Optional Edge Functions (trusted upgrades/hits/drops/quests):
+
+```bash
+supabase functions deploy upgrade-item
+supabase functions deploy combat-hit
+supabase functions deploy resolve-drop
+supabase functions deploy claim-quest
+```
+
+See [`docs/AUTHORITY.md`](docs/AUTHORITY.md) — client predicts VFX; Edge is source of truth when deployed. Until then, client services fall back locally.
+
+4. Env (local `.env` / `.env.local` + Vercel Project Settings):
 
 ```
 VITE_SUPABASE_URL=https://xxxx.supabase.co
@@ -42,7 +51,6 @@ Do **not** put the database password in Vercel.
 ```bash
 npm i
 npm run build
-vercel
 ```
 
-Push to GitHub; Vercel redeploys automatically.
+Push to GitHub; Vercel redeploys automatically. Checklist map: [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md).

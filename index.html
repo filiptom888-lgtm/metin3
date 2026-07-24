@@ -15,19 +15,63 @@
         <div class="lobby-panel">
           <p class="brand">METIN3</p>
           <h1>Open world · forever online</h1>
-          <p class="sub">One shared kingdom. Progress saves. Hunt metins with friends.</p>
+          <p class="sub">Login · choose a character · hunt Metins with friends.</p>
 
-          <label class="field">
-            <span>Character name</span>
-            <input id="inp-name" maxlength="16" placeholder="Wanderer" autocomplete="off" />
-          </label>
+          <!-- Auth -->
+          <div id="auth-view" class="lobby-view">
+            <label class="field">
+              <span>Email</span>
+              <input id="inp-email" type="email" autocomplete="username" placeholder="you@mail.com" />
+            </label>
+            <label class="field">
+              <span>Password</span>
+              <input id="inp-password" type="password" autocomplete="current-password" placeholder="••••••••" />
+            </label>
+            <p id="lobby-error" class="error" hidden></p>
+            <button id="btn-login" class="btn btn-primary" type="button">Sign in</button>
+            <div class="lobby-actions">
+              <button id="btn-signup" class="btn btn-ghost-full" type="button">Create account</button>
+              <button id="btn-guest" class="btn btn-ghost-full" type="button">Play as guest</button>
+              <button id="btn-reset" class="btn btn-ghost-full" type="button">Reset password</button>
+            </div>
+            <p class="hint muted" id="config-hint"></p>
+          </div>
 
-          <div class="class-row" id="class-row"></div>
+          <!-- Character select -->
+          <div id="chars-view" class="lobby-view" hidden>
+            <div class="char-list-head">
+              <p class="panel-title">Your characters</p>
+              <button id="btn-logout" class="btn-mini" type="button">Logout</button>
+            </div>
+            <div id="char-list" class="char-list"></div>
+            <p id="chars-error" class="error" hidden></p>
+            <button id="btn-new-char" class="btn btn-primary" type="button">Create character</button>
+          </div>
 
-          <p id="lobby-error" class="error" hidden></p>
-          <button id="btn-enter" class="btn btn-primary" type="button">Enter the Kingdom</button>
-          <p class="hint">C character · I inventory · 1–4 skills · F loot · Esc menu</p>
-          <p class="hint muted" id="config-hint"></p>
+          <!-- Character create -->
+          <div id="create-view" class="lobby-view" hidden>
+            <label class="field">
+              <span>Name</span>
+              <input id="inp-name" maxlength="16" placeholder="Wanderer" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Delete PIN (4 digits)</span>
+              <input id="inp-pin" maxlength="4" inputmode="numeric" placeholder="0000" />
+            </label>
+            <div class="opt-row" id="gender-row">
+              <button type="button" class="opt-btn selected" data-gender="m">Male</button>
+              <button type="button" class="opt-btn" data-gender="f">Female</button>
+            </div>
+            <p class="field-label">Kingdom</p>
+            <div class="opt-row" id="kingdom-row"></div>
+            <p class="field-label">Class</p>
+            <div class="class-row" id="class-row"></div>
+            <p class="field-label">Specialization</p>
+            <div class="opt-row" id="spec-row"></div>
+            <p id="create-error" class="error" hidden></p>
+            <button id="btn-create" class="btn btn-primary" type="button">Enter the Kingdom</button>
+            <button id="btn-create-back" class="btn btn-ghost-full" type="button">Back</button>
+          </div>
         </div>
       </section>
 
@@ -73,7 +117,7 @@
 
             <div class="m2-hotbar-wrap">
               <div id="skill-bar" class="m2-hotbar"></div>
-              <div class="hotbar-hint">WASD · click attack · 1–4 skills · F pick up · C / I panels</div>
+              <div class="hotbar-hint">WASD · click · 1–4 skills · F loot · E NPC · Q quests · C / I</div>
             </div>
 
             <div class="m2-stats-panel">
@@ -84,9 +128,9 @@
           </div>
 
           <div id="chat" class="m2-chat"><div id="chat-log"></div></div>
+          <div id="npc-prompt" class="npc-prompt" hidden>Press E — <span id="npc-prompt-name">NPC</span></div>
         </div>
 
-        <!-- Character sheet -->
         <div id="panel-char" class="panel m2-panel" hidden>
           <header><h3>Character</h3><button type="button" data-close="char">✕</button></header>
           <div class="panel-body">
@@ -97,22 +141,39 @@
           </div>
         </div>
 
-        <!-- Inventory -->
         <div id="panel-inv" class="panel m2-panel panel-inv" hidden>
           <header><h3>Inventory</h3><button type="button" data-close="inv">✕</button></header>
           <div class="panel-body">
             <div class="equip-row" id="equip-slots"></div>
             <div class="inv-grid" id="inv-grid"></div>
-            <p class="inv-hint">Click item: equip / use · Right-click: drop</p>
+            <p class="inv-hint">Click: equip / use · Right-click: drop</p>
           </div>
         </div>
 
-        <!-- Esc menu -->
+        <div id="panel-npc" class="panel m2-panel panel-npc" hidden>
+          <header><h3 id="npc-title">NPC</h3><button type="button" data-close="npc">✕</button></header>
+          <div class="panel-body" id="npc-body"></div>
+        </div>
+
+        <div id="panel-quests" class="panel m2-panel panel-quests" hidden>
+          <header><h3>Quests</h3><button type="button" data-close="quests">✕</button></header>
+          <div class="panel-body" id="quest-body"></div>
+        </div>
+
         <div id="panel-menu" class="panel m2-panel panel-menu" hidden>
           <header><h3>Menu</h3></header>
           <div class="panel-body menu-actions">
             <button type="button" id="btn-save" class="btn btn-primary">Save progress</button>
             <button type="button" id="btn-leave" class="btn btn-ghost-full">Return to title</button>
+          </div>
+        </div>
+
+        <div id="panel-death" class="panel m2-panel panel-death" hidden>
+          <header><h3>You have fallen</h3></header>
+          <div class="panel-body menu-actions">
+            <p class="sub" id="death-msg">Choose where to return.</p>
+            <button type="button" id="btn-respawn-town" class="btn btn-primary">Respawn in town</button>
+            <button type="button" id="btn-respawn-here" class="btn btn-ghost-full">Respawn here</button>
           </div>
         </div>
 

@@ -1,0 +1,32 @@
+export const QUESTS = [
+  {
+    id: "q_wolves",
+    name: "Cull the Pack",
+    levelReq: 1,
+    type: "kill",
+    target: "wolf",
+    count: 5,
+    reward: { xp: 150, yang: 500, item: "red_potion" },
+    desc: "Slay 5 Wild Wolves outside the walls.",
+  },
+  {
+    id: "q_metin",
+    name: "Shatter Stone",
+    levelReq: 5,
+    type: "metin",
+    target: "metin",
+    count: 1,
+    reward: { xp: 400, yang: 2000, item: "upgrade_ore" },
+    desc: "Destroy any Metin stone in the wilderness.",
+  },
+  {
+    id: "q_orks",
+    name: "Orc Threat",
+    levelReq: 8,
+    type: "kill",
+    target: "ork",
+    count: 8,
+    reward: { xp: 600, yang: 3500, item: "iron_blade" },
+    desc: "Defeat 8 Orc Warriors.",
+  },
+];

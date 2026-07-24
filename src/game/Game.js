@@ -13,14 +13,22 @@ import {
 } from "./meshes.js";
 import { FxSystem } from "./fx.js";
 import { derivedStats, applyLevelUps } from "./character.js";
-import { rollDrops, getItem, RARITY_COLOR } from "./items.js";
+import { getItem, RARITY_COLOR } from "./items.js";
 import {
-  addToInventory,
   equipFromInventory,
   unequipSlot,
   useConsumable,
   removeFromInventory,
 } from "./inventory.js";
+import { CombatService } from "../services/CombatService.js";
+import { DropService } from "../services/DropService.js";
+import { InventoryService } from "../services/InventoryService.js";
+import { QuestService } from "../services/QuestService.js";
+import { NpcService } from "../services/NpcService.js";
+import { SpawnService } from "../services/SpawnService.js";
+import { SkillService } from "../services/SkillService.js";
+import { MONSTERS } from "../data/monsters.js";
+import { METINS } from "../data/metins.js";
 import * as THREE from "three";
 
 export class Game {
@@ -52,9 +60,12 @@ export class Game {
     this.particles = [];
     this.loot = new Map();
     this.character = null;
-    this.fx = null;
     this.saveTimer = 0;
     this.onCharacterChange = () => {};
+    this.onOpenNpc = () => {};
+    this.nearNpc = null;
+    this.pendingDeath = false;
+    this.npcMeshes = [];
 
     this.camOffset = new THREE.Vector3(0, 26, 26);
     this.time = 0;
@@ -66,9 +77,11 @@ export class Game {
     this._raf = 0;
 
     this._onKeyDown = (e) => {
-      this.keys.add(e.key.toLowerCase());
-      if ([" ", "tab"].includes(e.key.toLowerCase()) || e.key === "Tab") e.preventDefault();
+      const k = e.key.toLowerCase();
+      this.keys.add(k);
+      if ([" ", "tab"].includes(k) || e.key === "Tab") e.preventDefault();
       if (e.key === "Tab") this.ui.setScoreboard(true);
+      if (k === "e" && this.nearNpc && !this.pendingDeath) this.onOpenNpc(this.nearNpc);
     };
     this._onKeyUp = (e) => {
       this.keys.delete(e.key.toLowerCase());
@@ -123,13 +136,16 @@ export class Game {
 
     const cls = CLASSES[character.classId];
     const d = derivedStats(character);
+    QuestService.ensure(character);
+    this.pendingDeath = false;
+    this.ui.hideDeath?.();
     this.local = {
       id: profile.id,
       name: character.name,
       classId: character.classId,
       color: cls.color,
-      x: character.x || rand(-2, 2),
-      z: character.z || rand(-2, 2),
+      x: character.x ?? 0,
+      z: character.z ?? 0,
       y: 0,
       rot: 0,
       moving: false,
@@ -139,9 +155,13 @@ export class Game {
       maxSp: d.maxSp,
       level: character.level,
       atk: d.atk,
+      matk: d.matk,
       def: d.def,
+      mdef: d.mdef,
+      dex: d.dex,
       speed: d.speed,
       crit: d.crit,
+      pierce: d.pierce,
       range: cls.range,
       atkCd: 0,
       skillCd: [0, 0, 0, 0],
@@ -158,6 +178,7 @@ export class Game {
     this.localMesh = makePlayerMesh(character.classId, true);
     setNameplate(this.localMesh, character.name, 1, character.level, character.classId);
     this.scene.add(this.localMesh);
+    this.spawnNpcs();
 
     this.bindInput(true);
     this.resize();
@@ -182,9 +203,13 @@ export class Game {
     this.local.maxHp = d.maxHp;
     this.local.maxSp = d.maxSp;
     this.local.atk = d.atk;
+    this.local.matk = d.matk;
     this.local.def = d.def;
+    this.local.mdef = d.mdef;
+    this.local.dex = d.dex;
     this.local.speed = d.speed;
     this.local.crit = d.crit;
+    this.local.pierce = d.pierce;
     this.local.level = this.character.level;
     this.local.hp = Math.max(1, Math.min(d.maxHp, Math.ceil(d.maxHp * hpRatio)));
     this.local.sp = Math.min(d.maxSp, Math.ceil(d.maxSp * spRatio));
@@ -204,6 +229,20 @@ export class Game {
     this.character.level = this.local.level;
   }
 
+  spawnNpcs() {
+    for (const m of this.npcMeshes) this.scene.remove(m);
+    this.npcMeshes = [];
+    for (const npc of NpcService.list) {
+      const mesh = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.35, 0.9, 4, 8),
+        new THREE.MeshStandardMaterial({ color: "#c9a227", emissive: "#4a3a10", emissiveIntensity: 0.3 })
+      );
+      mesh.position.set(npc.x, 0.85, npc.z);
+      this.scene.add(mesh);
+      this.npcMeshes.push(mesh);
+    }
+  }
+
   bindInput(on) {
     const fn = on ? "addEventListener" : "removeEventListener";
     window[fn]("keydown", this._onKeyDown);
@@ -220,6 +259,8 @@ export class Game {
     cancelAnimationFrame(this._raf);
     if (unbind) this.bindInput(false);
     this.clearWorldEntities();
+    for (const m of this.npcMeshes || []) this.scene.remove(m);
+    this.npcMeshes = [];
     if (this.localMesh) {
       this.scene.remove(this.localMesh);
       this.localMesh = null;
@@ -227,6 +268,8 @@ export class Game {
     for (const [, r] of this.remotes) this.scene.remove(r.mesh);
     this.remotes.clear();
     this.local = null;
+    this.pendingDeath = false;
+    this.ui.hideDeath?.();
   }
 
   clearWorldEntities() {
@@ -241,51 +284,57 @@ export class Game {
   }
 
   seedWorld() {
-    // Metins + mobs live OUTSIDE the city walls
-    for (let i = 0; i < 5; i++) {
-      const p = wildPoint(CITY_RADIUS + 8, MAP_HALF - 8);
-      this.spawnMetin(p.x, p.z, 1 + (i % 4));
-    }
-    for (let i = 0; i < 22; i++) {
-      const p = wildPoint(CITY_RADIUS + 5, MAP_HALF - 6);
-      this.spawnMob(p.x, p.z, Math.random() < 0.35 ? "ork" : "wolf");
-    }
+    const seed = SpawnService.seedWild(this.character?.level || 1);
+    for (const m of seed.metins) this.spawnMetin(m.x, m.z, m.templateId);
+    for (const m of seed.mobs) this.spawnMob(m.x, m.z, m.templateId);
     this.ui.toast("Leave the city gates to hunt");
   }
 
-  spawnMetin(x, z, tier = 1) {
+  spawnMetin(x, z, templateIdOrTier = "battle") {
+    const tmpl =
+      typeof templateIdOrTier === "number"
+        ? Object.values(METINS).find((t) => t.tier === templateIdOrTier) || METINS.battle
+        : METINS[templateIdOrTier] || SpawnService.pickMetinTemplate();
     const id = uid("met");
-    const mesh = makeMetinMesh(tier);
+    const mesh = makeMetinMesh(tmpl.tier, tmpl.color);
     mesh.position.set(x, 0, z);
     this.scene.add(mesh);
     this.metins.set(id, {
       id,
       x,
       z,
-      tier,
-      hp: 220 + tier * 80,
-      maxHp: 220 + tier * 80,
+      tier: tmpl.tier,
+      templateId: tmpl.id,
+      name: tmpl.name,
+      dropTable: tmpl.drop_table,
+      hp: tmpl.hp,
+      maxHp: tmpl.hp,
       mesh,
       pulse: rand(0, 10),
       spawnT: 3,
+      wave: tmpl.wave || 3,
     });
     return id;
   }
 
   spawnMob(x, z, kind = "wolf") {
+    const tmpl = MONSTERS[kind] || MONSTERS.wolf;
     const id = uid("mob");
-    const mesh = makeMobMesh(kind);
+    const mesh = makeMobMesh(tmpl.kind || kind);
     mesh.position.set(x, 0, z);
     this.scene.add(mesh);
     this.mobs.set(id, {
       id,
-      kind,
+      kind: tmpl.kind || kind,
+      templateId: tmpl.id,
       x,
       z,
-      hp: kind === "ork" ? 90 : 55,
-      maxHp: kind === "ork" ? 90 : 55,
-      speed: kind === "ork" ? 3.2 : 4.2,
-      atk: kind === "ork" ? 12 : 8,
+      hp: tmpl.hp,
+      maxHp: tmpl.hp,
+      speed: tmpl.speed,
+      atk: tmpl.atk,
+      def: tmpl.def || 0,
+      dropTable: tmpl.drop_table,
       atkT: rand(0.5, 1.2),
       mesh,
       targetId: null,
@@ -317,6 +366,13 @@ export class Game {
 
     this.updateAim();
 
+    if (this.pendingDeath) {
+      this.ui.updateHud(p, this.character);
+      this.renderer; // keep loop alive
+      this.fx?.update(dt);
+      return;
+    }
+
     // Timers
     p.atkCd = Math.max(0, p.atkCd - dt);
     p.attacking = Math.max(0, p.attacking - dt);
@@ -344,6 +400,11 @@ export class Game {
     p.x = clamp(p.x, -MAP_HALF + 1.2, MAP_HALF - 1.2);
     p.z = clamp(p.z, -MAP_HALF + 1.2, MAP_HALF - 1.2);
     p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+
+    // NPC proximity
+    const near = NpcService.near(p.x, p.z, 3.5)[0] || null;
+    this.nearNpc = near;
+    this.ui.setNpcPrompt?.(near);
 
     // Attack
     if ((this.mouse.down || this.keys.has(" ")) && p.atkCd <= 0) {
@@ -568,7 +629,7 @@ export class Game {
       }
       if (this.metins.size < 3) {
         const p = wildPoint(CITY_RADIUS + 10, MAP_HALF - 8);
-        this.spawnMetin(p.x, p.z, 1 + ((Math.random() * 4) | 0));
+        this.spawnMetin(p.x, p.z, SpawnService.pickMetinTemplate().id);
         this.net.sendEvent({ type: "toast", msg: "A new Metin rises beyond the walls", from: this.local.id });
       }
     }
@@ -613,9 +674,20 @@ export class Game {
     const cls = CLASSES[p.classId];
     p.atkCd = cls.cd;
     p.attacking = 0.28;
-    const crit = Math.random() < p.crit;
-    const dmg = p.atk * p.buffMul * (crit ? 1.75 : 1);
-    this.fx?.slash(p.x, p.z, p.rot, crit ? "#ffe08a" : p.color);
+    const roll = CombatService.rollHit({
+      attacker: p,
+      defender: { dex: 2, def: 2, mdef: 0 },
+      skillMul: p.buffMul,
+      isMagic: cls.id === "shaman",
+    });
+    if (!roll.hit) {
+      this.ui.toast("Miss");
+      this.fx?.slash(p.x, p.z, p.rot, "#888");
+      return;
+    }
+    const dmg = roll.damage;
+    const color = roll.kind === "crit" ? "#ffe08a" : p.color;
+    this.fx?.slash(p.x, p.z, p.rot, color);
 
     if (cls.id === "shaman" || p.range > 4) {
       this.fireBolt(p.id, p.x, p.z, p.rot, dmg, p.color);
@@ -631,7 +703,8 @@ export class Game {
 
   castSkill(i) {
     const p = this.local;
-    const sk = CLASSES[p.classId].skills[i];
+    const skills = SkillService.listFor(p.classId, this.character?.spec);
+    const sk = skills[i] || CLASSES[p.classId].skills[i];
     if (!sk || p.sp < sk.sp) {
       this.ui.toast("Not enough SP");
       return;
@@ -639,25 +712,32 @@ export class Game {
     p.sp -= sk.sp;
     p.skillCd[i] = sk.cd;
     p.attacking = 0.3;
-    const dmg = p.atk * p.buffMul * (1 + (CLASSES[p.classId].id === "shaman" && sk.type !== "heal" ? 0.15 : 0));
+    const isMagic = !!sk.isMagic || (CLASSES[p.classId].id === "shaman" && sk.type !== "heal");
+    const roll = CombatService.rollHit({
+      attacker: p,
+      defender: { dex: 2, def: 2, mdef: 0 },
+      skillMul: (sk.mul || 1) * p.buffMul,
+      isMagic,
+    });
+    const dmg = roll.hit ? roll.damage : Math.floor(p.atk * (sk.mul || 1) * p.buffMul);
 
     switch (sk.type) {
       case "cone":
         this.fx?.slash(p.x, p.z, p.rot, p.color);
-        this.meleeHit(p, dmg * 1.7, 1.1, p.range + 1);
-        this.net.sendEvent({ type: "melee", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg: dmg * 1.7, cone: 1.1, range: p.range + 1 });
+        this.meleeHit(p, dmg, 1.1, p.range + 1);
+        this.net.sendEvent({ type: "melee", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, cone: 1.1, range: p.range + 1 });
         this.net.sendEvent({ type: "fx", kind: "slash", x: p.x, z: p.z, rot: p.rot, color: p.color, from: p.id });
         break;
       case "aoe":
         this.fx?.aoe(p.x, p.z, 5, p.color);
-        this.aoeHit(p.x, p.z, 5, dmg * 1.5, p.id);
-        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 5, dmg: dmg * 1.5 });
+        this.aoeHit(p.x, p.z, 5, dmg, p.id);
+        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 5, dmg });
         this.net.sendEvent({ type: "fx", kind: "aoe", x: p.x, z: p.z, r: 5, color: p.color, from: p.id });
         break;
       case "bolt":
         this.fx?.boltTrail(p.x, p.z, p.color);
-        this.fireBolt(p.id, p.x, p.z, p.rot, dmg * 1.6, p.color);
-        this.net.sendEvent({ type: "bolt", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg: dmg * 1.6, color: p.color });
+        this.fireBolt(p.id, p.x, p.z, p.rot, dmg, p.color);
+        this.net.sendEvent({ type: "bolt", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, color: p.color });
         break;
       case "buff":
         p.buffMul = 1.45;
@@ -673,8 +753,8 @@ export class Game {
         p.z = clamp(p.z, -MAP_HALF + 1.2, MAP_HALF - 1.2);
         p.invulnUntil = this.time + 0.3;
         this.fx?.slash(p.x, p.z, p.rot, "#e8d48b");
-        this.aoeHit(p.x, p.z, 2.8, dmg * 1.25, p.id);
-        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 2.8, dmg: dmg * 1.25 });
+        this.aoeHit(p.x, p.z, 2.8, dmg, p.id);
+        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 2.8, dmg });
         break;
       }
       case "stealth":
@@ -684,15 +764,15 @@ export class Game {
         break;
       case "burst":
         this.fx?.aoe(p.x, p.z, 3.8, "#3a9fd4");
-        this.aoeHit(p.x, p.z, 3.8, dmg * 2.3, p.id);
-        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 3.8, dmg: dmg * 2.3 });
+        this.aoeHit(p.x, p.z, 3.8, dmg, p.id);
+        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 3.8, dmg });
         this.net.sendEvent({ type: "fx", kind: "aoe", x: p.x, z: p.z, r: 3.8, color: "#3a9fd4", from: p.id });
         break;
       case "dot":
       case "drain":
         this.fx?.aoe(p.x, p.z, 4.5, "#8b3fd4");
-        this.aoeHit(p.x, p.z, 4.5, dmg * 1.35, p.id, sk.type === "drain");
-        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 4.5, dmg: dmg * 1.35, drain: sk.type === "drain" });
+        this.aoeHit(p.x, p.z, 4.5, dmg, p.id, sk.type === "drain");
+        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 4.5, dmg, drain: sk.type === "drain" });
         this.net.sendEvent({ type: "fx", kind: "aoe", x: p.x, z: p.z, r: 4.5, color: "#8b3fd4", from: p.id });
         break;
       case "heal":
@@ -791,11 +871,21 @@ export class Game {
   }
 
   damageMob(mob, dmg, fromId) {
-    mob.hp -= dmg;
-    this.net.sendEvent({ type: "fx", kind: "hit", x: mob.x, z: mob.z, dmg: Math.floor(dmg), from: fromId });
+    const roll = CombatService.rollHit({
+      attacker: { atk: dmg, matk: dmg, dex: 5, crit: 0.05, pierce: 0.02 },
+      defender: { def: mob.def || 0, mdef: 0, dex: 2 },
+      skillMul: 1,
+    });
+    const applied = roll.hit ? Math.max(1, Math.floor(dmg - (mob.def || 0) * 0.35)) : 0;
+    if (!applied) {
+      this.net.sendEvent({ type: "fx", kind: "hit", x: mob.x, z: mob.z, dmg: 0, from: fromId });
+      return;
+    }
+    mob.hp -= applied;
+    this.net.sendEvent({ type: "fx", kind: "hit", x: mob.x, z: mob.z, dmg: Math.floor(applied), from: fromId });
     if (mob.hp <= 0) {
-      const gold = 80 + ((Math.random() * 100) | 0) + (mob.kind === "ork" ? 60 : 0);
-      const xp = mob.kind === "ork" ? 45 : 28;
+      const gold = DropService.yangFor(mob.kind);
+      const xp = DropService.xpFor(mob.kind);
       this.net.sendEvent({
         type: "kill",
         from: fromId,
@@ -806,17 +896,18 @@ export class Game {
         gold,
         xp,
       });
-      if (this.net.isHost) this.spawnLootAt(mob.x, mob.z, mob.kind === "ork" ? "ork" : "wolf", 1, gold);
+      if (this.net.isHost) this.spawnLootAt(mob.x, mob.z, mob.dropTable || mob.kind, 1, gold);
       if (fromId === this.local?.id) this.rewardKill(xp, gold, mob.kind === "ork" ? "ork" : "wolf");
     }
   }
 
   damageMetin(met, dmg, fromId) {
-    met.hp -= dmg;
-    this.net.sendEvent({ type: "fx", kind: "hit", x: met.x, z: met.z, dmg: Math.floor(dmg), from: fromId });
+    const applied = Math.max(1, Math.floor(dmg));
+    met.hp -= applied;
+    this.net.sendEvent({ type: "fx", kind: "hit", x: met.x, z: met.z, dmg: Math.floor(applied), from: fromId });
     if (met.hp <= 0) {
-      const gold = 600 + met.tier * 250 + ((Math.random() * 200) | 0);
-      const xp = 120 + met.tier * 40;
+      const gold = DropService.yangFor("metin", met.tier);
+      const xp = DropService.xpFor("metin", met.tier);
       this.net.sendEvent({
         type: "kill",
         from: fromId,
@@ -828,12 +919,12 @@ export class Game {
         gold,
         xp,
       });
-      if (this.net.isHost) this.spawnLootAt(met.x, met.z, "metin", met.tier, gold);
+      if (this.net.isHost) this.spawnLootAt(met.x, met.z, met.dropTable || "metin", met.tier, gold);
       if (fromId === this.local?.id) {
         this.local.metins += 1;
         this.character.metins = this.local.metins;
         this.rewardKill(xp, gold, "metin");
-        this.ui.toast(`Metin shattered · ${this.local.metins}`);
+        this.ui.toast(`${met.name || "Metin"} shattered · ${this.local.metins}`);
       }
     }
   }
@@ -844,6 +935,7 @@ export class Game {
     this.character.kills = this.local.kills;
     this.local.gold += gold;
     this.character.gold = this.local.gold;
+    QuestService.onKill(this.character, kind === "metin" ? "metin" : kind);
     const ups = applyLevelUps(this.character, xp);
     this.local.level = this.character.level;
     if (ups) {
@@ -856,9 +948,14 @@ export class Game {
     this.onCharacterChange(this.character, this.local);
   }
 
-  spawnLootAt(x, z, kind, tier = 1, bonusGold = 0) {
-    const drops = rollDrops(kind, tier);
-    // yang pile
+  spawnLootAt(x, z, kindOrTable, tier = 1, bonusGold = 0) {
+    const tableId =
+      kindOrTable === "metin" || kindOrTable === "ork" || kindOrTable === "wolf"
+        ? kindOrTable === "ork"
+          ? "ork"
+          : kindOrTable
+        : kindOrTable || "wolf";
+    const drops = DropService.roll(tableId, tableId === "metin" ? 1 + tier * 0.08 : 1);
     if (bonusGold > 0 || Math.random() < 0.9) {
       this.createLoot(x + rand(-1, 1), z + rand(-1, 1), null, Math.max(20, Math.floor(bonusGold * 0.35)));
     }
@@ -947,7 +1044,19 @@ export class Game {
       this.ui.toast(`+${l.gold} Yang`);
     }
     if (l.item) {
-      addToInventory(this.character.inventory, l.item.itemId, l.item.qty || 1);
+      // Prefer unique instance payload from DropService
+      if (l.item.uid) {
+        const existing = this.character.inventory.find(
+          (x) => x.itemId === l.item.itemId && getItem(x.itemId)?.slot === "consumable" && !x.upgrade
+        );
+        if (existing && getItem(l.item.itemId)?.slot === "consumable") {
+          existing.qty += l.item.qty || 1;
+        } else {
+          this.character.inventory.push({ ...l.item });
+        }
+      } else {
+        InventoryService.add(this.character, l.item.itemId, l.item.qty || 1);
+      }
       const def = getItem(l.item.itemId);
       this.ui.toast(`Looted ${def?.name || "item"}`);
     }
@@ -959,21 +1068,41 @@ export class Game {
 
   takeDamage(amount) {
     const p = this.local;
-    if (!p || this.time < p.invulnUntil || this.time < p.stealthUntil) return;
-    const reduced = Math.max(1, amount - (p.def || 0) * 0.55);
-    p.hp -= reduced;
+    if (!p || this.pendingDeath || this.time < p.invulnUntil || this.time < p.stealthUntil) return;
+    p.hp = CombatService.applyPlayerDamage(p.hp, Math.max(1, amount - (p.def || 0) * 0.55));
     this.fx?.hitSparks(p.x, p.z, "#ff6655");
     if (p.hp <= 0) {
-      p.hp = p.maxHp;
-      p.x = rand(-2, 2);
-      p.z = rand(-2, 2);
-      p.invulnUntil = this.time + 2.5;
+      p.hp = 0;
+      this.pendingDeath = true;
       const loss = Math.floor(p.gold * 0.03);
-      p.gold = Math.max(0, p.gold - loss);
-      if (this.character) this.character.gold = p.gold;
-      this.ui.toast(loss ? `Fallen (−${loss} Yang)` : "Respawned in the city");
+      this._deathYangLoss = loss;
+      this.ui.showDeath?.(loss ? `Fallen (−${loss} Yang if you continue)` : "Choose where to return.");
       this.net.sendEvent({ type: "toast", msg: `${p.name} fell`, from: p.id });
     }
+  }
+
+  respawn(mode = "town") {
+    const p = this.local;
+    if (!p || !this.character) return;
+    const loss = this._deathYangLoss || 0;
+    p.gold = Math.max(0, p.gold - loss);
+    this.character.gold = p.gold;
+    // small XP penalty
+    const xpLoss = Math.floor((this.character.xp || 0) * 0.05);
+    this.character.xp = Math.max(0, this.character.xp - xpLoss);
+
+    if (mode === "town") {
+      p.x = this.character.respawnX ?? 0;
+      p.z = this.character.respawnZ ?? 0;
+    }
+    p.hp = p.maxHp;
+    p.sp = p.maxSp;
+    p.invulnUntil = this.time + 2.5;
+    this.pendingDeath = false;
+    this._deathYangLoss = 0;
+    this.ui.hideDeath?.();
+    this.ui.toast(mode === "town" ? "Returned to village" : "Stood up again");
+    this.onCharacterChange(this.character, this.local);
   }
 
   applyDamageToPlayer(playerId, amount, source) {
@@ -1037,6 +1166,7 @@ export class Game {
       mobs: [...this.mobs.values()].map((m) => ({
         id: m.id,
         kind: m.kind,
+        templateId: m.templateId,
         x: m.x,
         z: m.z,
         hp: m.hp,
@@ -1045,6 +1175,8 @@ export class Game {
       metins: [...this.metins.values()].map((m) => ({
         id: m.id,
         tier: m.tier,
+        templateId: m.templateId,
+        name: m.name,
         x: m.x,
         z: m.z,
         hp: m.hp,
@@ -1060,9 +1192,18 @@ export class Game {
       seenM.add(m.id);
       let mob = this.mobs.get(m.id);
       if (!mob) {
-        const mesh = makeMobMesh(m.kind);
+        const tmpl = MONSTERS[m.templateId || m.kind] || MONSTERS.wolf;
+        const mesh = makeMobMesh(tmpl.kind || m.kind);
         this.scene.add(mesh);
-        mob = { ...m, mesh, speed: 4, atk: 8, atkT: 1 };
+        mob = {
+          ...m,
+          mesh,
+          speed: tmpl.speed,
+          atk: tmpl.atk,
+          def: tmpl.def,
+          dropTable: tmpl.drop_table,
+          atkT: 1,
+        };
         this.mobs.set(m.id, mob);
       }
       mob.x = m.x;
@@ -1083,9 +1224,10 @@ export class Game {
       seenT.add(m.id);
       let met = this.metins.get(m.id);
       if (!met) {
-        const mesh = makeMetinMesh(m.tier);
+        const tmpl = METINS[m.templateId] || Object.values(METINS).find((t) => t.tier === m.tier) || METINS.battle;
+        const mesh = makeMetinMesh(tmpl.tier, tmpl.color);
         this.scene.add(mesh);
-        met = { ...m, mesh, pulse: 0, spawnT: 5 };
+        met = { ...m, mesh, pulse: 0, spawnT: 5, name: tmpl.name, dropTable: tmpl.drop_table, templateId: tmpl.id };
         this.metins.set(m.id, met);
       }
       met.x = m.x;
