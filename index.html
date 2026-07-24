@@ -14,8 +14,8 @@
         <div class="lobby-bg" aria-hidden="true"></div>
         <div class="lobby-panel">
           <p class="brand">METIN3</p>
-          <h1>Enter the kingdom</h1>
-          <p class="sub">Create a room, gather your party, host starts the hunt.</p>
+          <h1>Open world · forever online</h1>
+          <p class="sub">One shared kingdom. Progress saves. Hunt metins with friends.</p>
 
           <label class="field">
             <span>Character name</span>
@@ -24,46 +24,10 @@
 
           <div class="class-row" id="class-row"></div>
 
-          <div class="lobby-actions">
-            <button id="btn-create" class="btn btn-primary" type="button">Create Room</button>
-            <div class="or">or join with code</div>
-            <label class="field">
-              <span>Room code</span>
-              <input id="inp-room" maxlength="8" placeholder="e.g. K7MQ" autocomplete="off" />
-            </label>
-            <button id="btn-join" class="btn btn-ghost-full" type="button">Join Room</button>
-          </div>
-
           <p id="lobby-error" class="error" hidden></p>
+          <button id="btn-enter" class="btn btn-primary" type="button">Enter the Kingdom</button>
+          <p class="hint">C character · I inventory · 1–4 skills · F loot · Esc menu</p>
           <p class="hint muted" id="config-hint"></p>
-        </div>
-      </section>
-
-      <section id="waiting" class="screen">
-        <div class="lobby-bg" aria-hidden="true"></div>
-        <div class="lobby-panel wait-panel">
-          <p class="brand brand-sm">METIN3</p>
-          <h1>Party lobby</h1>
-          <p class="sub">Share the code. Only the creator can start.</p>
-
-          <div class="room-code-box">
-            <span>Room code</span>
-            <strong id="wait-code">----</strong>
-            <button id="btn-copy" class="btn-mini" type="button">Copy</button>
-          </div>
-
-          <div class="wait-meta">
-            <span id="wait-role">Member</span>
-            <span id="wait-count">1 player</span>
-          </div>
-
-          <ul id="wait-list" class="wait-list"></ul>
-
-          <p id="wait-status" class="wait-status">Waiting for host to start…</p>
-          <p id="wait-error" class="error" hidden></p>
-
-          <button id="btn-start" class="btn btn-primary" type="button" hidden>Start Match</button>
-          <button id="btn-leave-wait" class="btn btn-ghost-full" type="button">Leave Room</button>
         </div>
       </section>
 
@@ -74,7 +38,7 @@
           <div class="hud-top-left">
             <div class="brand-mini">METIN3</div>
             <div class="chip-row">
-              <div id="room-chip">ROOM</div>
+              <div id="room-chip">WORLD</div>
               <div id="host-chip">CLIENT</div>
               <div id="players-chip">1</div>
             </div>
@@ -82,7 +46,6 @@
 
           <div id="minimap" class="m2-minimap">
             <canvas id="mini" width="148" height="148"></canvas>
-            <div class="mini-ring"></div>
           </div>
 
           <div class="m2-bottom">
@@ -92,30 +55,25 @@
                   <circle class="track" cx="50" cy="50" r="42" />
                   <circle id="orb-hp" class="fill hp" cx="50" cy="50" r="42" />
                 </svg>
-                <div class="orb-label">
-                  <b id="txt-hp">100</b>
-                  <small>HP</small>
-                </div>
+                <div class="orb-label"><b id="txt-hp">100</b><small>HP</small></div>
               </div>
               <div class="orb sp-orb">
                 <svg viewBox="0 0 100 100">
                   <circle class="track" cx="50" cy="50" r="36" />
                   <circle id="orb-sp" class="fill sp" cx="50" cy="50" r="36" />
                 </svg>
-                <div class="orb-label">
-                  <b id="txt-sp">50</b>
-                  <small>SP</small>
-                </div>
+                <div class="orb-label"><b id="txt-sp">50</b><small>SP</small></div>
               </div>
               <div class="char-meta">
                 <div id="hud-name">—</div>
                 <div id="hud-level">Lv.1 Warrior</div>
+                <div class="xp-bar"><i id="bar-xp"></i></div>
               </div>
             </div>
 
             <div class="m2-hotbar-wrap">
               <div id="skill-bar" class="m2-hotbar"></div>
-              <div class="hotbar-hint">1–4 skills · click attack · WASD move</div>
+              <div class="hotbar-hint">WASD · click attack · 1–4 skills · F pick up · C / I panels</div>
             </div>
 
             <div class="m2-stats-panel">
@@ -125,17 +83,44 @@
             </div>
           </div>
 
-          <div id="chat" class="m2-chat">
-            <div id="chat-log"></div>
+          <div id="chat" class="m2-chat"><div id="chat-log"></div></div>
+        </div>
+
+        <!-- Character sheet -->
+        <div id="panel-char" class="panel m2-panel" hidden>
+          <header><h3>Character</h3><button type="button" data-close="char">✕</button></header>
+          <div class="panel-body">
+            <p id="char-title" class="panel-title">—</p>
+            <div class="stat-grid" id="stat-grid"></div>
+            <p class="points">Stat points: <b id="stat-points">0</b></p>
+            <div class="equip-preview" id="equip-preview"></div>
+          </div>
+        </div>
+
+        <!-- Inventory -->
+        <div id="panel-inv" class="panel m2-panel panel-inv" hidden>
+          <header><h3>Inventory</h3><button type="button" data-close="inv">✕</button></header>
+          <div class="panel-body">
+            <div class="equip-row" id="equip-slots"></div>
+            <div class="inv-grid" id="inv-grid"></div>
+            <p class="inv-hint">Click item: equip / use · Right-click: drop</p>
+          </div>
+        </div>
+
+        <!-- Esc menu -->
+        <div id="panel-menu" class="panel m2-panel panel-menu" hidden>
+          <header><h3>Menu</h3></header>
+          <div class="panel-body menu-actions">
+            <button type="button" id="btn-save" class="btn btn-primary">Save progress</button>
+            <button type="button" id="btn-leave" class="btn btn-ghost-full">Return to title</button>
           </div>
         </div>
 
         <div id="toast" hidden></div>
         <div id="scoreboard" hidden>
-          <h3>Party</h3>
+          <h3>Online</h3>
           <ul id="score-list"></ul>
         </div>
-        <button id="btn-leave" class="btn-leave" type="button">Leave</button>
       </section>
     </div>
     <script type="module" src="/src/main.js"></script>

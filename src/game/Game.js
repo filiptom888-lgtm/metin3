@@ -1,4 +1,3 @@
-import * as THREE from "three";
 import { CLASSES, MAP_HALF, clamp, dist2, rand, uid, wildPoint, CITY_RADIUS, inCity } from "./data.js";
 import {
   createRenderer,
@@ -12,6 +11,17 @@ import {
   animateCharacter,
   animateMob,
 } from "./meshes.js";
+import { FxSystem } from "./fx.js";
+import { derivedStats, applyLevelUps } from "./character.js";
+import { rollDrops, getItem, RARITY_COLOR } from "./items.js";
+import {
+  addToInventory,
+  equipFromInventory,
+  unequipSlot,
+  useConsumable,
+  removeFromInventory,
+} from "./inventory.js";
+import * as THREE from "three";
 
 export class Game {
   constructor(canvas, ui, net) {
@@ -25,6 +35,7 @@ export class Game {
     const { scene } = createScene();
     this.scene = scene;
     this.camera = createCamera();
+    this.fx = new FxSystem(scene);
 
     this.keys = new Set();
     this.mouse = { x: 0, y: 0, down: false, ndc: new THREE.Vector2() };
@@ -39,6 +50,11 @@ export class Game {
     this.metins = new Map();
     this.bolts = [];
     this.particles = [];
+    this.loot = new Map();
+    this.character = null;
+    this.fx = null;
+    this.saveTimer = 0;
+    this.onCharacterChange = () => {};
 
     this.camOffset = new THREE.Vector3(0, 26, 26);
     this.time = 0;
@@ -96,31 +112,36 @@ export class Game {
     this.camera.updateProjectionMatrix();
   }
 
-  start(profile) {
+  start(profile, character) {
     this.stop(false);
     this.profile = profile;
+    this.character = character;
     this.running = true;
     this.time = 0;
     this.clearWorldEntities();
+    this.fx?.clear();
 
-    const cls = CLASSES[profile.classId];
+    const cls = CLASSES[character.classId];
+    const d = derivedStats(character);
     this.local = {
       id: profile.id,
-      name: profile.name,
-      classId: profile.classId,
+      name: character.name,
+      classId: character.classId,
       color: cls.color,
-      x: rand(-2, 2),
-      z: rand(-2, 2),
+      x: character.x || rand(-2, 2),
+      z: character.z || rand(-2, 2),
       y: 0,
       rot: 0,
       moving: false,
-      hp: cls.hp,
-      maxHp: cls.hp,
-      sp: cls.sp,
-      maxSp: cls.sp,
-      level: 1,
-      atk: cls.atk,
-      speed: cls.speed,
+      hp: d.maxHp,
+      maxHp: d.maxHp,
+      sp: d.maxSp,
+      maxSp: d.maxSp,
+      level: character.level,
+      atk: d.atk,
+      def: d.def,
+      speed: d.speed,
+      crit: d.crit,
       range: cls.range,
       atkCd: 0,
       skillCd: [0, 0, 0, 0],
@@ -128,29 +149,59 @@ export class Game {
       buffMul: 1,
       stealthUntil: 0,
       invulnUntil: 0,
-      metins: 0,
-      kills: 0,
-      gold: 0,
+      metins: character.metins || 0,
+      kills: character.kills || 0,
+      gold: character.gold || 0,
       attacking: 0,
     };
 
-    this.localMesh = makePlayerMesh(profile.classId, true);
-    setNameplate(this.localMesh, profile.name, 1, 1, profile.classId);
+    this.localMesh = makePlayerMesh(character.classId, true);
+    setNameplate(this.localMesh, character.name, 1, character.level, character.classId);
     this.scene.add(this.localMesh);
 
     this.bindInput(true);
     this.resize();
     this.ui.bindLocal(this.local, cls);
-    this.ui.setRoom(this.net.roomCode);
+    this.ui.setRoom("WORLD");
     this.ui.setHost(this.net.isHost);
+    this.onCharacterChange(this.character, this.local);
 
-    // If host (or solo after election), seed world shortly
     setTimeout(() => {
       if (this.net.isHost && this.metins.size === 0) this.seedWorld();
-    }, 400);
+    }, 500);
 
     this._last = performance.now();
     this._raf = requestAnimationFrame((t) => this.loop(t));
+  }
+
+  syncDerived() {
+    if (!this.character || !this.local) return;
+    const d = derivedStats(this.character);
+    const hpRatio = this.local.hp / this.local.maxHp;
+    const spRatio = this.local.sp / this.local.maxSp;
+    this.local.maxHp = d.maxHp;
+    this.local.maxSp = d.maxSp;
+    this.local.atk = d.atk;
+    this.local.def = d.def;
+    this.local.speed = d.speed;
+    this.local.crit = d.crit;
+    this.local.level = this.character.level;
+    this.local.hp = Math.max(1, Math.min(d.maxHp, Math.ceil(d.maxHp * hpRatio)));
+    this.local.sp = Math.min(d.maxSp, Math.ceil(d.maxSp * spRatio));
+    this.local.gold = this.character.gold;
+    this.local.metins = this.character.metins;
+    this.local.kills = this.character.kills;
+    this.onCharacterChange(this.character, this.local);
+  }
+
+  persistToCharacter() {
+    if (!this.character || !this.local) return;
+    this.character.x = this.local.x;
+    this.character.z = this.local.z;
+    this.character.gold = this.local.gold;
+    this.character.metins = this.local.metins;
+    this.character.kills = this.local.kills;
+    this.character.level = this.local.level;
   }
 
   bindInput(on) {
@@ -182,9 +233,11 @@ export class Game {
     for (const [, m] of this.mobs) this.scene.remove(m.mesh);
     for (const [, m] of this.metins) this.scene.remove(m.mesh);
     for (const b of this.bolts) this.scene.remove(b.mesh);
+    for (const [, l] of this.loot) this.scene.remove(l.mesh);
     this.mobs.clear();
     this.metins.clear();
     this.bolts = [];
+    this.loot.clear();
   }
 
   seedWorld() {
@@ -302,6 +355,10 @@ export class Game {
         this.castSkill(i);
       }
     }
+    if (this.keys.has("f")) {
+      this.keys.delete("f");
+      this.tryPickup();
+    }
 
     // Mesh + animation
     this.localMesh.position.set(p.x, 0, p.z);
@@ -417,8 +474,23 @@ export class Game {
       });
     }
 
-    this.ui.updateHud(p);
+    this.ui.updateHud(p, this.character);
     this.ui.drawMinimap(p, this.remotes, this.metins, this.mobs);
+    this.fx?.update(dt);
+
+    this.saveTimer += dt;
+    if (this.saveTimer >= 20) {
+      this.saveTimer = 0;
+      this.persistToCharacter();
+      this.ui.requestSave?.(false);
+    }
+
+    // bob loot
+    for (const [, l] of this.loot) {
+      l.t = (l.t || 0) + dt;
+      l.mesh.position.y = 0.4 + Math.sin(l.t * 3) * 0.12;
+      l.mesh.rotation.y += dt * 2;
+    }
   }
 
   updateHostWorld(dt) {
@@ -540,17 +612,21 @@ export class Game {
     const p = this.local;
     const cls = CLASSES[p.classId];
     p.atkCd = cls.cd;
-    p.attacking = 0.2;
-    const dmg = p.atk * p.buffMul;
+    p.attacking = 0.28;
+    const crit = Math.random() < p.crit;
+    const dmg = p.atk * p.buffMul * (crit ? 1.75 : 1);
+    this.fx?.slash(p.x, p.z, p.rot, crit ? "#ffe08a" : p.color);
 
     if (cls.id === "shaman" || p.range > 4) {
       this.fireBolt(p.id, p.x, p.z, p.rot, dmg, p.color);
       this.net.sendEvent({ type: "bolt", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, color: p.color });
+      this.net.sendEvent({ type: "fx", kind: "slash", x: p.x, z: p.z, rot: p.rot, color: p.color, from: p.id });
       return;
     }
 
     this.meleeHit(p, dmg, 0.9);
     this.net.sendEvent({ type: "melee", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, cone: 0.9 });
+    this.net.sendEvent({ type: "fx", kind: "slash", x: p.x, z: p.z, rot: p.rot, color: p.color, from: p.id });
   }
 
   castSkill(i) {
@@ -562,53 +638,68 @@ export class Game {
     }
     p.sp -= sk.sp;
     p.skillCd[i] = sk.cd;
-    p.attacking = 0.25;
-    const dmg = p.atk * p.buffMul;
+    p.attacking = 0.3;
+    const dmg = p.atk * p.buffMul * (1 + (CLASSES[p.classId].id === "shaman" && sk.type !== "heal" ? 0.15 : 0));
 
     switch (sk.type) {
       case "cone":
+        this.fx?.slash(p.x, p.z, p.rot, p.color);
         this.meleeHit(p, dmg * 1.7, 1.1, p.range + 1);
         this.net.sendEvent({ type: "melee", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg: dmg * 1.7, cone: 1.1, range: p.range + 1 });
+        this.net.sendEvent({ type: "fx", kind: "slash", x: p.x, z: p.z, rot: p.rot, color: p.color, from: p.id });
         break;
       case "aoe":
+        this.fx?.aoe(p.x, p.z, 5, p.color);
         this.aoeHit(p.x, p.z, 5, dmg * 1.5, p.id);
         this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 5, dmg: dmg * 1.5 });
+        this.net.sendEvent({ type: "fx", kind: "aoe", x: p.x, z: p.z, r: 5, color: p.color, from: p.id });
         break;
       case "bolt":
+        this.fx?.boltTrail(p.x, p.z, p.color);
         this.fireBolt(p.id, p.x, p.z, p.rot, dmg * 1.6, p.color);
         this.net.sendEvent({ type: "bolt", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg: dmg * 1.6, color: p.color });
         break;
       case "buff":
-        p.buffMul = 1.4;
-        p.buffUntil = this.time + 6;
-        this.ui.toast("Buffed");
+        p.buffMul = 1.45;
+        p.buffUntil = this.time + 8;
+        this.fx?.buff(p.x, p.z);
+        this.ui.toast("Power surges");
+        this.net.sendEvent({ type: "fx", kind: "buff", x: p.x, z: p.z, from: p.id });
         break;
       case "dash": {
-        p.x += Math.sin(p.rot) * 6;
-        p.z += Math.cos(p.rot) * 6;
+        p.x += Math.sin(p.rot) * 7;
+        p.z += Math.cos(p.rot) * 7;
         p.x = clamp(p.x, -MAP_HALF + 1.2, MAP_HALF - 1.2);
         p.z = clamp(p.z, -MAP_HALF + 1.2, MAP_HALF - 1.2);
-        p.invulnUntil = this.time + 0.25;
-        this.aoeHit(p.x, p.z, 2.5, dmg * 1.2, p.id);
-        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 2.5, dmg: dmg * 1.2 });
+        p.invulnUntil = this.time + 0.3;
+        this.fx?.slash(p.x, p.z, p.rot, "#e8d48b");
+        this.aoeHit(p.x, p.z, 2.8, dmg * 1.25, p.id);
+        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 2.8, dmg: dmg * 1.25 });
         break;
       }
       case "stealth":
-        p.stealthUntil = this.time + 3.2;
-        this.ui.toast("Smoke");
+        p.stealthUntil = this.time + 3.5;
+        this.fx?.aoe(p.x, p.z, 2, "#3a9fd4");
+        this.ui.toast("Vanished");
         break;
       case "burst":
-        this.aoeHit(p.x, p.z, 3.5, dmg * 2.2, p.id);
-        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 3.5, dmg: dmg * 2.2 });
+        this.fx?.aoe(p.x, p.z, 3.8, "#3a9fd4");
+        this.aoeHit(p.x, p.z, 3.8, dmg * 2.3, p.id);
+        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 3.8, dmg: dmg * 2.3 });
+        this.net.sendEvent({ type: "fx", kind: "aoe", x: p.x, z: p.z, r: 3.8, color: "#3a9fd4", from: p.id });
         break;
       case "dot":
       case "drain":
-        this.aoeHit(p.x, p.z, 4.5, dmg * 1.3, p.id, sk.type === "drain");
-        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 4.5, dmg: dmg * 1.3, drain: sk.type === "drain" });
+        this.fx?.aoe(p.x, p.z, 4.5, "#8b3fd4");
+        this.aoeHit(p.x, p.z, 4.5, dmg * 1.35, p.id, sk.type === "drain");
+        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 4.5, dmg: dmg * 1.35, drain: sk.type === "drain" });
+        this.net.sendEvent({ type: "fx", kind: "aoe", x: p.x, z: p.z, r: 4.5, color: "#8b3fd4", from: p.id });
         break;
       case "heal":
-        p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.35);
+        p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.4);
+        this.fx?.heal(p.x, p.z);
         this.ui.toast("Healed");
+        this.net.sendEvent({ type: "fx", kind: "heal", x: p.x, z: p.z, from: p.id });
         break;
       default:
         break;
@@ -701,26 +792,187 @@ export class Game {
 
   damageMob(mob, dmg, fromId) {
     mob.hp -= dmg;
-    this.net.sendEvent({ type: "fx", kind: "hit", x: mob.x, z: mob.z, dmg: Math.floor(dmg) });
+    this.net.sendEvent({ type: "fx", kind: "hit", x: mob.x, z: mob.z, dmg: Math.floor(dmg), from: fromId });
     if (mob.hp <= 0) {
-      this.net.sendEvent({ type: "kill", from: fromId, target: mob.id, kind: "mob" });
-      if (fromId === this.local?.id) {
-        this.local.kills += 1;
-        this.local.gold += 120 + ((Math.random() * 80) | 0);
-      }
+      const gold = 80 + ((Math.random() * 100) | 0) + (mob.kind === "ork" ? 60 : 0);
+      const xp = mob.kind === "ork" ? 45 : 28;
+      this.net.sendEvent({
+        type: "kill",
+        from: fromId,
+        target: mob.id,
+        kind: mob.kind === "ork" ? "ork" : "wolf",
+        x: mob.x,
+        z: mob.z,
+        gold,
+        xp,
+      });
+      if (this.net.isHost) this.spawnLootAt(mob.x, mob.z, mob.kind === "ork" ? "ork" : "wolf", 1, gold);
+      if (fromId === this.local?.id) this.rewardKill(xp, gold, mob.kind === "ork" ? "ork" : "wolf");
     }
   }
 
   damageMetin(met, dmg, fromId) {
     met.hp -= dmg;
-    this.net.sendEvent({ type: "fx", kind: "hit", x: met.x, z: met.z, dmg: Math.floor(dmg) });
+    this.net.sendEvent({ type: "fx", kind: "hit", x: met.x, z: met.z, dmg: Math.floor(dmg), from: fromId });
     if (met.hp <= 0) {
-      this.net.sendEvent({ type: "kill", from: fromId, target: met.id, kind: "metin", tier: met.tier });
+      const gold = 600 + met.tier * 250 + ((Math.random() * 200) | 0);
+      const xp = 120 + met.tier * 40;
+      this.net.sendEvent({
+        type: "kill",
+        from: fromId,
+        target: met.id,
+        kind: "metin",
+        tier: met.tier,
+        x: met.x,
+        z: met.z,
+        gold,
+        xp,
+      });
+      if (this.net.isHost) this.spawnLootAt(met.x, met.z, "metin", met.tier, gold);
       if (fromId === this.local?.id) {
         this.local.metins += 1;
-        this.local.gold += 800 + met.tier * 200;
+        this.character.metins = this.local.metins;
+        this.rewardKill(xp, gold, "metin");
         this.ui.toast(`Metin shattered · ${this.local.metins}`);
       }
+    }
+  }
+
+  rewardKill(xp, gold, kind) {
+    if (!this.local || !this.character) return;
+    this.local.kills += 1;
+    this.character.kills = this.local.kills;
+    this.local.gold += gold;
+    this.character.gold = this.local.gold;
+    const ups = applyLevelUps(this.character, xp);
+    this.local.level = this.character.level;
+    if (ups) {
+      this.syncDerived();
+      this.local.hp = this.local.maxHp;
+      this.local.sp = this.local.maxSp;
+      this.ui.toast(ups > 1 ? `Level up ×${ups}!` : "Level up!");
+      this.fx?.buff(this.local.x, this.local.z);
+    }
+    this.onCharacterChange(this.character, this.local);
+  }
+
+  spawnLootAt(x, z, kind, tier = 1, bonusGold = 0) {
+    const drops = rollDrops(kind, tier);
+    // yang pile
+    if (bonusGold > 0 || Math.random() < 0.9) {
+      this.createLoot(x + rand(-1, 1), z + rand(-1, 1), null, Math.max(20, Math.floor(bonusGold * 0.35)));
+    }
+    for (const drop of drops) {
+      this.createLoot(x + rand(-1.4, 1.4), z + rand(-1.4, 1.4), drop, 0);
+    }
+  }
+
+  createLoot(x, z, item, gold, { silent = false } = {}) {
+    const id = uid("loot");
+    const def = item ? getItem(item.itemId) : null;
+    const color = def ? RARITY_COLOR[def.rarity] || "#e8d48b" : "#e8d48b";
+    const mesh = new THREE.Mesh(
+      new THREE.OctahedronGeometry(gold && !item ? 0.25 : 0.32, 0),
+      new THREE.MeshStandardMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: 0.55,
+        metalness: 0.4,
+        roughness: 0.3,
+      })
+    );
+    mesh.position.set(x, 0.4, z);
+    this.scene.add(mesh);
+    const entry = { id, x, z, item, gold, mesh, t: rand(0, 3) };
+    this.loot.set(id, entry);
+    if (!silent) {
+      this.net.sendEvent({ type: "loot", id, x, z, item, gold, from: this.local?.id });
+      this.fx?.lootBeam(x, z, color);
+    }
+    return id;
+  }
+
+  addLootFromNet(payload) {
+    if (!payload?.id || this.loot.has(payload.id)) return;
+    const def = payload.item ? getItem(payload.item.itemId) : null;
+    const color = def ? RARITY_COLOR[def.rarity] || "#e8d48b" : "#e8d48b";
+    const mesh = new THREE.Mesh(
+      new THREE.OctahedronGeometry(payload.gold && !payload.item ? 0.25 : 0.32, 0),
+      new THREE.MeshStandardMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: 0.55,
+        metalness: 0.4,
+        roughness: 0.3,
+      })
+    );
+    mesh.position.set(payload.x, 0.4, payload.z);
+    this.scene.add(mesh);
+    this.loot.set(payload.id, {
+      id: payload.id,
+      x: payload.x,
+      z: payload.z,
+      item: payload.item,
+      gold: payload.gold,
+      mesh,
+      t: 0,
+    });
+  }
+
+  tryPickup() {
+    const p = this.local;
+    if (!p || !this.character) return;
+    let best = null;
+    let bestD = 2.2;
+    for (const [, l] of this.loot) {
+      const d = dist2(p.x, p.z, l.x, l.z);
+      if (d < bestD) {
+        bestD = d;
+        best = l;
+      }
+    }
+    if (!best) {
+      this.ui.toast("Nothing nearby");
+      return;
+    }
+    this.pickupLoot(best.id, true);
+  }
+
+  pickupLoot(id, broadcast = false) {
+    const l = this.loot.get(id);
+    if (!l || !this.character || !this.local) return;
+    if (l.gold) {
+      this.local.gold += l.gold;
+      this.character.gold = this.local.gold;
+      this.ui.toast(`+${l.gold} Yang`);
+    }
+    if (l.item) {
+      addToInventory(this.character.inventory, l.item.itemId, l.item.qty || 1);
+      const def = getItem(l.item.itemId);
+      this.ui.toast(`Looted ${def?.name || "item"}`);
+    }
+    this.scene.remove(l.mesh);
+    this.loot.delete(id);
+    this.onCharacterChange(this.character, this.local);
+    if (broadcast) this.net.sendEvent({ type: "loot_taken", id, by: this.local.id });
+  }
+
+  takeDamage(amount) {
+    const p = this.local;
+    if (!p || this.time < p.invulnUntil || this.time < p.stealthUntil) return;
+    const reduced = Math.max(1, amount - (p.def || 0) * 0.55);
+    p.hp -= reduced;
+    this.fx?.hitSparks(p.x, p.z, "#ff6655");
+    if (p.hp <= 0) {
+      p.hp = p.maxHp;
+      p.x = rand(-2, 2);
+      p.z = rand(-2, 2);
+      p.invulnUntil = this.time + 2.5;
+      const loss = Math.floor(p.gold * 0.03);
+      p.gold = Math.max(0, p.gold - loss);
+      if (this.character) this.character.gold = p.gold;
+      this.ui.toast(loss ? `Fallen (−${loss} Yang)` : "Respawned in the city");
+      this.net.sendEvent({ type: "toast", msg: `${p.name} fell`, from: p.id });
     }
   }
 
@@ -729,18 +981,55 @@ export class Game {
     if (playerId === this.local?.id) this.takeDamage(amount);
   }
 
-  takeDamage(amount) {
-    const p = this.local;
-    if (!p || this.time < p.invulnUntil || this.time < p.stealthUntil) return;
-    p.hp -= amount;
-    if (p.hp <= 0) {
-      p.hp = p.maxHp;
-      p.x = rand(-2, 2);
-      p.z = rand(-2, 2);
-      p.invulnUntil = this.time + 2;
-      this.ui.toast("Respawned");
-      this.net.sendEvent({ type: "toast", msg: `${p.name} fell`, from: p.id });
+  allocateStat(stat) {
+    if (!this.character || this.character.statPoints <= 0) return;
+    if (!["str", "vit", "intel", "dex"].includes(stat)) return;
+    this.character[stat] += 1;
+    this.character.statPoints -= 1;
+    this.syncDerived();
+    this.ui.toast(`+1 ${stat.toUpperCase()}`);
+  }
+
+  equipItem(uid) {
+    if (!this.character) return;
+    const err = equipFromInventory(this.character, uid);
+    if (err) this.ui.toast(err);
+    else {
+      this.syncDerived();
+      this.ui.toast("Equipped");
     }
+  }
+
+  unequip(slot) {
+    if (!this.character) return;
+    const err = unequipSlot(this.character, slot);
+    if (err) this.ui.toast(err);
+    else {
+      this.syncDerived();
+      this.ui.toast("Unequipped");
+    }
+  }
+
+  useItem(uid) {
+    if (!this.character || !this.local) return;
+    const err = useConsumable(this.character, uid, this.local);
+    if (err) this.ui.toast(err);
+    else {
+      this.fx?.heal(this.local.x, this.local.z);
+      this.ui.toast("Used");
+      this.onCharacterChange(this.character, this.local);
+    }
+  }
+
+  dropItem(uid) {
+    if (!this.character || !this.local) return;
+    const stack = this.character.inventory.find((x) => x.uid === uid);
+    if (!stack) return;
+    const removed = removeFromInventory(this.character.inventory, uid, 1);
+    if (!removed) return;
+    this.createLoot(this.local.x + rand(-0.5, 0.5), this.local.z + rand(-0.5, 0.5), removed, 0);
+    this.onCharacterChange(this.character, this.local);
+    this.ui.toast("Dropped");
   }
 
   serializeWorld() {
@@ -866,8 +1155,6 @@ export class Game {
     }
 
     if (e.type === "melee" && this.net.isHost && e.from !== this.local?.id) {
-      const fake = { x: e.x, z: e.z, rot: e.rot, range: e.range || 2.4, id: e.from, buffMul: 1, atk: e.dmg };
-      // reuse cone logic with synthetic player
       for (const [, mob] of this.mobs) {
         if (this.inCone(e.x, e.z, e.rot, mob.x, mob.z, (e.range || 2.4) + 0.6, e.cone || 0.9)) {
           this.damageMob(mob, e.dmg, e.from);
@@ -878,13 +1165,7 @@ export class Game {
           this.damageMetin(met, e.dmg, e.from);
         }
       }
-      void fake;
     }
-
-    // Non-host attackers: host applies when receiving their melee — also local host already applied own melee.
-    // Fix: when local is NOT host, send melee and host applies. When local IS host, already applied in meleeHit.
-    // But wait — local non-host meleeHit returns early. Good.
-    // Local host meleeHit applies. Event also sent — host receives broadcast with self:false so won't double. Good.
 
     if (e.type === "aoe" && this.net.isHost && e.from !== this.local?.id) {
       this.aoeHit(e.x, e.z, e.r, e.dmg, e.from, !!e.drain);
@@ -894,19 +1175,34 @@ export class Game {
       this.takeDamage(e.amount);
     }
 
-    if (e.type === "kill" && e.from === this.local?.id && e.kind === "mob") {
-      // already counted if host local; for non-host credit:
-      if (!this.net.isHost) this.local.kills += 1;
-    }
-    if (e.type === "kill" && e.from === this.local?.id && e.kind === "metin") {
+    if (e.type === "kill" && e.from === this.local?.id) {
       if (!this.net.isHost) {
-        this.local.metins += 1;
-        this.ui.toast(`Metin shattered · ${this.local.metins}`);
+        if (e.kind === "metin") {
+          this.local.metins += 1;
+          this.character.metins = this.local.metins;
+          this.ui.toast(`Metin shattered · ${this.local.metins}`);
+        }
+        this.rewardKill(e.xp || 30, e.gold || 50, e.kind);
       }
     }
 
-    if (e.type === "fx" && e.kind === "hit") {
-      // lightweight flash via scale punch on nearest — skip heavy VFX
+    if (e.type === "loot" && e.from !== this.local?.id) {
+      this.addLootFromNet(e);
+    }
+    if (e.type === "loot_taken") {
+      const l = this.loot.get(e.id);
+      if (l) {
+        this.scene.remove(l.mesh);
+        this.loot.delete(e.id);
+      }
+    }
+
+    if (e.type === "fx" && e.from !== this.local?.id) {
+      if (e.kind === "slash") this.fx?.slash(e.x, e.z, e.rot || 0, e.color || "#e8d48b");
+      if (e.kind === "aoe") this.fx?.aoe(e.x, e.z, e.r || 3, e.color || "#c43c2e");
+      if (e.kind === "heal") this.fx?.heal(e.x, e.z);
+      if (e.kind === "buff") this.fx?.buff(e.x, e.z);
+      if (e.kind === "hit") this.fx?.hitSparks(e.x, e.z, "#fff");
     }
   }
 }
