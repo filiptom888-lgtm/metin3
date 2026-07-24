@@ -1017,12 +1017,9 @@ game.onOpenNpc = (npc) => {
 };
 
 game.onOpenTower = () => {
-  if (DungeonService.isInside()) {
-    $("#panel-dungeon").hidden = false;
-    renderDungeonPanel();
-    return;
-  }
-  ["#panel-char", "#panel-inv", "#panel-quests", "#panel-npc", "#panel-party"].forEach((s) => {
+  // Inside the tower: red HUD only (no yellow panel)
+  if (DungeonService.isInside()) return;
+  ["#panel-char", "#panel-inv", "#panel-quests", "#panel-npc", "#panel-party", "#panel-dungeon"].forEach((s) => {
     const el = $(s);
     if (el) el.hidden = true;
   });
@@ -1043,15 +1040,8 @@ game.onPartyChange = () => {
 
 game.onDungeonChange = (run) => {
   updateDungeonHud(run);
-  if (run) {
-    // Keep dungeon panel in sync; open it on enter / floor clear so buttons are obvious
-    if ($("#panel-dungeon").hidden && run.cleared) {
-      $("#panel-dungeon").hidden = false;
-    }
-    renderDungeonPanel();
-  } else {
-    $("#panel-dungeon").hidden = true;
-  }
+  // Never show the yellow dungeon panel — status lives on the red HUD
+  $("#panel-dungeon").hidden = true;
 };
 
 ui.requestSave = async (toast = true) => {
@@ -1095,8 +1085,9 @@ window.addEventListener("keydown", (e) => {
   if (k === "q") togglePanel("quests");
   if (k === "p") togglePanel("party");
   if (k === "escape") {
-    if (DungeonService.isInside()) togglePanel("dungeon");
-    else togglePanel("menu");
+    // Keep dungeon HUD-only; Esc opens game menu even inside the tower
+    $("#panel-dungeon").hidden = true;
+    togglePanel("menu");
   }
   if (e.key === "Tab") {
     e.preventDefault();
@@ -1120,28 +1111,20 @@ $("#btn-hud-quests")?.addEventListener("click", () => {
 $("#btn-dt-solo")?.addEventListener("click", () => {
   $("#panel-tower").hidden = true;
   game.enterDemonTower({ withParty: false });
-  $("#panel-dungeon").hidden = false;
-  renderDungeonPanel();
 });
 $("#btn-dt-party")?.addEventListener("click", () => {
   $("#panel-tower").hidden = true;
   game.enterDemonTower({ withParty: true });
-  $("#panel-dungeon").hidden = false;
-  renderDungeonPanel();
 });
 function onNextFloorClick() {
   game.advanceDemonFloor();
-  renderDungeonPanel();
   updateDungeonHud(DungeonService.run);
 }
-$("#btn-dt-next")?.addEventListener("click", onNextFloorClick);
 $("#btn-dt-hud-next")?.addEventListener("click", onNextFloorClick);
 function onExitTowerClick() {
-  $("#panel-dungeon").hidden = true;
   game.exitDemonTower();
   updateDungeonHud(null);
 }
-$("#btn-dt-exit")?.addEventListener("click", onExitTowerClick);
 $("#btn-dt-hud-exit")?.addEventListener("click", onExitTowerClick);
 $("#btn-party-accept")?.addEventListener("click", () => {
   game.acceptPartyInvite();
