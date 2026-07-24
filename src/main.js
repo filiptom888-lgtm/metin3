@@ -651,14 +651,10 @@ function renderShopUi(body, npc, ch) {
         }
         return;
       }
-      const err = game.unequip(slot);
-      if (err) ui.toast(err);
-      else {
-        ui.toast("Unequipped");
-        renderNpcPanel(npc);
-        renderInventory(ch);
-        renderCharacterPanel(ch);
-      }
+      game.unequip(slot);
+      renderNpcPanel(npc);
+      renderInventory(ch);
+      renderCharacterPanel(ch);
     },
   });
 
