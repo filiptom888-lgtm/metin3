@@ -17,12 +17,23 @@ export const NpcService = {
     return null;
   },
   sell(ch, uid) {
-    const stack = ch.inventory.find((x) => x.uid === uid);
+    let stack = ch.inventory.find((x) => x.uid === uid);
+    let fromEquipSlot = null;
+    if (!stack) {
+      for (const [slot, ref] of Object.entries(ch.equipment || {})) {
+        if (ref?.uid === uid) {
+          stack = ref;
+          fromEquipSlot = slot;
+          break;
+        }
+      }
+    }
     if (!stack) return "Missing";
     const t = ITEM_TEMPLATES[stack.itemId];
     if (!t) return "Invalid";
     const price = Math.floor((t.sell || 10) * (1 + (stack.upgrade || 0) * 0.15));
-    InventoryService.remove(ch, uid, 1);
+    if (fromEquipSlot) delete ch.equipment[fromEquipSlot];
+    else InventoryService.remove(ch, uid, 1);
     ch.gold += price;
     return null;
   },

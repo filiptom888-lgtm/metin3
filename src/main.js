@@ -537,6 +537,63 @@ function sellPrice(stack) {
   return Math.floor((t.sell || 10) * (1 + (stack.upgrade || 0) * 0.15));
 }
 
+function listEquippedStacks(ch) {
+  const out = [];
+  for (const slot of DOLL_SLOTS) {
+    const ref = ch.equipment?.[slot];
+    if (!ref) continue;
+    const def = getItem(ref.itemId || ref);
+    if (!def) continue;
+    out.push({
+      ...(typeof ref === "object" ? ref : { itemId: ref }),
+      _equippedSlot: slot,
+    });
+  }
+  return out;
+}
+
+/** Compact paperdoll for shop / blacksmith */
+function appendNpcEquipDoll(parent, ch, npc, opts = {}) {
+  const wrap = document.createElement("div");
+  wrap.className = "npc-equip";
+  const label = document.createElement("div");
+  label.className = "field-label";
+  label.textContent = opts.label || "Equipped";
+  wrap.appendChild(label);
+
+  const doll = document.createElement("div");
+  doll.className = "paperdoll paperdoll-npc";
+  for (const s of DOLL_SLOTS) {
+    const ref = ch.equipment?.[s];
+    const id = ref ? ref.itemId || ref : null;
+    const def = id ? getItem(id) : null;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "doll-slot" + (def ? "" : " empty");
+    if (def && opts.selectedUid && ref?.uid === opts.selectedUid) btn.classList.add("selected");
+    btn.dataset.slot = s;
+    btn.style.borderColor = def ? RARITY_COLOR[def.rarity] : "";
+    const up = ref?.upgrade ? `+${ref.upgrade}` : "";
+    btn.innerHTML = `<span class="lbl">${s}</span>${
+      def
+        ? `<span class="ico">${def.icon}</span><span class="up">${up}</span>`
+        : `<span class="ico" style="opacity:.35">·</span>`
+    }`;
+    btn.title = def
+      ? `${ItemService.displayName(ref)}${opts.hint ? ` — ${opts.hint}` : ""}`
+      : s;
+    if (def && typeof opts.onSlot === "function") {
+      btn.addEventListener("click", () => {
+        audio.sfx("ui");
+        opts.onSlot(s, ref, def);
+      });
+    }
+    doll.appendChild(btn);
+  }
+  wrap.appendChild(doll);
+  parent.appendChild(wrap);
+}
+
 function renderNpcPanel(npc) {
   $("#npc-title").textContent = npc.name;
   const body = $("#npc-body");
@@ -576,6 +633,35 @@ function renderShopUi(body, npc, ch) {
   head.innerHTML = `<span>Your Yang</span><b>${ch.gold ?? 0}</b>`;
   body.appendChild(head);
 
+  appendNpcEquipDoll(body, ch, npc, {
+    label: "Equipped",
+    hint: shopTab === "sell" ? "click to sell" : "click to unequip",
+    onSlot: (slot, ref) => {
+      if (shopTab === "sell") {
+        const price = sellPrice(ref);
+        const err = NpcService.sell(ch, ref.uid);
+        if (err) ui.toast(err);
+        else {
+          game.local.gold = ch.gold;
+          game.syncDerived();
+          ui.toast(`Sold for ${price} Yang`);
+          renderNpcPanel(npc);
+          renderInventory(ch);
+          renderCharacterPanel(ch);
+        }
+        return;
+      }
+      const err = game.unequip(slot);
+      if (err) ui.toast(err);
+      else {
+        ui.toast("Unequipped");
+        renderNpcPanel(npc);
+        renderInventory(ch);
+        renderCharacterPanel(ch);
+      }
+    },
+  });
+
   const tabs = document.createElement("div");
   tabs.className = "npc-tabs";
   for (const t of SHOP_TABS) {
@@ -595,7 +681,9 @@ function renderShopUi(body, npc, ch) {
   grid.className = "shop-grid";
 
   if (shopTab === "sell") {
-    const sellable = (ch.inventory || []).filter((s) => getItem(s.itemId));
+    const equipped = listEquippedStacks(ch);
+    const bag = (ch.inventory || []).filter((s) => getItem(s.itemId));
+    const sellable = [...equipped, ...bag];
     if (!sellable.length) {
       const empty = document.createElement("p");
       empty.className = "sub shop-empty";
@@ -608,24 +696,29 @@ function renderShopUi(body, npc, ch) {
       const price = sellPrice(stack);
       const card = document.createElement("button");
       card.type = "button";
-      card.className = "shop-card sell";
+      card.className = "shop-card sell" + (stack._equippedSlot ? " equipped" : "");
       card.style.borderColor = RARITY_COLOR[def.rarity] || "";
       card.innerHTML = `
         <span class="ico">${def.icon || "·"}</span>
         <span class="nm">${def.name}${stack.upgrade ? ` +${stack.upgrade}` : ""}</span>
         <span class="pr">+${price}</span>
+        ${stack._equippedSlot ? `<span class="eq-tag">EQ</span>` : ""}
         ${stack.qty > 1 ? `<span class="qty">${stack.qty}</span>` : ""}
       `;
-      card.title = `Sell for ${price} Yang`;
+      card.title = stack._equippedSlot
+        ? `Equipped (${stack._equippedSlot}) — sell for ${price} Yang`
+        : `Sell for ${price} Yang`;
       card.onclick = () => {
         const err = NpcService.sell(ch, stack.uid);
         if (err) ui.toast(err);
         else {
           game.local.gold = ch.gold;
+          game.syncDerived();
           audio.sfx("ui");
           ui.toast(`Sold for ${price} Yang`);
           renderNpcPanel(npc);
           renderInventory(ch);
+          renderCharacterPanel(ch);
         }
       };
       grid.appendChild(card);
@@ -664,10 +757,13 @@ function renderShopUi(body, npc, ch) {
 }
 
 function renderSmithUi(body, npc, ch) {
-  const gear = (ch.inventory || []).filter((stack) => {
+  const isUpgradable = (stack) => {
     const def = getItem(stack.itemId);
     return def && def.slot !== "consumable" && (stack.upgrade || 0) < 9;
-  });
+  };
+  const equipped = listEquippedStacks(ch).filter(isUpgradable);
+  const bag = (ch.inventory || []).filter(isUpgradable);
+  const gear = [...equipped, ...bag];
 
   if (smithSelectedUid && !gear.some((g) => g.uid === smithSelectedUid)) {
     smithSelectedUid = null;
@@ -679,6 +775,20 @@ function renderSmithUi(body, npc, ch) {
   head.innerHTML = `<span>Your Yang</span><b>${ch.gold ?? 0}</b>`;
   body.appendChild(head);
 
+  appendNpcEquipDoll(body, ch, npc, {
+    label: "Equipped — click to forge",
+    hint: "select for upgrade",
+    selectedUid: smithSelectedUid,
+    onSlot: (slot, ref) => {
+      if (!isUpgradable(ref)) {
+        ui.toast("Cannot upgrade this");
+        return;
+      }
+      smithSelectedUid = ref.uid;
+      renderNpcPanel(npc);
+    },
+  });
+
   const layout = document.createElement("div");
   layout.className = "smith-layout";
 
@@ -686,13 +796,13 @@ function renderSmithUi(body, npc, ch) {
   pick.className = "smith-pick";
   const pickLabel = document.createElement("div");
   pickLabel.className = "field-label";
-  pickLabel.textContent = "Select gear";
+  pickLabel.textContent = "Bag / upgradable";
   pick.appendChild(pickLabel);
 
   if (!gear.length) {
     const empty = document.createElement("p");
     empty.className = "sub shop-empty";
-    empty.textContent = "No upgradable gear in your bag.";
+    empty.textContent = "No upgradable gear equipped or in your bag.";
     pick.appendChild(empty);
   } else {
     const grid = document.createElement("div");
@@ -702,13 +812,17 @@ function renderSmithUi(body, npc, ch) {
       const level = stack.upgrade || 0;
       const cell = document.createElement("button");
       cell.type = "button";
-      cell.className = "smith-cell" + (stack.uid === smithSelectedUid ? " selected" : "");
+      cell.className =
+        "smith-cell" +
+        (stack.uid === smithSelectedUid ? " selected" : "") +
+        (stack._equippedSlot ? " equipped" : "");
       cell.style.borderColor = RARITY_COLOR[def.rarity] || "";
       cell.innerHTML = `
         <span class="ico">${def.icon || "·"}</span>
         <span class="up-tag">+${level}</span>
+        ${stack._equippedSlot ? `<span class="eq-tag">EQ</span>` : ""}
       `;
-      cell.title = `${def.name} +${level}`;
+      cell.title = `${def.name} +${level}${stack._equippedSlot ? " (equipped)" : ""}`;
       cell.onclick = () => {
         smithSelectedUid = stack.uid;
         renderNpcPanel(npc);
@@ -723,7 +837,7 @@ function renderSmithUi(body, npc, ch) {
   forge.className = "smith-forge";
   const selected = gear.find((g) => g.uid === smithSelectedUid);
   if (!selected) {
-    forge.innerHTML = `<p class="sub">Bring gear to the anvil to raise +0…+9.</p>`;
+    forge.innerHTML = `<p class="sub">Select equipped or bag gear to raise +0…+9.</p>`;
   } else {
     const def = getItem(selected.itemId);
     const level = selected.upgrade || 0;
@@ -737,7 +851,7 @@ function renderSmithUi(body, npc, ch) {
         <span class="ico">${def.icon || "·"}</span>
         <div>
           <b>${def.name}</b>
-          <span>+${level} → +${level + 1}</span>
+          <span>+${level} → +${level + 1}${selected._equippedSlot ? " · worn" : ""}</span>
         </div>
       </div>
       <div class="forge-stats">
@@ -757,10 +871,13 @@ function renderSmithUi(body, npc, ch) {
       audio.sfx(res.ok ? "buff" : "ui");
       ui.toast(res.msg);
       game.syncDerived();
-      // Keep selection if item still exists
-      if (!ch.inventory.some((s) => s.uid === selected.uid)) smithSelectedUid = null;
+      const still =
+        ch.inventory.some((s) => s.uid === selected.uid) ||
+        Object.values(ch.equipment || {}).some((s) => s?.uid === selected.uid);
+      if (!still) smithSelectedUid = null;
       renderNpcPanel(npc);
       renderInventory(ch);
+      renderCharacterPanel(ch);
     };
     forge.appendChild(btn);
   }
