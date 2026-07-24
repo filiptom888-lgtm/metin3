@@ -20,6 +20,17 @@ export const DROP_TABLES = {
     { id: "wood_shield", chance: 0.05 },
     { id: "upgrade_ore", chance: 0.15 },
   ],
+  bandit: [
+    { id: "red_potion", chance: 0.38, qty: [1, 2] },
+    { id: "blue_potion", chance: 0.22 },
+    { id: "orange_potion", chance: 0.12 },
+    { id: "leather_armor", chance: 0.09 },
+    { id: "iron_blade", chance: 0.06 },
+    { id: "leather_cap", chance: 0.07 },
+    { id: "hunter_boots", chance: 0.06 },
+    { id: "copper_bracelet", chance: 0.05 },
+    { id: "upgrade_ore", chance: 0.12 },
+  ],
   metin: [
     { id: "orange_potion", chance: 0.5, qty: [1, 3] },
     { id: "plate_mail", chance: 0.1 },

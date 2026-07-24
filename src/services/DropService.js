@@ -15,12 +15,14 @@ export const DropService = {
   },
   yangFor(kind, tier = 1) {
     if (kind === "metin") return 400 + tier * 200 + ((Math.random() * 200) | 0);
-    if (kind === "ork" || kind === "elite") return 100 + ((Math.random() * 120) | 0);
+    if (kind === "ork" || kind === "elite" || kind === "soldier") return 100 + ((Math.random() * 120) | 0);
+    if (kind === "bandit" || kind === "human") return 70 + ((Math.random() * 90) | 0);
     return 40 + ((Math.random() * 80) | 0);
   },
   xpFor(kind, tier = 1) {
     if (kind === "metin") return 100 + tier * 35;
-    if (kind === "ork") return 40;
+    if (kind === "ork" || kind === "soldier") return 40;
+    if (kind === "bandit" || kind === "human") return 32;
     return 22;
   },
 };

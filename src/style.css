@@ -324,6 +324,10 @@ button, input { font: inherit; color: inherit; }
   color: #e8d48b;
 }
 #host-chip.host { border-color: #e8d48b; box-shadow: 0 0 8px rgba(201, 162, 39, 0.35); }
+#map-chip.valley {
+  color: #e8c48a;
+  border-color: rgba(180, 120, 60, 0.45);
+}
 #map-chip.dungeon {
   border-color: #c43c2e;
   color: #ff6a4a;

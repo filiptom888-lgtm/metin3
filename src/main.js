@@ -189,8 +189,9 @@ const ui = {
   setMap(name, mapId) {
     const el = $("#map-chip");
     if (!el) return;
-    el.textContent = name || "Kingdom";
+    el.textContent = name || "Shinsoo";
     el.classList.toggle("dungeon", mapId === "demon_tower");
+    el.classList.toggle("valley", mapId === "valley");
   },
   setHost(isHost) {
     const el = $("#host-chip");
@@ -240,24 +241,33 @@ const ui = {
     ctx.arc(w / 2, h / 2, w / 2 - 2, 0, Math.PI * 2);
     ctx.clip();
     const dungeon = MapService.is("demon_tower");
-    ctx.fillStyle = dungeon ? "#1a0a0e" : "#1a2e18";
+    const valley = MapService.is("valley");
+    ctx.fillStyle = dungeon ? "#1a0a0e" : valley ? "#2a1e12" : "#1a2e18";
     ctx.fillRect(0, 0, w, h);
     const mapSize = dungeon ? 40 : MAP_SIZE;
     const to = (x, z) => [((x + mapSize / 2) / mapSize) * w, ((z + mapSize / 2) / mapSize) * h];
     if (!dungeon) {
-      ctx.strokeStyle = "rgba(201,162,39,0.45)";
+      ctx.strokeStyle = valley ? "rgba(180,140,70,0.5)" : "rgba(201,162,39,0.45)";
       ctx.beginPath();
       const cr = (22 / MAP_SIZE) * w;
       ctx.arc(w / 2, h / 2, cr, 0, Math.PI * 2);
       ctx.stroke();
-      const [tx, ty] = to(DEMON_TOWER.entrance.x, DEMON_TOWER.entrance.z);
-      ctx.fillStyle = "#ff6a4a";
+      // Edge portal marker
+      const [px, py] = valley ? to(-56.5, 0) : to(56.5, 0);
+      ctx.fillStyle = valley ? "#e8b84a" : "#6ec8ff";
       ctx.beginPath();
-      ctx.moveTo(tx, ty - 4);
-      ctx.lineTo(tx + 3.5, ty + 3);
-      ctx.lineTo(tx - 3.5, ty + 3);
-      ctx.closePath();
+      ctx.arc(px, py, 3.5, 0, Math.PI * 2);
       ctx.fill();
+      if (!valley) {
+        const [tx, ty] = to(DEMON_TOWER.entrance.x, DEMON_TOWER.entrance.z);
+        ctx.fillStyle = "#ff6a4a";
+        ctx.beginPath();
+        ctx.moveTo(tx, ty - 4);
+        ctx.lineTo(tx + 3.5, ty + 3);
+        ctx.lineTo(tx - 3.5, ty + 3);
+        ctx.closePath();
+        ctx.fill();
+      }
     } else {
       ctx.strokeStyle = "rgba(196,60,46,0.7)";
       ctx.beginPath();
@@ -267,17 +277,19 @@ const ui = {
     if (!dungeon) {
       ctx.fillStyle = "#c43c2e";
       for (const [, m] of metins) {
-        const [px, py] = to(m.x, m.z);
+        if ((m.mapId || "overworld") !== MapService.currentId) continue;
+        const [mx, my] = to(m.x, m.z);
         ctx.beginPath();
-        ctx.arc(px, py, 3, 0, Math.PI * 2);
+        ctx.arc(mx, my, 3, 0, Math.PI * 2);
         ctx.fill();
       }
     }
-    ctx.fillStyle = dungeon ? "#e23a2e" : "#6b8f3a";
+    ctx.fillStyle = dungeon ? "#e23a2e" : valley ? "#c47a3a" : "#6b8f3a";
     for (const [, m] of mobs) {
       if (dungeon && !m.dungeon) continue;
-      const [px, py] = to(m.x, m.z);
-      ctx.fillRect(px - 1, py - 1, 2, 2);
+      if (!dungeon && (m.mapId || "overworld") !== MapService.currentId) continue;
+      const [mx, my] = to(m.x, m.z);
+      ctx.fillRect(mx - 1, my - 1, 2, 2);
     }
     ctx.fillStyle = "#4db0ff";
     for (const [, r] of remotes) {

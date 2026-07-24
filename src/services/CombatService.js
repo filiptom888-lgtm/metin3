@@ -4,9 +4,12 @@ import { deriveCombatStats } from "../data/stats.js";
 export const CombatService = {
   derive: deriveCombatStats,
 
-  rollHit({ attacker, defender, skillMul = 1, isMagic = false }) {
-    const missChance = Math.max(0.02, 0.08 - (attacker.dex || 0) * 0.004 + (defender.dex || 0) * 0.003);
-    if (Math.random() < missChance) return { hit: false, kind: "miss", damage: 0 };
+  rollHit({ attacker, defender, skillMul = 1, isMagic = false, forcedHit = false }) {
+    // Cursor-locked targets skip miss RNG so aiming feels reliable
+    if (!forcedHit) {
+      const missChance = Math.max(0.02, 0.08 - (attacker.dex || 0) * 0.004 + (defender.dex || 0) * 0.003);
+      if (Math.random() < missChance) return { hit: false, kind: "miss", damage: 0 };
+    }
 
     const atk = isMagic ? attacker.matk : attacker.atk;
     const def = isMagic ? defender.mdef || 0 : defender.def || 0;

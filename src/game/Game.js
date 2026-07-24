@@ -9,6 +9,7 @@ import {
   makeNpcMesh,
   makeDemonTowerMesh,
   makeDungeonMapRoot,
+  makeValleyMapRoot,
   makeBoltMesh,
   setNameplate,
   animateCharacter,
@@ -37,6 +38,7 @@ import { PartyService } from "../services/PartyService.js";
 import { DungeonService } from "../services/DungeonService.js";
 import { MapService } from "../services/MapService.js";
 import { DEMON_TOWER, demonPortalWorld } from "../data/demonTower.js";
+import { findPortalNear } from "../data/mapPortals.js";
 import { MONSTERS } from "../data/monsters.js";
 import { METINS } from "../data/metins.js";
 import { QUESTS } from "../data/quests.js";
@@ -56,7 +58,9 @@ export class Game {
     this.scene = scene;
     this.overworld = overworld || null;
     this.dungeonRoot = null;
+    this.valleyRoot = null;
     this.arenaMesh = null;
+    this.nearWorldPortal = null;
     this.camera = createCamera();
     this.fx = new FxSystem(scene);
     MapService.set("overworld");
@@ -66,6 +70,8 @@ export class Game {
     this.raycaster = new THREE.Raycaster();
     this.groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     this.aim = new THREE.Vector3();
+    this.aimEntity = null;
+    this._aimProj = new THREE.Vector3();
 
     this.local = null;
     this.localMesh = null;
@@ -113,6 +119,7 @@ export class Game {
       if (e.key === "Tab") this.ui.setScoreboard(true);
       if (k === "e" && !this.pendingDeath) {
         if (this.nearPortal) this.useDemonPortal();
+        else if (this.nearWorldPortal) this.useWorldPortal(this.nearWorldPortal);
         else if (this.nearTower) this.onOpenTower();
         else if (this.nearNpc) this.onOpenNpc(this.nearNpc);
       }
@@ -310,6 +317,7 @@ export class Game {
     const ow = this.overworld || this.scene;
     if (this.towerMesh) ow.remove(this.towerMesh);
     if (this.dungeonRoot) this.scene.remove(this.dungeonRoot);
+    if (this.valleyRoot) this.scene.remove(this.valleyRoot);
 
     // Overworld landmark only
     this.towerMesh = makeDemonTowerMesh();
@@ -329,13 +337,19 @@ export class Game {
       this.arenaMesh.userData.portalLabel.visible = false;
     }
     this.scene.add(this.dungeonRoot);
+
+    // Second field map (brown Seungryong)
+    this.valleyRoot = makeValleyMapRoot();
+    this.scene.add(this.valleyRoot);
+
     this.switchMap("overworld");
   }
 
-  /** True map switch — overworld vs Demon Tower instance */
+  /** True map switch — field maps + Demon Tower instance */
   switchMap(mapId) {
     const map = MapService.set(mapId);
     if (this.overworld) this.overworld.visible = mapId === "overworld";
+    if (this.valleyRoot) this.valleyRoot.visible = mapId === "valley";
     if (this.dungeonRoot) this.dungeonRoot.visible = mapId === "demon_tower";
     if (this.local) this.local.mapId = mapId;
     if (this.scene) {
@@ -343,11 +357,60 @@ export class Game {
       this.scene.fog = new THREE.Fog(map.fog, map.fogNear, map.fogFar);
     }
     this.ui.setMap?.(map.name, mapId);
+    this._syncEntityMapVisibility();
     // Hide remotes that are on another map
     for (const [, r] of this.remotes) {
       const mid = r.target?.mapId || r.state?.mapId || "overworld";
       if (r.mesh) r.mesh.visible = mid === mapId && !r.target?.stealth;
     }
+  }
+
+  _syncEntityMapVisibility() {
+    const mid = MapService.currentId;
+    const inDungeon = MapService.isDungeon();
+    for (const [, mob] of this.mobs) {
+      if (!mob.mesh) continue;
+      if (mob.dungeon) mob.mesh.visible = inDungeon;
+      else mob.mesh.visible = !inDungeon && (mob.mapId || "overworld") === mid;
+    }
+    for (const [, met] of this.metins) {
+      if (!met.mesh) continue;
+      met.mesh.visible = !inDungeon && (met.mapId || "overworld") === mid;
+    }
+    for (const [, l] of this.loot) {
+      if (!l.mesh) continue;
+      l.mesh.visible = !inDungeon && (l.mapId || "overworld") === mid;
+    }
+  }
+
+  /** Walk into an edge portal — teleport to the other map beside its return portal. */
+  useWorldPortal(portal) {
+    if (!this.local || !portal || DungeonService.isInside()) return;
+    if (this._portalCd && this.time < this._portalCd) return;
+    this._portalCd = this.time + 1.6;
+
+    const toMap = portal.toMap;
+    const spawn = portal.spawn;
+    this.switchMap(toMap);
+    this.local.x = spawn.x;
+    this.local.z = spawn.z;
+    this.local.rot = Math.atan2(-spawn.x, -spawn.z);
+    if (this.localMesh) {
+      this.localMesh.position.set(spawn.x, 0, spawn.z);
+      this.localMesh.rotation.y = this.local.rot;
+    }
+    this.nearWorldPortal = null;
+
+    if (this.net.isHost) this.seedWorld(toMap);
+    this.net.sendEvent({
+      type: "map_travel",
+      from: this.local.id,
+      mapId: toMap,
+      x: spawn.x,
+      z: spawn.z,
+    });
+    this.ui.toast(`Entered ${MapService.current.name}`);
+    audio.sfx("skill");
   }
 
   _tryClickTower() {
@@ -494,12 +557,19 @@ export class Game {
     this.loot.clear();
   }
 
-  seedWorld() {
-    if (DungeonService.isInside() || !MapService.isOverworld()) return;
-    const seed = SpawnService.seedWild(this.character?.level || 1);
-    for (const m of seed.metins) this.spawnMetin(m.x, m.z, m.templateId);
-    for (const m of seed.mobs) this.spawnMob(m.x, m.z, m.templateId);
-    this.ui.toast("Leave the city gates to hunt");
+  seedWorld(mapId = MapService.currentId) {
+    if (DungeonService.isInside() || !MapService.isField(mapId)) return;
+    const existingMobs = [...this.mobs.values()].filter(
+      (m) => !m.dungeon && (m.mapId || "overworld") === mapId
+    ).length;
+    if (existingMobs > 0) return;
+    const seed = SpawnService.seedWild(mapId, this.character?.level || 1);
+    for (const m of seed.metins) this.spawnMetin(m.x, m.z, m.templateId, mapId);
+    for (const m of seed.mobs) this.spawnMob(m.x, m.z, m.templateId, mapId);
+    if (mapId === MapService.currentId) {
+      this.ui.toast(mapId === "valley" ? "Bandits roam the valley" : "Leave the city gates to hunt");
+    }
+    this._syncEntityMapVisibility();
   }
 
   // —— Party ——
@@ -735,10 +805,12 @@ export class Game {
       for (let i = 0; i < row.n; i++) {
         const ang = Math.random() * Math.PI * 2;
         const r = 4 + Math.random() * 8;
-        const id = this.spawnMob(a.x + Math.cos(ang) * r, a.z + Math.sin(ang) * r, row.id);
+        const id = this.spawnMob(a.x + Math.cos(ang) * r, a.z + Math.sin(ang) * r, row.id, "demon_tower");
         const mob = this.mobs.get(id);
         if (mob) {
           mob.dungeon = true;
+          mob.mapId = "demon_tower";
+          if (mob.mesh) mob.mesh.visible = true;
           mob.hp = Math.floor(mob.hp * (1 + (cfg.floor - 1) * 0.15));
           mob.maxHp = mob.hp;
           spawned++;
@@ -746,11 +818,13 @@ export class Game {
       }
     }
     if (cfg.boss) {
-      const id = this.spawnMob(a.x, a.z + 3, cfg.boss.id);
+      const id = this.spawnMob(a.x, a.z + 3, cfg.boss.id, "demon_tower");
       const mob = this.mobs.get(id);
       if (mob) {
         mob.dungeon = true;
         mob.boss = true;
+        mob.mapId = "demon_tower";
+        if (mob.mesh) mob.mesh.visible = true;
         mob.hp = Math.floor(mob.hp * (cfg.boss.hpMul || 2));
         mob.maxHp = mob.hp;
         mob.atk = Math.floor(mob.atk * (cfg.boss.atkMul || 1.4));
@@ -858,7 +932,7 @@ export class Game {
     if (this.net.isHost) setTimeout(() => this.seedWorld(), 400);
   }
 
-  spawnMetin(x, z, templateIdOrTier = "battle") {
+  spawnMetin(x, z, templateIdOrTier = "battle", mapId = MapService.currentId) {
     const tmpl =
       typeof templateIdOrTier === "number"
         ? Object.values(METINS).find((t) => t.tier === templateIdOrTier) || METINS.battle
@@ -866,6 +940,7 @@ export class Game {
     const id = uid("met");
     const mesh = makeMetinMesh(tmpl.tier, tmpl.color);
     mesh.position.set(x, 0, z);
+    mesh.visible = mapId === MapService.currentId && !MapService.isDungeon();
     this.scene.add(mesh);
     this.metins.set(id, {
       id,
@@ -881,15 +956,17 @@ export class Game {
       pulse: rand(0, 10),
       spawnT: 3,
       wave: tmpl.wave || 3,
+      mapId,
     });
     return id;
   }
 
-  spawnMob(x, z, kind = "wolf") {
+  spawnMob(x, z, kind = "wolf", mapId = MapService.currentId) {
     const tmpl = MONSTERS[kind] || MONSTERS.wolf;
     const id = uid("mob");
     const mesh = makeMobMesh(tmpl.id || tmpl.kind || kind);
     mesh.position.set(x, 0, z);
+    mesh.visible = !MapService.isDungeon() && mapId === MapService.currentId;
     this.scene.add(mesh);
     this.mobs.set(id, {
       id,
@@ -906,8 +983,15 @@ export class Game {
       atkT: rand(0.5, 1.2),
       mesh,
       targetId: null,
+      mapId,
     });
     return id;
+  }
+
+  _entityOnCurrentMap(ent) {
+    if (!ent) return false;
+    if (ent.dungeon) return MapService.isDungeon();
+    return !MapService.isDungeon() && (ent.mapId || "overworld") === MapService.currentId;
   }
 
   loop(now) {
@@ -926,6 +1010,105 @@ export class Game {
     if (this.raycaster.ray.intersectPlane(this.groundPlane, hit)) {
       this.aim.copy(hit);
     }
+    // Lock to enemy under / near cursor (mesh raycast, then screen soft-lock)
+    this.aimEntity = this._raycastEnemyUnderCursor() || this._softLockEnemyNearCursor();
+    if (this.aimEntity) {
+      this.aim.x = this.aimEntity.x;
+      this.aim.z = this.aimEntity.z;
+    }
+  }
+
+  _raycastEnemyUnderCursor() {
+    const meshes = [];
+    for (const [, m] of this.mobs) {
+      if (m.hp > 0 && m.mesh && this._entityOnCurrentMap(m)) meshes.push(m.mesh);
+    }
+    for (const [, m] of this.metins) {
+      if (m.hp > 0 && m.mesh && this._entityOnCurrentMap(m)) meshes.push(m.mesh);
+    }
+    if (!meshes.length) return null;
+    this.raycaster.setFromCamera(this.mouse.ndc, this.camera);
+    const hits = this.raycaster.intersectObjects(meshes, true);
+    if (!hits.length) return null;
+    const node = hits[0].object;
+    // Skip HP bar / label sprites — lock the body behind them
+    for (const h of hits) {
+      if (h.object?.isSprite) continue;
+      for (const [, m] of this.mobs) {
+        if (this._meshContains(m.mesh, h.object)) {
+          return { type: "mob", ref: m, x: m.x, z: m.z };
+        }
+      }
+      for (const [, m] of this.metins) {
+        if (this._meshContains(m.mesh, h.object)) {
+          return { type: "metin", ref: m, x: m.x, z: m.z };
+        }
+      }
+    }
+    // Sprite-only hit: still resolve parent mob/metin
+    for (const [, m] of this.mobs) {
+      if (this._meshContains(m.mesh, node)) return { type: "mob", ref: m, x: m.x, z: m.z };
+    }
+    for (const [, m] of this.metins) {
+      if (this._meshContains(m.mesh, node)) return { type: "metin", ref: m, x: m.x, z: m.z };
+    }
+    return null;
+  }
+
+  /** Screen-space soft lock when the cursor is near an enemy but not exactly on the mesh. */
+  _softLockEnemyNearCursor() {
+    const rect = this.canvas.getBoundingClientRect();
+    const mx = this.mouse.x;
+    const my = this.mouse.y;
+    const maxPx = 48;
+    let best = null;
+    let bestD = maxPx;
+
+    const consider = (type, ref, x, z, y = 0.9) => {
+      if (!this._entityOnCurrentMap(ref)) return;
+      this._aimProj.set(x, y, z).project(this.camera);
+      if (this._aimProj.z > 1) return;
+      const sx = (this._aimProj.x * 0.5 + 0.5) * rect.width;
+      const sy = (-this._aimProj.y * 0.5 + 0.5) * rect.height;
+      const d = Math.hypot(sx - mx, sy - my);
+      if (d < bestD) {
+        bestD = d;
+        best = { type, ref, x, z };
+      }
+    };
+
+    for (const [, m] of this.mobs) {
+      if (m.hp <= 0) continue;
+      consider("mob", m, m.x, m.z, 0.85);
+    }
+    if (!DungeonService.isInside()) {
+      for (const [, m] of this.metins) {
+        if (m.hp <= 0) continue;
+        consider("metin", m, m.x, m.z, 1.2);
+      }
+    }
+    return best;
+  }
+
+  _meshContains(root, node) {
+    if (!root || !node) return false;
+    let o = node;
+    while (o) {
+      if (o === root) return true;
+      o = o.parent;
+    }
+    return false;
+  }
+
+  /**
+   * Enemy under cursor if in reach — no wide cone (that felt random).
+   */
+  pickAimedTarget(p, range) {
+    if (!this.aimEntity) return null;
+    const pad = this.aimEntity.type === "metin" ? 1.5 : 1.05;
+    const d = dist2(p.x, p.z, this.aimEntity.x, this.aimEntity.z);
+    if (d <= range + pad) return this.aimEntity;
+    return null;
   }
 
   update(dt) {
@@ -982,15 +1165,24 @@ export class Game {
     p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
 
     // NPC / tower / portal proximity
-    const near = !DungeonService.isInside() ? NpcService.near(p.x, p.z, 3.5)[0] || null : null;
+    const near =
+      MapService.isOverworld() && !DungeonService.isInside()
+        ? NpcService.near(p.x, p.z, 3.5)[0] || null
+        : null;
     this.nearNpc = near;
     this.nearTower =
+      MapService.isOverworld() &&
       !DungeonService.isInside() &&
       dist2(p.x, p.z, DEMON_TOWER.entrance.x, DEMON_TOWER.entrance.z) < 7.5;
     const portalPos = demonPortalWorld();
     const portalDist = dist2(p.x, p.z, portalPos.x, portalPos.z);
     this.nearPortal =
       DungeonService.isInside() && !!DungeonService.run?.cleared && portalDist < 2.8;
+    this.nearWorldPortal =
+      MapService.isField() && !DungeonService.isInside()
+        ? findPortalNear(MapService.currentId, p.x, p.z)
+        : null;
+
     // Standing on the portal pad auto-triggers (Metin-style)
     if (this.nearPortal) {
       this.useDemonPortal();
@@ -999,6 +1191,9 @@ export class Game {
           ? "Portal — ascending…"
           : "Portal — leaving…",
       });
+    } else if (this.nearWorldPortal) {
+      this.ui.setNpcPrompt?.({ name: `${this.nearWorldPortal.label} — walk in / E` });
+      this.useWorldPortal(this.nearWorldPortal);
     } else if (DungeonService.isInside() && DungeonService.run?.cleared && portalDist < 8) {
       this.ui.setNpcPrompt?.({
         name: DungeonService.canAdvance() ? "Blue portal — walk in / E" : "Exit portal — walk in / E",
@@ -1007,6 +1202,12 @@ export class Game {
       this.ui.setNpcPrompt?.({ name: "Demon Tower — Enter (E)" });
     } else {
       this.ui.setNpcPrompt?.(near);
+    }
+
+    // Pulse edge portal rings
+    for (const root of [this.overworld, this.valleyRoot]) {
+      const ep = root?.userData?.edgePortal;
+      if (ep?.userData?.ring) ep.userData.ring.rotation.z += dt * 1.2;
     }
 
     // Demon Tower floor clear check + VFX
@@ -1201,12 +1402,27 @@ export class Game {
     // Enemy + metin HP bars
     for (const [, mob] of this.mobs) {
       if (!mob.mesh) continue;
-      const label = mob.kind === "ork" ? "Orc" : mob.kind === "elite_ork" ? "Orc Capt." : "Wolf";
+      if (!this._entityOnCurrentMap(mob)) {
+        if (mob.mesh.userData.hpSprite) mob.mesh.userData.hpSprite.visible = false;
+        continue;
+      }
+      const tmpl = MONSTERS[mob.templateId];
+      const label =
+        tmpl?.name ||
+        (mob.kind === "ork"
+          ? "Orc"
+          : mob.kind === "elite_ork"
+            ? "Orc Capt."
+            : mob.kind === "human" || mob.templateId === "bandit"
+              ? "Bandit"
+              : mob.templateId === "soldier"
+                ? "Soldier"
+                : "Wolf");
       updateHpBar(mob.mesh, {
         name: label,
         hp: mob.hp,
         maxHp: mob.maxHp,
-        level: MONSTERS[mob.templateId]?.level || (mob.kind === "ork" ? 12 : 3),
+        level: tmpl?.level || (mob.kind === "ork" ? 12 : 3),
         color: "#e23a2e",
       });
       if (mob.mesh.userData.hpSprite) {
@@ -1294,11 +1510,15 @@ export class Game {
     }
 
     const players = this.allCombatants();
+    const fieldMobs = [...this.mobs.values()].filter((m) => !m.dungeon);
+    const fieldMetins = [...this.metins.values()];
+    const half = MAP_HALF;
 
-    for (const [, m] of this.metins) {
+    for (const m of fieldMetins) {
+      const mid = m.mapId || "overworld";
       m.pulse += dt * 2;
       m.spawnT -= dt;
-      if (m.mesh?.userData.crystal) {
+      if (m.mesh?.userData.crystal && this._entityOnCurrentMap(m)) {
         m.mesh.userData.crystal.rotation.y += dt * 1.4;
         m.mesh.userData.crystal.position.y = 1.55 + Math.sin(m.pulse) * 0.12;
         if (m.mesh.userData.shard) {
@@ -1308,19 +1528,30 @@ export class Game {
       }
       if (m.spawnT <= 0) {
         m.spawnT = 6;
-        if (this.mobs.size < 35 && !inCity(m.x, m.z)) {
+        const count = fieldMobs.filter((x) => (x.mapId || "overworld") === mid).length;
+        if (count < 35 && !inCity(m.x, m.z)) {
           const a = rand(0, Math.PI * 2);
-          this.spawnMob(m.x + Math.cos(a) * 4, m.z + Math.sin(a) * 4, Math.random() < 0.4 ? "ork" : "wolf");
+          const kind =
+            mid === "valley"
+              ? Math.random() < 0.4
+                ? "soldier"
+                : "bandit"
+              : Math.random() < 0.4
+                ? "ork"
+                : "wolf";
+          this.spawnMob(m.x + Math.cos(a) * 4, m.z + Math.sin(a) * 4, kind, mid);
         }
       }
     }
 
-    for (const [, mob] of this.mobs) {
+    for (const mob of fieldMobs) {
+      const mid = mob.mapId || "overworld";
       mob.atkT -= dt;
       let best = null;
       let bestD = 999;
       for (const pl of players) {
         if (pl.stealth) continue;
+        if ((pl.mapId || "overworld") !== mid) continue;
         // Mobs ignore players deep in the city
         if (inCity(pl.x, pl.z) && dist2(pl.x, pl.z, 0, 0) < CITY_RADIUS - 3) continue;
         const d = dist2(mob.x, mob.z, pl.x, pl.z);
@@ -1352,23 +1583,41 @@ export class Game {
         mob.z *= push;
       }
 
-      mob.x = clamp(mob.x, -MAP_HALF + 1, MAP_HALF - 1);
-      mob.z = clamp(mob.z, -MAP_HALF + 1, MAP_HALF - 1);
+      mob.x = clamp(mob.x, -half + 1, half - 1);
+      mob.z = clamp(mob.z, -half + 1, half - 1);
       mob.mesh.position.set(mob.x, 0, mob.z);
-      animateMob(mob.mesh, dt, moving);
+      if (this._entityOnCurrentMap(mob)) animateMob(mob.mesh, dt, moving);
     }
 
     this.waveTimer -= dt;
-    if (this.waveTimer <= 0 && this.mobs.size < 12) {
+    if (this.waveTimer <= 0) {
       this.waveTimer = 14;
-      for (let i = 0; i < 6; i++) {
-        const p = wildPoint(CITY_RADIUS + 6, MAP_HALF - 7);
-        this.spawnMob(p.x, p.z, Math.random() < 0.35 ? "ork" : "wolf");
-      }
-      if (this.metins.size < 3) {
-        const p = wildPoint(CITY_RADIUS + 10, MAP_HALF - 8);
-        this.spawnMetin(p.x, p.z, SpawnService.pickMetinTemplate().id);
-        this.net.sendEvent({ type: "toast", msg: "A new Metin rises beyond the walls", from: this.local.id });
+      const activeMaps = new Set(players.map((p) => p.mapId || "overworld"));
+      for (const mid of activeMaps) {
+        if (!MapService.isField(mid)) continue;
+        const mapMobs = fieldMobs.filter((m) => (m.mapId || "overworld") === mid);
+        const mapMetins = fieldMetins.filter((m) => (m.mapId || "overworld") === mid);
+        if (mapMobs.length < 12) {
+          for (let i = 0; i < 6; i++) {
+            const p = wildPoint(CITY_RADIUS + 6, MAP_HALF - 7);
+            const kind =
+              mid === "valley"
+                ? Math.random() < 0.35
+                  ? "soldier"
+                  : "bandit"
+                : Math.random() < 0.35
+                  ? "ork"
+                  : "wolf";
+            this.spawnMob(p.x, p.z, kind, mid);
+          }
+        }
+        if (mapMetins.length < 3) {
+          const p = wildPoint(CITY_RADIUS + 10, MAP_HALF - 8);
+          this.spawnMetin(p.x, p.z, SpawnService.pickMetinTemplate().id, mid);
+          if (mid === MapService.currentId) {
+            this.net.sendEvent({ type: "toast", msg: "A new Metin rises beyond the walls", from: this.local.id });
+          }
+        }
       }
     }
 
@@ -1394,6 +1643,7 @@ export class Game {
         x: this.local.x,
         z: this.local.z,
         stealth: this.time < this.local.stealthUntil,
+        mapId: this.local.mapId || MapService.currentId,
       });
     }
     for (const [id, r] of this.remotes) {
@@ -1402,6 +1652,7 @@ export class Game {
         x: r.state.x,
         z: r.state.z,
         stealth: !!r.target?.stealth,
+        mapId: r.target?.mapId || r.state?.mapId || "overworld",
       });
     }
     return list;
@@ -1412,11 +1663,22 @@ export class Game {
     const cls = CLASSES[p.classId];
     p.atkCd = cls.cd;
     p.attacking = 0.28;
+    this.updateAim();
+
+    const ranged = cls.id === "shaman" || p.range > 4;
+    const reach = ranged ? Math.max(p.range, 12) : p.range + 0.95;
+    const target = this.pickAimedTarget(p, reach);
+    // Always face the cursor / locked target
+    if (target) p.rot = Math.atan2(target.x - p.x, target.z - p.z);
+    else p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+
     const roll = CombatService.rollHit({
       attacker: p,
-      defender: { dex: 2, def: 2, mdef: 0 },
+      defender: { dex: target ? 1 : 4, def: 2, mdef: 0 },
       skillMul: p.buffMul,
       isMagic: cls.id === "shaman",
+      // Cursor-locked targets almost always connect
+      forcedHit: !!target,
     });
     if (!roll.hit) {
       this.ui.toast("Miss");
@@ -1426,17 +1688,39 @@ export class Game {
     const dmg = roll.damage;
     const color = roll.kind === "crit" ? "#ffe08a" : p.color;
     audio.sfx(roll.kind === "crit" ? "crit" : "slash");
-    this.fx?.skill("slash", p.x, p.z, p.rot, color, 2.2);
+    this.fx?.skill(ranged ? "bolt" : "slash", p.x, p.z, p.rot, color, 2.2);
 
-    if (cls.id === "shaman" || p.range > 4) {
-      this.fireBolt(p.id, p.x, p.z, p.rot, dmg, p.color);
-      this.net.sendEvent({ type: "bolt", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, color: p.color });
+    if (ranged) {
+      this.fireBolt(p.id, p.x, p.z, p.rot, dmg, p.color, target);
+      this.net.sendEvent({
+        type: "bolt",
+        from: p.id,
+        x: p.x,
+        z: p.z,
+        rot: p.rot,
+        dmg,
+        color: p.color,
+        targetId: target?.ref?.id,
+        targetKind: target?.type,
+      });
       this.net.sendEvent({ type: "fx", kind: "skill", skill: "bolt", x: p.x, z: p.z, rot: p.rot, color: p.color, from: p.id });
       return;
     }
 
-    this.meleeHit(p, dmg, 0.9);
-    this.net.sendEvent({ type: "melee", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, cone: 0.9 });
+    // Melee: hit the cursor target (not a random wide cone)
+    this.meleeHitAimed(p, dmg, target);
+    this.net.sendEvent({
+      type: "melee",
+      from: p.id,
+      x: p.x,
+      z: p.z,
+      rot: p.rot,
+      dmg,
+      cone: 0.35,
+      range: p.range + 0.95,
+      targetId: target?.ref?.id,
+      targetKind: target?.type,
+    });
     this.net.sendEvent({ type: "fx", kind: "skill", skill: "slash", x: p.x, z: p.z, rot: p.rot, color, from: p.id });
   }
 
@@ -1465,21 +1749,40 @@ export class Game {
     this.fx?.skill(sk.type, p.x, p.z, p.rot, color, sk.type === "burst" ? 3.8 : sk.type === "aoe" ? 5 : 4);
 
     switch (sk.type) {
-      case "cone":
-        this.meleeHit(p, dmg, 1.1, p.range + 1);
-        this.net.sendEvent({ type: "melee", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, cone: 1.1, range: p.range + 1 });
+      case "cone": {
+        this.updateAim();
+        p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+        this.meleeHit(p, dmg, 0.55, p.range + 1.2);
+        this.net.sendEvent({ type: "melee", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, cone: 0.55, range: p.range + 1.2 });
         this.net.sendEvent({ type: "fx", kind: "skill", skill: "cone", x: p.x, z: p.z, rot: p.rot, color, from: p.id });
         break;
+      }
       case "aoe":
         this.aoeHit(p.x, p.z, 5, dmg, p.id);
         this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 5, dmg });
         this.net.sendEvent({ type: "fx", kind: "skill", skill: "aoe", x: p.x, z: p.z, r: 5, color, from: p.id });
         break;
-      case "bolt":
-        this.fireBolt(p.id, p.x, p.z, p.rot, dmg, p.color);
-        this.net.sendEvent({ type: "bolt", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, color: p.color });
+      case "bolt": {
+        this.updateAim();
+        const boltReach = Math.max(p.range, 14);
+        const boltTarget = this.pickAimedTarget(p, boltReach);
+        if (boltTarget) p.rot = Math.atan2(boltTarget.x - p.x, boltTarget.z - p.z);
+        else p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+        this.fireBolt(p.id, p.x, p.z, p.rot, dmg, p.color, boltTarget);
+        this.net.sendEvent({
+          type: "bolt",
+          from: p.id,
+          x: p.x,
+          z: p.z,
+          rot: p.rot,
+          dmg,
+          color: p.color,
+          targetId: boltTarget?.ref?.id,
+          targetKind: boltTarget?.type,
+        });
         this.net.sendEvent({ type: "fx", kind: "skill", skill: "bolt", x: p.x, z: p.z, rot: p.rot, color, from: p.id });
         break;
+      }
       case "buff":
         p.buffMul = 1.45;
         p.buffUntil = this.time + 8;
@@ -1523,20 +1826,31 @@ export class Game {
     }
   }
 
-  meleeHit(p, dmg, cone, range = p.range) {
-    const dungeonAuth = this.isDungeonAuthority();
-    if (!this.net.isHost && !dungeonAuth) {
-      // Host applies open-world damage from the melee event
+  /** Apply damage to the cursor-aimed target. Host / dungeon authority resolve damage. */
+  meleeHitAimed(p, dmg, target) {
+    const canApply = this.net.isHost || this.isDungeonAuthority();
+    if (!canApply) return;
+    if (!target) {
+      this.meleeHit(p, dmg, 0.38, p.range + 0.7);
       return;
     }
+    if (target.type === "mob" && target.ref?.hp > 0) this.damageMob(target.ref, dmg, p.id);
+    else if (target.type === "metin" && target.ref?.hp > 0) this.damageMetin(target.ref, dmg, p.id);
+  }
+
+  meleeHit(p, dmg, cone, range = p.range) {
+    const dungeonAuth = this.isDungeonAuthority();
+    if (!this.net.isHost && !dungeonAuth) return;
     for (const [, mob] of this.mobs) {
       if (dungeonAuth && !mob.dungeon) continue;
+      if (!dungeonAuth && !this._entityOnCurrentMap(mob)) continue;
       if (this.inCone(p.x, p.z, p.rot, mob.x, mob.z, range + 0.6, cone)) {
         this.damageMob(mob, dmg, p.id);
       }
     }
     if (dungeonAuth) return;
     for (const [, met] of this.metins) {
+      if (!this._entityOnCurrentMap(met)) continue;
       if (this.inCone(p.x, p.z, p.rot, met.x, met.z, range + 1, cone)) {
         this.damageMetin(met, dmg, p.id);
       }
@@ -1549,6 +1863,7 @@ export class Game {
     let healed = 0;
     for (const [, mob] of this.mobs) {
       if (dungeonAuth && !mob.dungeon) continue;
+      if (!dungeonAuth && !this._entityOnCurrentMap(mob)) continue;
       if (dist2(x, z, mob.x, mob.z) <= r) {
         this.damageMob(mob, dmg, fromId);
         healed += dmg * 0.2;
@@ -1556,6 +1871,7 @@ export class Game {
     }
     if (!dungeonAuth) {
       for (const [, met] of this.metins) {
+        if (!this._entityOnCurrentMap(met)) continue;
         if (dist2(x, z, met.x, met.z) <= r) {
           this.damageMetin(met, dmg, fromId);
           healed += dmg * 0.15;
@@ -1576,7 +1892,7 @@ export class Game {
     return diff < cone;
   }
 
-  fireBolt(owner, x, z, rot, dmg, color) {
+  fireBolt(owner, x, z, rot, dmg, color, target = null) {
     const mesh = makeBoltMesh(color);
     mesh.position.set(x, 1.1, z);
     this.scene.add(mesh);
@@ -1584,21 +1900,72 @@ export class Game {
       owner,
       x,
       z,
-      vx: Math.sin(rot) * 18,
-      vz: Math.cos(rot) * 18,
+      vx: Math.sin(rot) * 22,
+      vz: Math.cos(rot) * 22,
       dmg,
-      life: 1.2,
+      life: 1.35,
       mesh,
       hit: false,
+      targetId: target?.ref?.id || null,
+      targetKind: target?.type || null,
     });
   }
 
   resolveBolt(b) {
     const dungeonAuth = this.isDungeonAuthority() && b.owner === this.local?.id;
-    if (b.hit || (!this.net.isHost && !dungeonAuth)) return;
+    // Visuals update for everyone; damage only on host / dungeon authority
+    const canDamage = this.net.isHost || dungeonAuth;
+
+    // Soft-home toward locked target (all clients — looks right)
+    if (b.targetId) {
+      let tx = null;
+      let tz = null;
+      if (b.targetKind === "metin") {
+        const met = this.metins.get(b.targetId);
+        if (met && met.hp > 0) {
+          tx = met.x;
+          tz = met.z;
+        }
+      } else {
+        const mob = this.mobs.get(b.targetId);
+        if (mob && mob.hp > 0) {
+          tx = mob.x;
+          tz = mob.z;
+        }
+      }
+      if (tx != null) {
+        const ang = Math.atan2(tx - b.x, tz - b.z);
+        const spd = Math.hypot(b.vx, b.vz) || 22;
+        b.vx = Math.sin(ang) * spd;
+        b.vz = Math.cos(ang) * spd;
+      }
+    }
+
+    if (b.hit || !canDamage) return;
+
+    // Locked bolt: only the aimed enemy (no splash onto neighbors)
+    if (b.targetId) {
+      if (b.targetKind === "metin") {
+        const met = this.metins.get(b.targetId);
+        if (met && met.hp > 0 && dist2(b.x, b.z, met.x, met.z) < 1.45) {
+          this.damageMetin(met, b.dmg, b.owner);
+          b.hit = true;
+          b.life = 0;
+        }
+      } else {
+        const mob = this.mobs.get(b.targetId);
+        if (mob && mob.hp > 0 && dist2(b.x, b.z, mob.x, mob.z) < 1.3) {
+          this.damageMob(mob, b.dmg, b.owner);
+          b.hit = true;
+          b.life = 0;
+        }
+      }
+      return;
+    }
+
     for (const [, mob] of this.mobs) {
       if (dungeonAuth && !mob.dungeon) continue;
-      if (dist2(b.x, b.z, mob.x, mob.z) < 0.9) {
+      if (dist2(b.x, b.z, mob.x, mob.z) < 1.15) {
         this.damageMob(mob, b.dmg, b.owner);
         b.hit = true;
         b.life = 0;
@@ -1617,26 +1984,26 @@ export class Game {
   }
 
   damageMob(mob, dmg, fromId) {
-    const roll = CombatService.rollHit({
-      attacker: { atk: dmg, matk: dmg, dex: 5, crit: 0.05, pierce: 0.02 },
-      defender: { def: mob.def || 0, mdef: 0, dex: 2 },
-      skillMul: 1,
-    });
-    const applied = roll.hit ? Math.max(1, Math.floor(dmg - (mob.def || 0) * 0.35)) : 0;
-    if (!applied) {
-      this.net.sendEvent({ type: "fx", kind: "hit", x: mob.x, z: mob.z, dmg: 0, from: fromId });
-      return;
-    }
+    // Damage is already rolled at attack time — do not re-roll miss here (felt random)
+    const applied = Math.max(1, Math.floor(dmg - (mob.def || 0) * 0.35));
     mob.hp -= applied;
     this.net.sendEvent({ type: "fx", kind: "hit", x: mob.x, z: mob.z, dmg: Math.floor(applied), from: fromId });
     if (mob.hp <= 0) {
       const gold = DropService.yangFor(mob.kind);
       const xp = DropService.xpFor(mob.kind);
+      const killKind =
+        mob.templateId === "soldier"
+          ? "soldier"
+          : mob.templateId === "bandit" || mob.kind === "human"
+            ? "bandit"
+            : mob.kind === "ork" || mob.kind === "elite_ork"
+              ? "ork"
+              : "wolf";
       this.net.sendEvent({
         type: "kill",
         from: fromId,
         target: mob.id,
-        kind: mob.kind === "ork" ? "ork" : "wolf",
+        kind: killKind,
         x: mob.x,
         z: mob.z,
         gold,
@@ -1645,7 +2012,7 @@ export class Game {
       if (this.net.isHost || (this.isDungeonAuthority() && fromId === this.local?.id)) {
         this.spawnLootAt(mob.x, mob.z, mob.dropTable || mob.kind, 1, gold);
       }
-      if (fromId === this.local?.id) this.rewardKill(xp, gold, mob.kind === "ork" ? "ork" : "wolf");
+      if (fromId === this.local?.id) this.rewardKill(xp, gold, killKind);
     }
   }
 
@@ -1700,9 +2067,13 @@ export class Game {
 
   spawnLootAt(x, z, kindOrTable, tier = 1, bonusGold = 0) {
     const tableId =
-      kindOrTable === "metin" || kindOrTable === "ork" || kindOrTable === "wolf"
-        ? kindOrTable === "ork"
-          ? "ork"
+      kindOrTable === "metin" ||
+      kindOrTable === "ork" ||
+      kindOrTable === "wolf" ||
+      kindOrTable === "bandit" ||
+      kindOrTable === "human"
+        ? kindOrTable === "human"
+          ? "bandit"
           : kindOrTable
         : kindOrTable || "wolf";
     const drops = DropService.roll(tableId, tableId === "metin" ? 1 + tier * 0.08 : 1);
@@ -1729,11 +2100,13 @@ export class Game {
       })
     );
     mesh.position.set(x, 0.4, z);
+    const mapId = MapService.currentId;
+    mesh.visible = MapService.isField();
     this.scene.add(mesh);
-    const entry = { id, x, z, item, gold, mesh, t: rand(0, 3) };
+    const entry = { id, x, z, item, gold, mesh, t: rand(0, 3), mapId };
     this.loot.set(id, entry);
     if (!silent) {
-      this.net.sendEvent({ type: "loot", id, x, z, item, gold, from: this.local?.id });
+      this.net.sendEvent({ type: "loot", id, x, z, item, gold, mapId, from: this.local?.id });
       this.fx?.lootBeam(x, z, color);
     }
     return id;
@@ -1985,6 +2358,7 @@ export class Game {
         maxHp: m.maxHp,
         dungeon: !!m.dungeon,
         boss: !!m.boss,
+        mapId: m.mapId || "overworld",
       })),
       metins: [...this.metins.values()].map((m) => ({
         id: m.id,
@@ -1995,6 +2369,7 @@ export class Game {
         z: m.z,
         hp: m.hp,
         maxHp: m.maxHp,
+        mapId: m.mapId || "overworld",
       })),
     };
   }
@@ -2028,6 +2403,7 @@ export class Game {
       mob.maxHp = m.maxHp;
       mob.dungeon = !!m.dungeon;
       mob.boss = !!m.boss;
+      mob.mapId = m.mapId || "overworld";
       mob.mesh.position.set(m.x, 0, m.z);
     }
     for (const [id, mob] of [...this.mobs]) {
@@ -2051,6 +2427,7 @@ export class Game {
       met.x = m.x;
       met.z = m.z;
       met.hp = m.hp;
+      met.mapId = m.mapId || "overworld";
       met.mesh.position.set(m.x, 0, m.z);
     }
     for (const [id, met] of [...this.metins]) {
@@ -2059,6 +2436,7 @@ export class Game {
         this.metins.delete(id);
       }
     }
+    this._syncEntityMapVisibility();
   }
 
   onRemotePlayer(s) {
@@ -2112,19 +2490,46 @@ export class Game {
     if (!e) return;
     if (e.type === "toast" && e.from !== this.local?.id) this.ui.toast(e.msg);
 
+    if (e.type === "map_travel" && e.from !== this.local?.id) {
+      // Host ensures destination map has spawns when another player travels
+      if (this.net.isHost && e.mapId && MapService.isField(e.mapId)) {
+        this.seedWorld(e.mapId);
+      }
+    }
+
     if (e.type === "bolt" && e.from !== this.local?.id) {
-      this.fireBolt(e.from, e.x, e.z, e.rot, e.dmg, e.color || "#e8d48b");
+      const target =
+        e.targetId != null
+          ? {
+              type: e.targetKind || "mob",
+              ref: e.targetKind === "metin" ? this.metins.get(e.targetId) : this.mobs.get(e.targetId),
+            }
+          : null;
+      this.fireBolt(e.from, e.x, e.z, e.rot, e.dmg, e.color || "#e8d48b", target?.ref ? target : null);
     }
 
     if (e.type === "melee" && this.net.isHost && e.from !== this.local?.id) {
-      for (const [, mob] of this.mobs) {
-        if (this.inCone(e.x, e.z, e.rot, mob.x, mob.z, (e.range || 2.4) + 0.6, e.cone || 0.9)) {
-          this.damageMob(mob, e.dmg, e.from);
+      // Prefer the attacker's cursor target — wide cone felt random
+      if (e.targetId) {
+        if (e.targetKind === "metin") {
+          const met = this.metins.get(e.targetId);
+          if (met && met.hp > 0) this.damageMetin(met, e.dmg, e.from);
+        } else {
+          const mob = this.mobs.get(e.targetId);
+          if (mob && mob.hp > 0) this.damageMob(mob, e.dmg, e.from);
         }
-      }
-      for (const [, met] of this.metins) {
-        if (this.inCone(e.x, e.z, e.rot, met.x, met.z, (e.range || 2.4) + 1, e.cone || 0.9)) {
-          this.damageMetin(met, e.dmg, e.from);
+      } else {
+        const cone = e.cone || 0.35;
+        const range = e.range || 2.4;
+        for (const [, mob] of this.mobs) {
+          if (this.inCone(e.x, e.z, e.rot, mob.x, mob.z, range + 0.6, cone)) {
+            this.damageMob(mob, e.dmg, e.from);
+          }
+        }
+        for (const [, met] of this.metins) {
+          if (this.inCone(e.x, e.z, e.rot, met.x, met.z, range + 1, cone)) {
+            this.damageMetin(met, e.dmg, e.from);
+          }
         }
       }
     }

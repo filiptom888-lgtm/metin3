@@ -42,6 +42,32 @@ function makeGrassTexture() {
   return t;
 }
 
+function makeDirtTexture() {
+  const c = document.createElement("canvas");
+  c.width = c.height = 256;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#6b4e32";
+  ctx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 5000; i++) {
+    const r = 90 + ((Math.random() * 50) | 0);
+    const g = 60 + ((Math.random() * 40) | 0);
+    const b = 35 + ((Math.random() * 25) | 0);
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
+  }
+  for (let i = 0; i < 28; i++) {
+    ctx.fillStyle = "rgba(50, 36, 22, 0.22)";
+    ctx.beginPath();
+    ctx.ellipse(Math.random() * 256, Math.random() * 256, 10 + Math.random() * 28, 6 + Math.random() * 14, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(MAP_SIZE / 8, MAP_SIZE / 8);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 function mat(color, opts = {}) {
   return new THREE.MeshStandardMaterial({
     color,
@@ -276,6 +302,8 @@ export function createScene() {
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
     if (Math.hypot(x - 54, z + 54) < 16) continue;
+    // Keep east edge clear for Seungryong portal
+    if (Math.hypot(x - 56.5, z) < 10) continue;
     const g = new THREE.Group();
     const t = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, 1.5, 5), trunk);
     t.position.y = 0.75;
@@ -300,6 +328,7 @@ export function createScene() {
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
     if (Math.hypot(x - 54, z + 54) < 14) continue;
+    if (Math.hypot(x - 56.5, z) < 9) continue;
     const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.55 + Math.random() * 1.3, 0), rockMat);
     rock.position.set(x, 0.45, z);
     rock.rotation.set(Math.random(), Math.random(), Math.random());
@@ -307,8 +336,205 @@ export function createScene() {
     overworld.add(rock);
   }
 
+  // East-edge portal to Seungryong
+  const eastPortal = makeMapPortalMesh("#6ec8ff", "Seungryong");
+  eastPortal.position.set(56.5, 0, 0);
+  eastPortal.rotation.y = -Math.PI / 2;
+  overworld.add(eastPortal);
+  overworld.userData.edgePortal = eastPortal;
+
   scene.add(overworld);
   return { scene, sun, overworld, ground };
+}
+
+/** Brown second field map — city + wilderness, west portal back to Shinsoo. */
+export function makeValleyMapRoot() {
+  const root = new THREE.Group();
+  root.name = "map_valley";
+  root.visible = false;
+
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 64, 64),
+    new THREE.MeshStandardMaterial({ map: makeDirtTexture(), roughness: 0.96 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  root.add(ground);
+
+  const stoneTex = texNoise("#7a6548", 36);
+  stoneTex.repeat.set(10, 10);
+  const plaza = new THREE.Mesh(
+    new THREE.CircleGeometry(CITY_RADIUS - 0.4, 48),
+    new THREE.MeshStandardMaterial({ map: stoneTex, roughness: 0.92 })
+  );
+  plaza.rotation.x = -Math.PI / 2;
+  plaza.position.y = 0.04;
+  plaza.receiveShadow = true;
+  root.add(plaza);
+
+  const roadMat = mat("#5a4634", { roughness: 0.95, flat: false });
+  for (const rot of [0, Math.PI / 2]) {
+    const road = new THREE.Mesh(new THREE.BoxGeometry(CITY_RADIUS * 2 - 2, 0.06, 4.4), roadMat);
+    road.position.y = 0.08;
+    road.rotation.y = rot;
+    road.receiveShadow = true;
+    root.add(road);
+  }
+
+  const fountain = new THREE.Group();
+  const fbase = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.5, 0.45, 12), mat("#6a5844"));
+  fbase.position.y = 0.22;
+  fbase.castShadow = true;
+  fountain.add(fbase);
+  const basin = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.4, 1.4, 0.18, 16),
+    new THREE.MeshStandardMaterial({ color: "#4a6a72", roughness: 0.25, metalness: 0.35, transparent: true, opacity: 0.8 })
+  );
+  basin.position.y = 0.48;
+  fountain.add(basin);
+  root.add(fountain);
+
+  const adobe = ["#8a6a48", "#7a5a3a", "#9a7a55", "#6a4e35"];
+  const layouts = [
+    [11, -8], [-12, -7], [14, 11], [12, -13], [-15, 10], [-13, -14],
+    [7, 15], [-8, 16], [16, 4], [-17, -3], [5, -16], [-6, -17],
+  ];
+  layouts.forEach(([bx, bz], i) => {
+    if (Math.hypot(bx, bz) > CITY_RADIUS - 5.5) return;
+    if (Math.hypot(bx, bz) < 9) return;
+    const b = makeBuilding(3.6 + (i % 3) * 0.7, 3.1 + (i % 3) * 0.55, 3.6 + (i % 2) * 1.0, adobe[i % adobe.length]);
+    // flatter brown roofs
+    const roof = b.children.find((c) => c.geometry?.type === "ConeGeometry");
+    if (roof?.material) roof.material = mat("#5a3a28", { roughness: 0.9 });
+    b.position.set(bx, 0, bz);
+    b.rotation.y = (i * 0.7) % Math.PI;
+    root.add(b);
+  });
+
+  addCityWalls(root);
+
+  const cliff = mat("#5a4030", { roughness: 1 });
+  const wallGeo = new THREE.BoxGeometry(MAP_SIZE + 2, 2.6, 1.5);
+  for (const [x, z, ry] of [
+    [0, -MAP_HALF, 0],
+    [0, MAP_HALF, 0],
+    [-MAP_HALF, 0, Math.PI / 2],
+    [MAP_HALF, 0, Math.PI / 2],
+  ]) {
+    const w = new THREE.Mesh(wallGeo, cliff);
+    w.position.set(x, 1.3, z);
+    w.rotation.y = ry;
+    w.castShadow = true;
+    root.add(w);
+  }
+
+  // Dry shrubs / dead trees
+  const leaf = mat("#6a5a28");
+  const trunk = mat("#3a2818");
+  for (let i = 0; i < 55; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = CITY_RADIUS + 6 + Math.random() * (MAP_HALF - CITY_RADIUS - 8);
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (Math.hypot(x + 56.5, z) < 10) continue;
+    const g = new THREE.Group();
+    const t = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.22, 1.2, 5), trunk);
+    t.position.y = 0.6;
+    t.castShadow = true;
+    g.add(t);
+    const c1 = new THREE.Mesh(new THREE.SphereGeometry(0.85, 5, 4), leaf);
+    c1.position.y = 1.7;
+    c1.castShadow = true;
+    g.add(c1);
+    g.position.set(x, 0, z);
+    g.scale.setScalar(0.7 + Math.random() * 0.5);
+    root.add(g);
+  }
+
+  const rockMat = mat("#6a5848");
+  for (let i = 0; i < 50; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = CITY_RADIUS + 5 + Math.random() * 42;
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (Math.hypot(x + 56.5, z) < 9) continue;
+    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5 + Math.random() * 1.4, 0), rockMat);
+    rock.position.set(x, 0.4, z);
+    rock.rotation.set(Math.random(), Math.random(), Math.random());
+    rock.castShadow = true;
+    root.add(rock);
+  }
+
+  const westPortal = makeMapPortalMesh("#e8b84a", "Shinsoo");
+  westPortal.position.set(-56.5, 0, 0);
+  westPortal.rotation.y = Math.PI / 2;
+  root.add(westPortal);
+  root.userData = { mapId: "valley", edgePortal: westPortal };
+
+  return root;
+}
+
+/** Edge / travel portal — arch + glowing pad */
+export function makeMapPortalMesh(color = "#6ec8ff", label = "Portal") {
+  const g = new THREE.Group();
+  const stone = mat("#5a5348", { roughness: 0.9 });
+  const left = new THREE.Mesh(new THREE.BoxGeometry(0.7, 4.2, 0.7), stone);
+  left.position.set(-1.6, 2.1, 0);
+  left.castShadow = true;
+  g.add(left);
+  const right = left.clone();
+  right.position.x = 1.6;
+  g.add(right);
+  const lintel = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.65, 0.75), stone);
+  lintel.position.set(0, 4.35, 0);
+  lintel.castShadow = true;
+  g.add(lintel);
+
+  const glow = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.5, 1.5, 0.12, 20),
+    new THREE.MeshStandardMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity: 0.85,
+      transparent: true,
+      opacity: 0.75,
+      roughness: 0.3,
+    })
+  );
+  glow.position.y = 0.08;
+  g.add(glow);
+
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(1.55, 0.08, 8, 28),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.6 })
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.14;
+  g.add(ring);
+
+  // Simple floating label
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.fillRect(0, 0, 256, 64);
+  ctx.fillStyle = "#f2e6c8";
+  ctx.font = "bold 28px Georgia, serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, 128, 32);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false })
+  );
+  sprite.position.set(0, 5.2, 0);
+  sprite.scale.set(4.2, 1.05, 1);
+  g.add(sprite);
+
+  g.userData = { glow, ring, label: sprite, kind: "map_portal" };
+  return g;
 }
 
 /** Separate Demon Tower map — own ground, lighting accent, arena. Not the city. */
@@ -836,7 +1062,85 @@ function addPart(parent, geo, material, x, y, z, rx = 0, ry = 0, rz = 0) {
 /** Stylized low-poly wolf / orc (not collider primitives) */
 export function makeMobMesh(kind = "wolf") {
   if (kind === "ork" || kind === "elite_ork") return makeOrkMesh(kind === "elite_ork");
+  if (kind === "human" || kind === "bandit" || kind === "soldier") return makeHumanMobMesh(kind === "soldier");
   return makeWolfMesh();
+}
+
+function makeHumanMobMesh(soldier = false) {
+  const root = new THREE.Group();
+  const rig = new THREE.Group();
+  root.add(rig);
+  root.add(groundShadow(soldier ? 1.2 : 1.05));
+
+  const skin = mat("#d4a882", { roughness: 0.7 });
+  const cloth = mat(soldier ? "#6a4a28" : "#4a3a32", { roughness: 0.75 });
+  const accent = mat(soldier ? "#8a8e92" : "#8a3030", { metalness: soldier ? 0.45 : 0.15, roughness: 0.5 });
+  const hair = mat("#2a1a12");
+  const pants = mat(soldier ? "#3a3228" : "#2a2824");
+
+  const hips = new THREE.Group();
+  hips.position.y = 0.85;
+  rig.add(hips);
+
+  addPart(hips, new THREE.BoxGeometry(0.55, 0.7, 0.32), cloth, 0, 0.45, 0);
+  addPart(hips, new THREE.BoxGeometry(0.58, 0.18, 0.34), accent, 0, 0.12, 0.02);
+  const head = new THREE.Group();
+  head.position.set(0, 0.95, 0);
+  hips.add(head);
+  addPart(head, new THREE.BoxGeometry(0.32, 0.34, 0.3), skin, 0, 0, 0);
+  addPart(head, new THREE.BoxGeometry(0.34, 0.12, 0.32), hair, 0, 0.18, -0.02);
+  if (soldier) {
+    addPart(head, new THREE.BoxGeometry(0.38, 0.16, 0.38), accent, 0, 0.22, 0);
+  }
+
+  function makeArm(side) {
+    const arm = new THREE.Group();
+    arm.position.set(side * 0.38, 0.7, 0);
+    hips.add(arm);
+    addPart(arm, new THREE.BoxGeometry(0.14, 0.55, 0.14), cloth, 0, -0.22, 0);
+    addPart(arm, new THREE.BoxGeometry(0.12, 0.28, 0.12), skin, 0, -0.55, 0);
+    return arm;
+  }
+  function makeLeg(side) {
+    const leg = new THREE.Group();
+    leg.position.set(side * 0.16, 0.05, 0);
+    hips.add(leg);
+    addPart(leg, new THREE.BoxGeometry(0.16, 0.45, 0.16), pants, 0, -0.22, 0);
+    const shin = new THREE.Group();
+    shin.position.y = -0.42;
+    leg.add(shin);
+    addPart(shin, new THREE.BoxGeometry(0.14, 0.4, 0.14), pants, 0, -0.15, 0);
+    addPart(shin, new THREE.BoxGeometry(0.18, 0.1, 0.28), mat("#1a1410"), 0, -0.38, 0.04);
+    leg.userData.shin = shin;
+    return leg;
+  }
+
+  const leftArm = makeArm(-1);
+  const rightArm = makeArm(1);
+  const leftLeg = makeLeg(-1);
+  const rightLeg = makeLeg(1);
+
+  // Sword / dagger
+  const blade = new THREE.Mesh(
+    new THREE.BoxGeometry(0.08, 0.55, 0.08),
+    mat(soldier ? "#b0b8c0" : "#c0a060", { metalness: 0.7, roughness: 0.35 })
+  );
+  blade.position.set(0, -0.75, 0.05);
+  rightArm.add(blade);
+
+  root.userData = {
+    rig,
+    hips,
+    head,
+    leftArm,
+    rightArm,
+    leftLeg,
+    rightLeg,
+    kind: soldier ? "soldier" : "bandit",
+    animPhase: Math.random() * 10,
+  };
+  attachHpBar(root, { y: soldier ? 2.35 : 2.15, scaleX: 1.6, scaleY: 0.4 });
+  return root;
 }
 
 function makeWolfMesh() {
@@ -1032,7 +1336,7 @@ export function animateMob(mesh, dt, moving = true) {
     if (d.head) d.head.rotation.x = moving ? s * 0.06 : Math.sin(d.animPhase * 0.5) * 0.04;
     d.rig.position.y = moving ? Math.abs(c) * 0.05 : Math.sin(d.animPhase * 0.5) * 0.015;
   } else {
-    // orc biped
+    // orc / human biped
     if (d.leftLeg && d.rightLeg) {
       d.leftLeg.rotation.x = moving ? s * 0.6 : 0;
       d.rightLeg.rotation.x = moving ? -s * 0.6 : 0;
