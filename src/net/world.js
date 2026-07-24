@@ -2,6 +2,7 @@ import { supabase } from "./supabase.js";
 
 /**
  * Single persistent open world — everyone joins metin3:openworld
+ * High-frequency updates go over WebSocket only (never silent REST fallback).
  */
 export class WorldNet {
   constructor() {
@@ -17,6 +18,10 @@ export class WorldNet {
     this.onHostChange = () => {};
     this._joinedAt = Date.now();
     this._profile = null;
+    this._status = "closed";
+    this._reconnecting = false;
+    this._authUnsub = null;
+    this._reconnectTimer = 0;
   }
 
   get isCreator() {
@@ -25,6 +30,11 @@ export class WorldNet {
 
   get roomCode() {
     return "WORLD";
+  }
+
+  /** True when broadcast can go over the live WebSocket (no REST fallback). */
+  get canPush() {
+    return !!this.channel && this._status === "SUBSCRIBED" && this.channel.state === "joined";
   }
 
   async join(_ignored, profile) {
@@ -37,10 +47,49 @@ export class WorldNet {
     this.peers.clear();
     this.started = true;
 
+    // Keep Realtime JWT in sync (token refresh used to drop push → REST spam)
+    await this._syncRealtimeAuth();
+    if (!this._authUnsub) {
+      const { data } = supabase.auth.onAuthStateChange(async () => {
+        await this._syncRealtimeAuth();
+      });
+      this._authUnsub = data?.subscription || null;
+    }
+
+    const ok = await this._subscribeChannel();
+    if (!ok) {
+      await this.leave();
+      throw new Error("Could not join open world — check Realtime + Anonymous auth");
+    }
+
+    this._syncPresence();
+    return "WORLD";
+  }
+
+  async _syncRealtimeAuth() {
+    if (!supabase) return;
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (token) await supabase.realtime.setAuth(token);
+  }
+
+  async _subscribeChannel() {
+    if (!supabase || !this._profile) return false;
+
+    if (this.channel) {
+      try {
+        await supabase.removeChannel(this.channel);
+      } catch {
+        /* ignore */
+      }
+      this.channel = null;
+    }
+
+    this._status = "joining";
     this.channel = supabase.channel("metin3:openworld", {
       config: {
         presence: { key: this.playerId },
-        broadcast: { self: false },
+        broadcast: { self: false, ack: false },
       },
     });
 
@@ -58,32 +107,61 @@ export class WorldNet {
         if (payload) this.onEvent(payload);
       });
 
-    const ok = await new Promise((resolve) => {
-      this.channel.subscribe(async (status) => {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (ok) => {
+        if (settled) return;
+        settled = true;
+        resolve(ok);
+      };
+
+      this.channel.subscribe(async (status, err) => {
+        this._status = status;
         if (status === "SUBSCRIBED") {
-          await this.channel.track({
-            id: profile.id,
-            name: profile.name,
-            classId: profile.classId,
-            color: profile.color,
-            level: profile.level || 1,
-            joinedAt: this._joinedAt,
-            metins: profile.metins || 0,
-            kills: profile.kills || 0,
-          });
-          resolve(true);
+          this._reconnecting = false;
+          try {
+            await this.channel.track({
+              id: this._profile.id,
+              name: this._profile.name,
+              classId: this._profile.classId,
+              color: this._profile.color,
+              level: this._profile.level || 1,
+              joinedAt: this._joinedAt,
+              metins: this._profile.metins || 0,
+              kills: this._profile.kills || 0,
+            });
+          } catch (e) {
+            console.warn("[world] presence track failed", e);
+          }
+          finish(true);
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          console.warn("[world] channel status", status, err || "");
+          finish(false);
+          this._scheduleReconnect();
         }
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") resolve(false);
       });
+
+      // Don't hang forever on first join
+      setTimeout(() => finish(false), 12000);
     });
+  }
 
-    if (!ok) {
-      await this.leave();
-      throw new Error("Could not join open world — check Realtime + Anonymous auth");
-    }
-
-    this._syncPresence();
-    return "WORLD";
+  _scheduleReconnect() {
+    if (!this._profile || this._reconnecting) return;
+    this._reconnecting = true;
+    clearTimeout(this._reconnectTimer);
+    this._reconnectTimer = setTimeout(async () => {
+      if (!this._profile) {
+        this._reconnecting = false;
+        return;
+      }
+      console.info("[world] reconnecting realtime…");
+      await this._syncRealtimeAuth();
+      const ok = await this._subscribeChannel();
+      this._reconnecting = false;
+      if (ok) this._syncPresence();
+      else this._scheduleReconnect();
+    }, 1500);
   }
 
   _syncPresence() {
@@ -110,43 +188,69 @@ export class WorldNet {
     if (was !== this.isHost) this.onHostChange(this.isHost, hostId);
   }
 
+  /** WebSocket broadcast only — skip if socket can't push (avoids REST deprecation spam). */
+  _broadcast(event, payload) {
+    if (!this.canPush) return false;
+    try {
+      this.channel.send({ type: "broadcast", event, payload });
+      return true;
+    } catch (e) {
+      console.warn("[world] send failed", e);
+      return false;
+    }
+  }
+
   sendPlayer(state) {
-    this.channel?.send({ type: "broadcast", event: "player", payload: state });
+    this._broadcast("player", state);
   }
 
   sendWorld(state) {
     if (!this.isHost) return;
-    this.channel?.send({ type: "broadcast", event: "world", payload: state });
+    this._broadcast("world", state);
   }
 
   sendEvent(evt) {
-    this.channel?.send({ type: "broadcast", event: "evt", payload: evt });
+    this._broadcast("evt", evt);
   }
 
   async updatePresence(patch) {
-    if (!this.channel || !this._profile) return;
+    if (!this.channel || !this._profile || !this.canPush) return;
     const me = this.peers.get(this.playerId) || {};
-    await this.channel.track({
-      ...me,
-      ...patch,
-      id: this.playerId,
-      name: this._profile.name,
-      classId: this._profile.classId,
-      color: this._profile.color,
-      joinedAt: this._joinedAt,
-    });
+    try {
+      await this.channel.track({
+        ...me,
+        ...patch,
+        id: this.playerId,
+        name: this._profile.name,
+        classId: this._profile.classId,
+        color: this._profile.color,
+        joinedAt: this._joinedAt,
+      });
+    } catch {
+      /* ignore during flap */
+    }
   }
 
-  // Compatibility stubs from old RoomNet
   startMatch() {}
 
   async leave() {
+    clearTimeout(this._reconnectTimer);
+    this._reconnecting = false;
+    this._profile = null;
+    this._status = "closed";
+    if (this._authUnsub) {
+      this._authUnsub.unsubscribe?.();
+      this._authUnsub = null;
+    }
     if (this.channel && supabase) {
-      await supabase.removeChannel(this.channel);
+      try {
+        await supabase.removeChannel(this.channel);
+      } catch {
+        /* ignore */
+      }
     }
     this.channel = null;
     this.peers.clear();
     this.isHost = false;
-    this._profile = null;
   }
 }

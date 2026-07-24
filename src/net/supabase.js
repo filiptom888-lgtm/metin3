@@ -22,7 +22,9 @@ export const supabase = hasSupabase
         detectSessionInUrl: true,
       },
       realtime: {
-        params: { eventsPerSecond: 24 },
+        // Higher client hint; free projects still enforce server caps.
+        // Keep game tick rates modest so multiplayer doesn't trip disconnects.
+        params: { eventsPerSecond: 40 },
       },
     })
   : null;

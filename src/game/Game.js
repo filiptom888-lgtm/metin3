@@ -465,7 +465,8 @@ export class Game {
     if (this.net.isHost) {
       this.updateHostWorld(dt);
       this.worldAcc += dt;
-      if (this.worldAcc >= 0.12) {
+      // ~6 Hz world sync — lighter on Realtime than 8–12 Hz under multiplayer load
+      if (this.worldAcc >= 0.16) {
         this.worldAcc = 0;
         this.net.sendWorld(this.serializeWorld());
       }
@@ -501,7 +502,8 @@ export class Game {
 
     // Net player send
     this.sendAcc += dt;
-    if (this.sendAcc >= 1 / 12) {
+    // ~8 Hz player poses — enough for smooth remotes without saturating the channel
+    if (this.sendAcc >= 1 / 8) {
       this.sendAcc = 0;
       this.net.sendPlayer({
         id: p.id,
