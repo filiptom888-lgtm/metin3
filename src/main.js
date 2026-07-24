@@ -13,26 +13,41 @@ const ui = {
   toastTimer: 0,
   bindLocal(p, cls) {
     $("#hud-name").textContent = p.name;
+    $("#hud-level").textContent = `Lv.${p.level} ${cls.name}`;
     const bar = $("#skill-bar");
     bar.innerHTML = "";
     cls.skills.forEach((sk, i) => {
       const el = document.createElement("div");
       el.className = "skill-slot";
       el.dataset.i = String(i);
-      el.innerHTML = `<span class="k">${i + 1}</span>${sk.name}<div class="cd" hidden></div>`;
+      el.innerHTML = `<span class="k">${i + 1}</span><span class="sk-name">${sk.name}</span><div class="cd" hidden></div>`;
       bar.appendChild(el);
     });
+    this.chat(`${p.name} entered the arena`, "sys");
   },
   updateHud(p) {
-    $("#hud-level").textContent = `Lv.${p.level}`;
+    const cls = CLASSES[p.classId];
+    $("#hud-level").textContent = `Lv.${p.level} ${cls?.name || ""}`;
     const hpR = Math.max(0, Math.min(1, p.hp / p.maxHp));
     const spR = Math.max(0, Math.min(1, p.sp / p.maxSp));
-    $("#bar-hp").style.transform = `scaleX(${hpR})`;
-    $("#bar-sp").style.transform = `scaleX(${spR})`;
-    $("#txt-hp").textContent = `${Math.ceil(p.hp)}/${p.maxHp}`;
-    $("#txt-sp").textContent = `${Math.floor(p.sp)}/${p.maxSp}`;
+    // SVG circle: circumference ~ 2πr
+    const hpCirc = 2 * Math.PI * 42;
+    const spCirc = 2 * Math.PI * 36;
+    const orbHp = $("#orb-hp");
+    const orbSp = $("#orb-sp");
+    if (orbHp) {
+      orbHp.style.strokeDasharray = `${hpCirc}`;
+      orbHp.style.strokeDashoffset = `${hpCirc * (1 - hpR)}`;
+    }
+    if (orbSp) {
+      orbSp.style.strokeDasharray = `${spCirc}`;
+      orbSp.style.strokeDashoffset = `${spCirc * (1 - spR)}`;
+    }
+    $("#txt-hp").textContent = `${Math.ceil(p.hp)}`;
+    $("#txt-sp").textContent = `${Math.floor(p.sp)}`;
     $("#stat-metins").textContent = String(p.metins);
     $("#stat-kills").textContent = String(p.kills);
+    $("#stat-gold").textContent = String(p.gold || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     const slots = $("#skill-bar").children;
     for (let i = 0; i < slots.length; i++) {
       const cd = p.skillCd[i];
@@ -42,6 +57,16 @@ const ui = {
         cdEl.textContent = cd.toFixed(1);
       } else cdEl.hidden = true;
     }
+  },
+  chat(msg, kind = "msg") {
+    const log = $("#chat-log");
+    if (!log) return;
+    const line = document.createElement("div");
+    line.className = `chat-line ${kind}`;
+    line.textContent = msg;
+    log.appendChild(line);
+    while (log.children.length > 40) log.firstChild.remove();
+    log.scrollTop = log.scrollHeight;
   },
   toast(msg) {
     const el = $("#toast");
@@ -54,6 +79,7 @@ const ui = {
     this.toastTimer = setTimeout(() => {
       el.hidden = true;
     }, 1500);
+    this.chat(msg, "sys");
   },
   setRoom(code) {
     $("#room-chip").textContent = code;
@@ -104,24 +130,38 @@ const ui = {
     const w = c.width;
     const h = c.height;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "#0c1612";
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(w / 2, h / 2, w / 2 - 2, 0, Math.PI * 2);
+    ctx.clip();
+
+    ctx.fillStyle = "#1a2e18";
     ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = "rgba(201,162,39,0.35)";
-    ctx.strokeRect(1, 1, w - 2, h - 2);
-    const to = (x, z) => [((x + MAP_SIZE / 2) / MAP_SIZE) * w, ((z + MAP_SIZE / 2) / MAP_SIZE) * h];
-    ctx.fillStyle = "#8b1e1e";
+    // grass noise
+    ctx.fillStyle = "#2a4a28";
+    for (let i = 0; i < 40; i++) {
+      ctx.fillRect((i * 37) % w, (i * 53) % h, 8, 8);
+    }
+
+    const to = (x, z) => [
+      ((x + MAP_SIZE / 2) / MAP_SIZE) * w,
+      ((z + MAP_SIZE / 2) / MAP_SIZE) * h,
+    ];
+
+    ctx.fillStyle = "#c43c2e";
     for (const [, m] of metins) {
       const [px, py] = to(m.x, m.z);
       ctx.beginPath();
       ctx.arc(px, py, 4, 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.fillStyle = "#5a6b4a";
+    ctx.fillStyle = "#6b8f3a";
     for (const [, m] of mobs) {
       const [px, py] = to(m.x, m.z);
       ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
     }
-    ctx.fillStyle = "#3a9fd4";
+    ctx.fillStyle = "#4db0ff";
     for (const [, r] of remotes) {
       const [px, py] = to(r.state.x, r.state.z);
       ctx.beginPath();
@@ -129,12 +169,19 @@ const ui = {
       ctx.fill();
     }
     if (local) {
-      ctx.fillStyle = "#e8d48b";
+      ctx.fillStyle = "#ffe28a";
       const [px, py] = to(local.x, local.z);
       ctx.beginPath();
       ctx.arc(px, py, 4, 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.restore();
+
+    ctx.strokeStyle = "#c9a227";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(w / 2, h / 2, w / 2 - 2, 0, Math.PI * 2);
+    ctx.stroke();
   },
 };
 

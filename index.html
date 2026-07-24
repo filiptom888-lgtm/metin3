@@ -10,16 +10,15 @@
   </head>
   <body>
     <div id="app">
-      <!-- LOBBY -->
       <section id="lobby" class="screen active">
         <div class="lobby-bg" aria-hidden="true"></div>
         <div class="lobby-panel">
           <p class="brand">METIN3</p>
-          <h1>3D multiplayer arena</h1>
-          <p class="sub">Create a room, invite friends, host starts the fight.</p>
+          <h1>Enter the kingdom</h1>
+          <p class="sub">Create a room, gather your party, host starts the hunt.</p>
 
           <label class="field">
-            <span>Display name</span>
+            <span>Character name</span>
             <input id="inp-name" maxlength="16" placeholder="Wanderer" autocomplete="off" />
           </label>
 
@@ -27,7 +26,7 @@
 
           <div class="lobby-actions">
             <button id="btn-create" class="btn btn-primary" type="button">Create Room</button>
-            <div class="or">or join</div>
+            <div class="or">or join with code</div>
             <label class="field">
               <span>Room code</span>
               <input id="inp-room" maxlength="8" placeholder="e.g. K7MQ" autocomplete="off" />
@@ -40,12 +39,11 @@
         </div>
       </section>
 
-      <!-- WAITING ROOM -->
       <section id="waiting" class="screen">
         <div class="lobby-bg" aria-hidden="true"></div>
         <div class="lobby-panel wait-panel">
           <p class="brand brand-sm">METIN3</p>
-          <h1>Waiting room</h1>
+          <h1>Party lobby</h1>
           <p class="sub">Share the code. Only the creator can start.</p>
 
           <div class="room-code-box">
@@ -69,39 +67,72 @@
         </div>
       </section>
 
-      <!-- GAME -->
       <section id="game-screen" class="screen">
         <canvas id="c"></canvas>
-        <div id="hud">
-          <div class="hud-top">
+
+        <div id="hud" class="m2-hud">
+          <div class="hud-top-left">
             <div class="brand-mini">METIN3</div>
-            <div id="room-chip">ROOM</div>
-            <div id="host-chip">CLIENT</div>
-            <div id="players-chip">1 online</div>
+            <div class="chip-row">
+              <div id="room-chip">ROOM</div>
+              <div id="host-chip">CLIENT</div>
+              <div id="players-chip">1</div>
+            </div>
           </div>
-          <div class="hud-bottom">
-            <div class="bars">
-              <div class="name-row"><span id="hud-name">—</span><span id="hud-level">Lv.1</span></div>
-              <div class="bar hp">
-                <div class="fill" id="bar-hp"></div>
-                <span id="txt-hp">100/100</span>
+
+          <div id="minimap" class="m2-minimap">
+            <canvas id="mini" width="148" height="148"></canvas>
+            <div class="mini-ring"></div>
+          </div>
+
+          <div class="m2-bottom">
+            <div class="m2-orbs">
+              <div class="orb hp-orb">
+                <svg viewBox="0 0 100 100">
+                  <circle class="track" cx="50" cy="50" r="42" />
+                  <circle id="orb-hp" class="fill hp" cx="50" cy="50" r="42" />
+                </svg>
+                <div class="orb-label">
+                  <b id="txt-hp">100</b>
+                  <small>HP</small>
+                </div>
               </div>
-              <div class="bar sp">
-                <div class="fill" id="bar-sp"></div>
-                <span id="txt-sp">50/50</span>
+              <div class="orb sp-orb">
+                <svg viewBox="0 0 100 100">
+                  <circle class="track" cx="50" cy="50" r="36" />
+                  <circle id="orb-sp" class="fill sp" cx="50" cy="50" r="36" />
+                </svg>
+                <div class="orb-label">
+                  <b id="txt-sp">50</b>
+                  <small>SP</small>
+                </div>
+              </div>
+              <div class="char-meta">
+                <div id="hud-name">—</div>
+                <div id="hud-level">Lv.1 Warrior</div>
               </div>
             </div>
-            <div id="skill-bar" class="skills"></div>
-            <div class="stats">
-              <div><span>Metins</span><b id="stat-metins">0</b></div>
-              <div><span>Kills</span><b id="stat-kills">0</b></div>
+
+            <div class="m2-hotbar-wrap">
+              <div id="skill-bar" class="m2-hotbar"></div>
+              <div class="hotbar-hint">1–4 skills · click attack · WASD move</div>
             </div>
+
+            <div class="m2-stats-panel">
+              <div class="stat-line"><span>Yang</span><b id="stat-gold">0</b></div>
+              <div class="stat-line"><span>Metins</span><b id="stat-metins">0</b></div>
+              <div class="stat-line"><span>Kills</span><b id="stat-kills">0</b></div>
+            </div>
+          </div>
+
+          <div id="chat" class="m2-chat">
+            <div id="chat-log"></div>
           </div>
         </div>
-        <div id="minimap"><canvas id="mini" width="140" height="140"></canvas></div>
+
         <div id="toast" hidden></div>
         <div id="scoreboard" hidden>
-          <h3>Arena</h3>
+          <h3>Party</h3>
           <ul id="score-list"></ul>
         </div>
         <button id="btn-leave" class="btn-leave" type="button">Leave</button>

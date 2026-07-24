@@ -38,7 +38,7 @@ export class Game {
     this.bolts = [];
     this.particles = [];
 
-    this.camOffset = new THREE.Vector3(0, 11, 12);
+    this.camOffset = new THREE.Vector3(0, 20, 20);
     this.time = 0;
     this.sendAcc = 0;
     this.worldAcc = 0;
@@ -127,11 +127,12 @@ export class Game {
       invulnUntil: 0,
       metins: 0,
       kills: 0,
+      gold: 0,
       attacking: 0,
     };
 
     this.localMesh = makePlayerMesh(profile.classId, true);
-    setNameplate(this.localMesh, profile.name, 1);
+    setNameplate(this.localMesh, profile.name, 1, 1, profile.classId);
     this.scene.add(this.localMesh);
 
     this.bindInput(true);
@@ -301,17 +302,20 @@ export class Game {
     this.localMesh.position.set(p.x, 0, p.z);
     this.localMesh.rotation.y = p.rot;
     this.localMesh.visible = !stealth || Math.sin(this.time * 20) > -0.2;
-    setNameplate(this.localMesh, p.name, p.hp / p.maxHp);
+    setNameplate(this.localMesh, p.name, p.hp / p.maxHp, p.level, p.classId);
     if (p.attacking > 0) {
       this.localMesh.userData.blade.rotation.x = Math.sin(p.attacking * 40) * 0.8;
     } else {
       this.localMesh.userData.blade.rotation.x = 0;
     }
+    if (this.localMesh.userData.aura) {
+      this.localMesh.userData.aura.rotation.z += dt * 1.5;
+    }
 
     // Camera follow
     const desired = new THREE.Vector3(p.x, 0, p.z).add(this.camOffset);
-    this.camera.position.lerp(desired, 1 - Math.pow(0.001, dt));
-    this.camera.lookAt(p.x, 1.2, p.z);
+    this.camera.position.lerp(desired, 1 - Math.pow(0.002, dt));
+    this.camera.lookAt(p.x, 0.8, p.z);
 
     // Remotes interpolate
     for (const [, r] of this.remotes) {
@@ -325,7 +329,7 @@ export class Game {
       r.mesh.position.set(r.state.x, 0, r.state.z);
       r.mesh.rotation.y = r.state.rot;
       r.mesh.visible = !t.stealth;
-      setNameplate(r.mesh, t.name || "Player", (t.hp || 0) / (t.maxHp || 100));
+      setNameplate(r.mesh, t.name || "Player", (t.hp || 0) / (t.maxHp || 100), t.level || 1, t.classId);
       if (t.attacking) r.mesh.userData.blade.rotation.x = Math.sin(this.time * 30) * 0.7;
       else r.mesh.userData.blade.rotation.x = 0;
     }
@@ -672,7 +676,10 @@ export class Game {
     this.net.sendEvent({ type: "fx", kind: "hit", x: mob.x, z: mob.z, dmg: Math.floor(dmg) });
     if (mob.hp <= 0) {
       this.net.sendEvent({ type: "kill", from: fromId, target: mob.id, kind: "mob" });
-      if (fromId === this.local?.id) this.local.kills += 1;
+      if (fromId === this.local?.id) {
+        this.local.kills += 1;
+        this.local.gold += 120 + ((Math.random() * 80) | 0);
+      }
     }
   }
 
@@ -683,6 +690,7 @@ export class Game {
       this.net.sendEvent({ type: "kill", from: fromId, target: met.id, kind: "metin", tier: met.tier });
       if (fromId === this.local?.id) {
         this.local.metins += 1;
+        this.local.gold += 800 + met.tier * 200;
         this.ui.toast(`Metin shattered · ${this.local.metins}`);
       }
     }
@@ -780,7 +788,7 @@ export class Game {
     let r = this.remotes.get(s.id);
     if (!r) {
       const mesh = makePlayerMesh(s.classId || "warrior", false);
-      setNameplate(mesh, s.name || "Player", (s.hp || 100) / (s.maxHp || 100));
+      setNameplate(mesh, s.name || "Player", (s.hp || 100) / (s.maxHp || 100), s.level || 1, s.classId);
       this.scene.add(mesh);
       r = {
         mesh,
@@ -789,7 +797,7 @@ export class Game {
       };
       this.remotes.set(s.id, r);
     } else {
-      setNameplate(r.mesh, s.name || "Player", (s.hp || 100) / (s.maxHp || 100));
+      setNameplate(r.mesh, s.name || "Player", (s.hp || 100) / (s.maxHp || 100), s.level || 1, s.classId);
       r.target = s;
     }
   }
@@ -809,7 +817,7 @@ export class Game {
       if (peer.id === this.local?.id) continue;
       if (!this.remotes.has(peer.id)) {
         const mesh = makePlayerMesh(peer.classId || "warrior", false);
-        setNameplate(mesh, peer.name || "Player", 1);
+        setNameplate(mesh, peer.name || "Player", 1, 1, peer.classId);
         mesh.position.set(rand(-4, 4), 0, rand(-4, 4));
         this.scene.add(mesh);
         this.remotes.set(peer.id, {
