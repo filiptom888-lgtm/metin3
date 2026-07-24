@@ -588,62 +588,411 @@ export function makeMetinMesh(tier = 1, colorOverride = null) {
   return root;
 }
 
+function groundShadow(scale = 1) {
+  const s = new THREE.Mesh(
+    new THREE.CircleGeometry(0.55 * scale, 16),
+    new THREE.MeshBasicMaterial({ color: "#000000", transparent: true, opacity: 0.32, depthWrite: false })
+  );
+  s.rotation.x = -Math.PI / 2;
+  s.position.y = 0.03;
+  return s;
+}
+
+function addPart(parent, geo, material, x, y, z, rx = 0, ry = 0, rz = 0) {
+  const m = new THREE.Mesh(geo, material);
+  m.position.set(x, y, z);
+  m.rotation.set(rx, ry, rz);
+  m.castShadow = true;
+  parent.add(m);
+  return m;
+}
+
+/** Stylized low-poly wolf / orc (not collider primitives) */
 export function makeMobMesh(kind = "wolf") {
+  if (kind === "ork" || kind === "elite_ork") return makeOrkMesh(kind === "elite_ork");
+  return makeWolfMesh();
+}
+
+function makeWolfMesh() {
   const root = new THREE.Group();
   const rig = new THREE.Group();
   root.add(rig);
+  root.add(groundShadow(1.1));
 
-  if (kind === "ork") {
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.1, 0.55), mat("#5a3a22"));
-    body.position.y = 1.0;
-    body.castShadow = true;
-    rig.add(body);
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.45, 0.45), mat("#4a2e18"));
-    head.position.y = 1.75;
-    rig.add(head);
-    const club = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.14, 1.1, 5), mat("#3a2810"));
-    club.position.set(0.55, 1.1, 0.2);
-    club.rotation.z = -0.5;
-    rig.add(club);
-  } else {
-    // wolf-ish quadruped
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.7, 4, 6), mat("#4a5538"));
-    body.rotation.z = Math.PI / 2;
-    body.position.set(0, 0.55, 0);
-    body.castShadow = true;
-    rig.add(body);
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.3, 0.4), mat("#3a4528"));
-    head.position.set(0, 0.65, 0.55);
-    rig.add(head);
-    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.45, 5), mat("#3a4528"));
-    tail.position.set(0, 0.6, -0.55);
-    tail.rotation.x = Math.PI / 2;
-    rig.add(tail);
-    for (const [lx, lz] of [
-      [-0.18, 0.28],
-      [0.18, 0.28],
-      [-0.18, -0.28],
-      [0.18, -0.28],
-    ]) {
-      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.45, 5), mat("#2a3218"));
-      leg.position.set(lx, 0.22, lz);
-      rig.add(leg);
-    }
+  const fur = mat("#5a6248", { roughness: 0.88 });
+  const dark = mat("#2e3424", { roughness: 0.9 });
+  const snout = mat("#6a7058", { roughness: 0.7 });
+  const eye = mat("#e8c84a", { emissive: "#a87810", emissiveIntensity: 0.55, flat: true });
+  const fang = mat("#e8e0d0", { roughness: 0.4 });
+
+  // torso
+  const body = addPart(rig, new THREE.BoxGeometry(0.55, 0.42, 0.95), fur, 0, 0.62, 0);
+  body.scale.set(1, 1, 1);
+  addPart(rig, new THREE.BoxGeometry(0.48, 0.32, 0.55), dark, 0, 0.78, -0.15); // shoulder hump
+
+  // neck + head
+  addPart(rig, new THREE.BoxGeometry(0.28, 0.28, 0.32), fur, 0, 0.78, 0.48);
+  const head = new THREE.Group();
+  head.position.set(0, 0.82, 0.72);
+  rig.add(head);
+  addPart(head, new THREE.BoxGeometry(0.38, 0.34, 0.4), fur, 0, 0, 0);
+  addPart(head, new THREE.BoxGeometry(0.22, 0.18, 0.32), snout, 0, -0.04, 0.28);
+  addPart(head, new THREE.BoxGeometry(0.24, 0.06, 0.12), dark, 0, -0.12, 0.34); // jaw
+  addPart(head, new THREE.BoxGeometry(0.04, 0.08, 0.04), fang, -0.06, -0.14, 0.4);
+  addPart(head, new THREE.BoxGeometry(0.04, 0.08, 0.04), fang, 0.06, -0.14, 0.4);
+  addPart(head, new THREE.BoxGeometry(0.07, 0.07, 0.05), eye, -0.14, 0.08, 0.14);
+  addPart(head, new THREE.BoxGeometry(0.07, 0.07, 0.05), eye, 0.14, 0.08, 0.14);
+  // ears
+  addPart(head, new THREE.ConeGeometry(0.08, 0.22, 4), dark, -0.14, 0.24, -0.05, 0, 0, -0.25);
+  addPart(head, new THREE.ConeGeometry(0.08, 0.22, 4), dark, 0.14, 0.24, -0.05, 0, 0, 0.25);
+
+  // bushy tail
+  const tail = new THREE.Group();
+  tail.position.set(0, 0.72, -0.52);
+  rig.add(tail);
+  addPart(tail, new THREE.ConeGeometry(0.12, 0.55, 5), fur, 0, 0.05, -0.2, 1.1, 0, 0);
+  addPart(tail, new THREE.SphereGeometry(0.12, 5, 4), dark, 0, 0.12, -0.42);
+
+  // legs
+  const legs = [];
+  const foot = mat("#1e2418");
+  for (const [lx, lz, front] of [
+    [-0.2, 0.28, true],
+    [0.2, 0.28, true],
+    [-0.2, -0.32, false],
+    [0.2, -0.32, false],
+  ]) {
+    const leg = new THREE.Group();
+    leg.position.set(lx, 0.42, lz);
+    rig.add(leg);
+    addPart(leg, new THREE.BoxGeometry(0.12, 0.28, 0.14), dark, 0, -0.08, 0);
+    addPart(leg, new THREE.BoxGeometry(0.1, 0.22, 0.1), fur, 0, -0.28, 0.02);
+    addPart(leg, new THREE.BoxGeometry(0.14, 0.08, 0.18), foot, 0, -0.4, 0.04);
+    leg.userData.front = front;
+    legs.push(leg);
   }
 
-  root.userData.rig = rig;
-  root.userData.kind = kind;
-  root.userData.animPhase = Math.random() * 10;
+  root.userData = {
+    rig,
+    head,
+    tail,
+    legs,
+    kind: "wolf",
+    animPhase: Math.random() * 10,
+  };
+  return root;
+}
+
+function makeOrkMesh(elite = false) {
+  const root = new THREE.Group();
+  const rig = new THREE.Group();
+  root.add(rig);
+  root.add(groundShadow(elite ? 1.35 : 1.15));
+
+  const scale = elite ? 1.18 : 1;
+  rig.scale.setScalar(scale);
+
+  const skin = mat(elite ? "#3a5a28" : "#4a6a32", { roughness: 0.75 });
+  const leather = mat("#5a3a22", { roughness: 0.85 });
+  const iron = mat("#6a6e72", { metalness: 0.55, roughness: 0.4 });
+  const dark = mat("#2a2218");
+  const eye = mat("#c43c2e", { emissive: "#8b1e1e", emissiveIntensity: 0.6 });
+  const tusk = mat("#e8e0d0", { roughness: 0.35 });
+
+  const hips = new THREE.Group();
+  hips.position.y = 0.85;
+  rig.add(hips);
+
+  addPart(hips, new THREE.BoxGeometry(0.7, 0.75, 0.42), leather, 0, 0.35, 0);
+  addPart(hips, new THREE.BoxGeometry(0.76, 0.28, 0.48), iron, 0, 0.55, 0); // chest plate
+  if (elite) addPart(hips, new THREE.BoxGeometry(0.82, 0.12, 0.52), mat("#8b6b1e", { metalness: 0.6 }), 0, 0.72, 0);
+
+  // head
+  const head = new THREE.Group();
+  head.position.set(0, 0.95, 0);
+  hips.add(head);
+  addPart(head, new THREE.BoxGeometry(0.42, 0.4, 0.4), skin, 0, 0, 0);
+  addPart(head, new THREE.BoxGeometry(0.48, 0.16, 0.2), dark, 0, 0.18, -0.05); // brow
+  addPart(head, new THREE.BoxGeometry(0.08, 0.08, 0.05), eye, -0.12, 0.06, 0.18);
+  addPart(head, new THREE.BoxGeometry(0.08, 0.08, 0.05), eye, 0.12, 0.06, 0.18);
+  addPart(head, new THREE.ConeGeometry(0.06, 0.22, 4), tusk, -0.12, -0.18, 0.16, 0.6, 0, -0.3);
+  addPart(head, new THREE.ConeGeometry(0.06, 0.22, 4), tusk, 0.12, -0.18, 0.16, 0.6, 0, 0.3);
+  // ears
+  addPart(head, new THREE.BoxGeometry(0.08, 0.16, 0.12), skin, -0.26, 0.05, 0, 0, 0, 0.4);
+  addPart(head, new THREE.BoxGeometry(0.08, 0.16, 0.12), skin, 0.26, 0.05, 0, 0, 0, -0.4);
+
+  // arms
+  function makeArm(side) {
+    const arm = new THREE.Group();
+    arm.position.set(side * 0.46, 0.55, 0);
+    hips.add(arm);
+    addPart(arm, new THREE.BoxGeometry(0.2, 0.45, 0.2), skin, 0, -0.18, 0);
+    const lower = new THREE.Group();
+    lower.position.y = -0.42;
+    arm.add(lower);
+    addPart(lower, new THREE.BoxGeometry(0.18, 0.4, 0.18), skin, 0, -0.16, 0);
+    arm.userData.lower = lower;
+    return arm;
+  }
+  const leftArm = makeArm(-1);
+  const rightArm = makeArm(1);
+
+  // spiked club
+  const club = new THREE.Group();
+  club.position.set(0, -0.4, 0);
+  rightArm.userData.lower.add(club);
+  addPart(club, new THREE.CylinderGeometry(0.05, 0.07, 0.85, 5), dark, 0, -0.2, 0.35, 1.2, 0, 0);
+  addPart(club, new THREE.BoxGeometry(0.28, 0.28, 0.28), iron, 0, -0.05, 0.75);
+  addPart(club, new THREE.ConeGeometry(0.06, 0.14, 4), iron, 0.12, 0.05, 0.8, 0, 0, -0.8);
+
+  // legs
+  function makeLeg(side) {
+    const leg = new THREE.Group();
+    leg.position.set(side * 0.18, 0, 0);
+    hips.add(leg);
+    addPart(leg, new THREE.BoxGeometry(0.22, 0.4, 0.24), leather, 0, -0.2, 0);
+    const shin = new THREE.Group();
+    shin.position.y = -0.4;
+    leg.add(shin);
+    addPart(shin, new THREE.BoxGeometry(0.18, 0.38, 0.2), dark, 0, -0.16, 0);
+    addPart(shin, new THREE.BoxGeometry(0.24, 0.1, 0.32), iron, 0, -0.36, 0.04);
+    leg.userData.shin = shin;
+    return leg;
+  }
+  const leftLeg = makeLeg(-1);
+  const rightLeg = makeLeg(1);
+
+  root.userData = {
+    rig,
+    hips,
+    head,
+    leftArm,
+    rightArm,
+    leftLeg,
+    rightLeg,
+    club,
+    kind: elite ? "elite_ork" : "ork",
+    animPhase: Math.random() * 10,
+  };
   return root;
 }
 
 export function animateMob(mesh, dt, moving = true) {
   const d = mesh.userData;
   if (!d?.rig) return;
-  d.animPhase = (d.animPhase || 0) + dt * (moving ? 9 : 2);
+  d.animPhase = (d.animPhase || 0) + dt * (moving ? 9 : 2.2);
   const s = Math.sin(d.animPhase);
-  d.rig.position.y = moving ? Math.abs(s) * 0.08 : Math.sin(d.animPhase * 0.5) * 0.02;
-  d.rig.rotation.z = moving ? s * 0.08 : 0;
+  const c = Math.cos(d.animPhase);
+
+  if (d.kind === "wolf") {
+    if (d.legs) {
+      for (let i = 0; i < d.legs.length; i++) {
+        const leg = d.legs[i];
+        const phase = i % 2 === 0 ? s : -s;
+        leg.rotation.x = moving ? phase * 0.55 : phase * 0.08;
+      }
+    }
+    if (d.tail) d.tail.rotation.y = s * (moving ? 0.35 : 0.12);
+    if (d.head) d.head.rotation.x = moving ? s * 0.06 : Math.sin(d.animPhase * 0.5) * 0.04;
+    d.rig.position.y = moving ? Math.abs(c) * 0.05 : Math.sin(d.animPhase * 0.5) * 0.015;
+  } else {
+    // orc biped
+    if (d.leftLeg && d.rightLeg) {
+      d.leftLeg.rotation.x = moving ? s * 0.6 : 0;
+      d.rightLeg.rotation.x = moving ? -s * 0.6 : 0;
+      if (d.leftLeg.userData.shin) d.leftLeg.userData.shin.rotation.x = moving ? Math.max(0, -s) * 0.4 : 0;
+      if (d.rightLeg.userData.shin) d.rightLeg.userData.shin.rotation.x = moving ? Math.max(0, s) * 0.4 : 0;
+    }
+    if (d.leftArm && d.rightArm) {
+      d.leftArm.rotation.x = moving ? -s * 0.45 : Math.sin(d.animPhase * 0.4) * 0.05;
+      d.rightArm.rotation.x = moving ? s * 0.35 : -0.25 + Math.sin(d.animPhase * 0.35) * 0.05;
+      d.rightArm.rotation.z = -0.15;
+    }
+    if (d.hips) {
+      d.hips.position.y = 0.85 + (moving ? Math.abs(c) * 0.04 : Math.sin(d.animPhase * 0.5) * 0.02);
+      d.hips.rotation.y = moving ? s * 0.05 : 0;
+    }
+    if (d.head) d.head.rotation.y = Math.sin(d.animPhase * 0.3) * 0.08;
+  }
+}
+
+/** Role-based village NPCs */
+export function makeNpcMesh(npc) {
+  const role = npc.role || "shop";
+  const root = new THREE.Group();
+  const rig = new THREE.Group();
+  root.add(rig);
+  root.add(groundShadow(1.05));
+
+  const palette = {
+    shop: { cloth: "#3a6b8b", accent: "#c9a227", trim: "#2a4050" },
+    blacksmith: { cloth: "#5a4030", accent: "#8a8e92", trim: "#2a1a10" },
+    teleport: { cloth: "#4a2e6b", accent: "#6ec8ff", trim: "#2a1840" },
+    quest: { cloth: "#6b4a28", accent: "#e8d48b", trim: "#3a2810" },
+  }[role] || { cloth: "#3a6b4f", accent: "#c9a227", trim: "#1a2a20" };
+
+  const skin = mat("#e0c4a0", { roughness: 0.7 });
+  const cloth = mat(palette.cloth, { roughness: 0.65, emissive: palette.cloth, emissiveIntensity: 0.04 });
+  const accent = mat(palette.accent, { metalness: 0.45, roughness: 0.4, emissive: palette.accent, emissiveIntensity: 0.15 });
+  const trim = mat(palette.trim);
+  const hair = mat(role === "quest" ? "#c8c0b0" : "#2a2218");
+
+  const hips = new THREE.Group();
+  hips.position.y = 0.92;
+  rig.add(hips);
+
+  // robe / tunic
+  addPart(hips, new THREE.BoxGeometry(0.58, 0.7, 0.34), cloth, 0, 0.32, 0);
+  addPart(hips, new THREE.BoxGeometry(0.62, 0.22, 0.38), trim, 0, 0.55, 0);
+  if (role === "quest" || role === "teleport") {
+    addPart(hips, new THREE.ConeGeometry(0.42, 0.85, 6), cloth, 0, -0.15, 0); // long robe skirt
+  }
+
+  addPart(hips, new THREE.CylinderGeometry(0.09, 0.11, 0.14, 6), skin, 0, 0.72, 0);
+  const head = new THREE.Group();
+  head.position.set(0, 0.95, 0);
+  hips.add(head);
+  addPart(head, new THREE.SphereGeometry(0.22, 10, 10), skin, 0, 0, 0);
+  addPart(head, new THREE.SphereGeometry(0.24, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.55), hair, 0, 0.06, 0);
+
+  if (role === "blacksmith") {
+    // leather apron
+    addPart(hips, new THREE.BoxGeometry(0.5, 0.55, 0.08), trim, 0, 0.2, 0.2);
+  }
+  if (role === "shop") {
+    // goods pack
+    addPart(hips, new THREE.BoxGeometry(0.35, 0.35, 0.22), accent, 0, 0.35, -0.28);
+    addPart(hips, new THREE.BoxGeometry(0.12, 0.12, 0.12), mat("#c43c2e"), -0.12, 0.48, -0.28);
+  }
+
+  // arms
+  function makeArm(side) {
+    const arm = new THREE.Group();
+    arm.position.set(side * 0.36, 0.52, 0);
+    hips.add(arm);
+    addPart(arm, new THREE.BoxGeometry(0.13, 0.4, 0.13), cloth, 0, -0.16, 0);
+    const lower = new THREE.Group();
+    lower.position.y = -0.38;
+    arm.add(lower);
+    addPart(lower, new THREE.BoxGeometry(0.11, 0.34, 0.11), skin, 0, -0.14, 0);
+    arm.userData.lower = lower;
+    return arm;
+  }
+  const leftArm = makeArm(-1);
+  const rightArm = makeArm(1);
+
+  let gem = null;
+  // role props
+  if (role === "blacksmith") {
+    const hammer = new THREE.Group();
+    hammer.position.set(0, -0.32, 0);
+    rightArm.userData.lower.add(hammer);
+    addPart(hammer, new THREE.CylinderGeometry(0.035, 0.04, 0.55, 5), trim, 0, -0.1, 0.2, 1.1, 0, 0);
+    addPart(hammer, new THREE.BoxGeometry(0.22, 0.14, 0.14), accent, 0, 0.02, 0.48);
+  } else if (role === "teleport") {
+    const staff = new THREE.Group();
+    staff.position.set(0.05, -0.2, 0);
+    rightArm.userData.lower.add(staff);
+    addPart(staff, new THREE.CylinderGeometry(0.035, 0.04, 1.4, 6), trim, 0, -0.35, 0.15);
+    gem = addPart(staff, new THREE.OctahedronGeometry(0.14, 0), accent, 0, 0.4, 0.15);
+    gem.material = new THREE.MeshStandardMaterial({
+      color: palette.accent,
+      emissive: palette.accent,
+      emissiveIntensity: 0.85,
+      flatShading: true,
+    });
+    staff.add(new THREE.PointLight(palette.accent, 0.7, 5));
+  } else if (role === "quest") {
+    const scroll = addPart(rightArm.userData.lower, new THREE.CylinderGeometry(0.06, 0.06, 0.28, 8), accent, 0.05, -0.28, 0.12, 0, 0, 1.2);
+    scroll.rotation.z = 1.2;
+  } else if (role === "shop") {
+    addPart(leftArm.userData.lower, new THREE.BoxGeometry(0.18, 0.14, 0.1), mat("#c43c2e"), 0, -0.28, 0.1);
+  }
+
+  // legs
+  function makeLeg(side) {
+    const leg = new THREE.Group();
+    leg.position.set(side * 0.13, 0, 0);
+    hips.add(leg);
+    addPart(leg, new THREE.BoxGeometry(0.16, 0.42, 0.18), trim, 0, -0.22, 0);
+    addPart(leg, new THREE.BoxGeometry(0.18, 0.1, 0.26), darkBoot(), 0, -0.45, 0.04);
+    return leg;
+  }
+  function darkBoot() {
+    return mat("#1a1410");
+  }
+  const leftLeg = makeLeg(-1);
+  const rightLeg = makeLeg(1);
+
+  // interaction marker
+  const marker = new THREE.Mesh(
+    new THREE.RingGeometry(0.55, 0.72, 24),
+    new THREE.MeshBasicMaterial({
+      color: palette.accent,
+      transparent: true,
+      opacity: 0.45,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+  );
+  marker.rotation.x = -Math.PI / 2;
+  marker.position.y = 0.05;
+  root.add(marker);
+
+  // nameplate
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const spriteMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.scale.set(2.4, 0.6, 1);
+  sprite.position.y = 2.35;
+  root.add(sprite);
+
+  const roleLabel = { shop: "Merchant", blacksmith: "Blacksmith", teleport: "Teleporter", quest: "Elder" }[role] || "NPC";
+  ctx.clearRect(0, 0, 256, 64);
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.fillRect(20, 8, 216, 48);
+  ctx.font = "bold 22px Cinzel, serif";
+  ctx.fillStyle = "#e8d48b";
+  ctx.textAlign = "center";
+  ctx.fillText(npc.name || roleLabel, 128, 30);
+  ctx.font = "14px Noto Sans KR, sans-serif";
+  ctx.fillStyle = "#c8c0b0";
+  ctx.fillText(`E · ${roleLabel}`, 128, 48);
+  tex.needsUpdate = true;
+
+  root.userData = {
+    rig,
+    hips,
+    head,
+    leftArm,
+    rightArm,
+    leftLeg,
+    rightLeg,
+    marker,
+    gem,
+    npc,
+    kind: "npc",
+    animPhase: Math.random() * 10,
+  };
+  return root;
+}
+
+export function animateNpc(mesh, dt) {
+  const d = mesh.userData;
+  if (!d?.hips) return;
+  d.animPhase = (d.animPhase || 0) + dt;
+  d.hips.position.y = 0.92 + Math.sin(d.animPhase * 1.6) * 0.02;
+  if (d.head) d.head.rotation.y = Math.sin(d.animPhase * 0.7) * 0.15;
+  if (d.marker) d.marker.rotation.z += dt * 0.8;
+  if (d.gem) {
+    d.gem.rotation.y += dt * 1.8;
+    d.gem.position.y = 0.4 + Math.sin(d.animPhase * 2) * 0.04;
+  }
 }
 
 export function makeBoltMesh(color = "#e8d48b") {

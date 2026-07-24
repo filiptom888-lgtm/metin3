@@ -6,10 +6,12 @@ import {
   makePlayerMesh,
   makeMetinMesh,
   makeMobMesh,
+  makeNpcMesh,
   makeBoltMesh,
   setNameplate,
   animateCharacter,
   animateMob,
+  animateNpc,
 } from "./meshes.js";
 import { FxSystem } from "./fx.js";
 import { derivedStats, applyLevelUps } from "./character.js";
@@ -233,11 +235,10 @@ export class Game {
     for (const m of this.npcMeshes) this.scene.remove(m);
     this.npcMeshes = [];
     for (const npc of NpcService.list) {
-      const mesh = new THREE.Mesh(
-        new THREE.CapsuleGeometry(0.35, 0.9, 4, 8),
-        new THREE.MeshStandardMaterial({ color: "#c9a227", emissive: "#4a3a10", emissiveIntensity: 0.3 })
-      );
-      mesh.position.set(npc.x, 0.85, npc.z);
+      const mesh = makeNpcMesh(npc);
+      mesh.position.set(npc.x, 0, npc.z);
+      // Face roughly toward plaza center
+      mesh.rotation.y = Math.atan2(-npc.x, -npc.z);
       this.scene.add(mesh);
       this.npcMeshes.push(mesh);
     }
@@ -320,7 +321,7 @@ export class Game {
   spawnMob(x, z, kind = "wolf") {
     const tmpl = MONSTERS[kind] || MONSTERS.wolf;
     const id = uid("mob");
-    const mesh = makeMobMesh(tmpl.kind || kind);
+    const mesh = makeMobMesh(tmpl.id || tmpl.kind || kind);
     mesh.position.set(x, 0, z);
     this.scene.add(mesh);
     this.mobs.set(id, {
@@ -540,6 +541,16 @@ export class Game {
     this.ui.updateHud(p, this.character);
     this.ui.drawMinimap(p, this.remotes, this.metins, this.mobs);
     this.fx?.update(dt);
+    for (const mesh of this.npcMeshes) animateNpc(mesh, dt);
+    // Pulse marker on nearest NPC
+    for (const mesh of this.npcMeshes) {
+      const marker = mesh.userData?.marker;
+      if (!marker) continue;
+      const isNear = this.nearNpc && mesh.userData.npc?.id === this.nearNpc.id;
+      marker.material.opacity = isNear ? 0.75 : 0.4;
+      const s = isNear ? 1.15 + Math.sin(this.time * 4) * 0.08 : 1;
+      marker.scale.set(s, s, s);
+    }
 
     this.saveTimer += dt;
     if (this.saveTimer >= 20) {
@@ -1195,7 +1206,7 @@ export class Game {
       let mob = this.mobs.get(m.id);
       if (!mob) {
         const tmpl = MONSTERS[m.templateId || m.kind] || MONSTERS.wolf;
-        const mesh = makeMobMesh(tmpl.kind || m.kind);
+        const mesh = makeMobMesh(tmpl.id || tmpl.kind || m.kind);
         this.scene.add(mesh);
         mob = {
           ...m,
