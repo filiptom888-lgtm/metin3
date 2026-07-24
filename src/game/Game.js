@@ -96,6 +96,7 @@ export class Game {
     this.metins = new Map();
     this.bolts = [];
     this.particles = [];
+    this.casts = []; // delayed attack / skill resolutions (cast time)
     this.loot = new Map();
     this.character = null;
     this.saveTimer = 0;
@@ -1170,8 +1171,8 @@ export class Game {
     this.updateAim();
 
     if (this.pendingDeath) {
+      this.casts = [];
       this.ui.updateHud(p, this.character);
-      this.renderer; // keep loop alive
       this.fx?.update(dt);
       return;
     }
@@ -1182,8 +1183,9 @@ export class Game {
     for (let i = 0; i < p.skillCd.length; i++) p.skillCd[i] = Math.max(0, p.skillCd[i] - dt);
     p.sp = Math.min(p.maxSp, p.sp + 5 * dt);
     if (this.time > p.buffUntil) p.buffMul = 1;
+    this._updateCasts(dt);
 
-    // Move
+    // Move (slow while casting — Metin2-style)
     let mx = 0;
     let mz = 0;
     if (this.keys.has("w") || this.keys.has("arrowup")) mz -= 1;
@@ -1191,7 +1193,8 @@ export class Game {
     if (this.keys.has("a") || this.keys.has("arrowleft")) mx -= 1;
     if (this.keys.has("d") || this.keys.has("arrowright")) mx += 1;
     const stealth = this.time < p.stealthUntil;
-    const speed = p.speed * p.buffMul * (stealth ? 1.25 : 1);
+    const casting = this.casts.length > 0;
+    const speed = p.speed * p.buffMul * (stealth ? 1.25 : 1) * (casting ? 0.35 : 1);
     if (mx || mz) {
       const len = Math.hypot(mx, mz);
       p.x += (mx / len) * speed * dt;
@@ -1280,12 +1283,12 @@ export class Game {
       }
     }
 
-    // Attack
-    if ((this.mouse.down || this.keys.has(" ")) && p.atkCd <= 0) {
+    // Attack (blocked while a cast is winding up)
+    if ((this.mouse.down || this.keys.has(" ")) && p.atkCd <= 0 && !this.casts.length) {
       this.doAttack();
     }
     for (let i = 0; i < 4; i++) {
-      if (this.keys.has(String(i + 1)) && p.skillCd[i] <= 0) {
+      if (this.keys.has(String(i + 1)) && p.skillCd[i] <= 0 && !this.casts.length) {
         this.keys.delete(String(i + 1));
         this.castSkill(i);
       }
@@ -1710,38 +1713,106 @@ export class Game {
     return list;
   }
 
+  /** Cast-time windups — damage/VFX resolve when the timer ends. */
+  _updateCasts(dt) {
+    if (!this.casts.length) return;
+    const p = this.local;
+    for (const c of this.casts) {
+      c.time -= dt;
+      if (c.faceAim && p) {
+        this.updateAim();
+        p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+      }
+    }
+    const done = this.casts.filter((c) => c.time <= 0);
+    this.casts = this.casts.filter((c) => c.time > 0);
+    for (const c of done) this._resolveCast(c);
+  }
+
+  _resolveCast(c) {
+    const p = this.local;
+    if (!p || !c) return;
+    if (c.kind === "basic") {
+      this._resolveBasicAttack(c);
+      return;
+    }
+    if (c.kind === "skill") {
+      this._resolveSkillCast(c);
+    }
+  }
+
   doAttack() {
     const p = this.local;
     const cls = CLASSES[p.classId];
-    p.atkCd = cls.cd;
-    p.attacking = 0.28;
+    if (this.casts.length) return;
+    p.atkCd = Math.max(cls.cd, 0.55);
+    p.attacking = 0.52;
     this.updateAim();
+    p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
 
     const ranged = cls.id === "shaman" || p.range > 4;
     const reach = ranged ? Math.max(p.range, 12) : p.range + 0.95;
-    // Always face the ground point under the cursor (reticule)
-    p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
     const target = this.pickAimedTarget(p, reach);
+    const windup = ranged ? 0.28 : 0.18;
+
+    // Short charge glint (not a red ground zone)
+    this.fx?.cast(p.x, p.z, ranged ? "#6ec8ff" : "#e8d48b", windup);
+    this.net.sendEvent({
+      type: "fx",
+      kind: "skill",
+      skill: "cast",
+      x: p.x,
+      z: p.z,
+      color: ranged ? "#6ec8ff" : "#e8d48b",
+      r: windup,
+      from: p.id,
+    });
+
+    this.casts.push({
+      kind: "basic",
+      time: windup,
+      faceAim: true,
+      ranged,
+      reach,
+      targetId: target?.ref?.id || null,
+      targetKind: target?.type || null,
+    });
+  }
+
+  _resolveBasicAttack(c) {
+    const p = this.local;
+    if (!p) return;
+    this.updateAim();
+    p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+    let target = null;
+    if (c.targetId) {
+      if (c.targetKind === "metin") {
+        const met = this.metins.get(c.targetId);
+        if (met?.hp > 0) target = { type: "metin", ref: met, x: met.x, z: met.z };
+      } else {
+        const mob = this.mobs.get(c.targetId);
+        if (mob?.hp > 0) target = { type: "mob", ref: mob, x: mob.x, z: mob.z };
+      }
+    }
+    if (!target) target = this.pickAimedTarget(p, c.reach);
 
     const roll = CombatService.rollHit({
       attacker: p,
       defender: { dex: target ? 1 : 4, def: 2, mdef: 0 },
       skillMul: p.buffMul,
-      isMagic: cls.id === "shaman",
-      // Cursor-locked targets almost always connect
+      isMagic: c.ranged,
       forcedHit: !!target,
     });
     if (!roll.hit) {
       this.ui.toast("Miss");
-      this.fx?.slash(p.x, p.z, p.rot, "#888");
+      this.fx?.slash(p.x, p.z, p.rot, "#888888");
       return;
     }
     const dmg = roll.damage;
-    const color = roll.kind === "crit" ? "#ffe08a" : p.color;
     audio.sfx(roll.kind === "crit" ? "crit" : "slash");
-    this.fx?.skill(ranged ? "bolt" : "slash", p.x, p.z, p.rot, color, 2.2);
 
-    if (ranged) {
+    if (c.ranged) {
+      this.fx?.skill("bolt", p.x, p.z, p.rot, "#6ec8ff");
       this.fireBolt(p.id, p.x, p.z, p.rot, dmg, p.color, target);
       this.net.sendEvent({
         type: "bolt",
@@ -1754,12 +1825,14 @@ export class Game {
         targetId: target?.ref?.id,
         targetKind: target?.type,
       });
-      this.net.sendEvent({ type: "fx", kind: "skill", skill: "bolt", x: p.x, z: p.z, rot: p.rot, color: p.color, from: p.id });
+      this.net.sendEvent({ type: "fx", kind: "skill", skill: "bolt", x: p.x, z: p.z, rot: p.rot, color: "#6ec8ff", from: p.id });
       return;
     }
 
-    // Melee: hit the cursor target (not a random wide cone)
+    // Gold crescent in front — never class-color ground blob
+    this.fx?.slash(p.x, p.z, p.rot, roll.kind === "crit" ? "#ffe08a" : "#e8d48b");
     this.meleeHitAimed(p, dmg, target);
+    if (target) this.fx?.hitSparks(target.x, target.z, "#fff4c8");
     this.net.sendEvent({
       type: "melee",
       from: p.id,
@@ -1772,11 +1845,21 @@ export class Game {
       targetId: target?.ref?.id,
       targetKind: target?.type,
     });
-    this.net.sendEvent({ type: "fx", kind: "skill", skill: "slash", x: p.x, z: p.z, rot: p.rot, color, from: p.id });
+    this.net.sendEvent({
+      type: "fx",
+      kind: "skill",
+      skill: "slash",
+      x: p.x,
+      z: p.z,
+      rot: p.rot,
+      color: "#e8d48b",
+      from: p.id,
+    });
   }
 
   castSkill(i) {
     const p = this.local;
+    if (this.casts.length) return;
     const skills = SkillService.listFor(p.classId, this.character?.spec);
     const sk = skills[i] || CLASSES[p.classId].skills[i];
     if (!sk || p.sp < sk.sp) {
@@ -1785,7 +1868,40 @@ export class Game {
     }
     p.sp -= sk.sp;
     p.skillCd[i] = sk.cd;
-    p.attacking = 0.3;
+
+    const castTime =
+      {
+        cone: 0.42,
+        aoe: 0.7,
+        burst: 0.75,
+        bolt: 0.5,
+        heal: 0.6,
+        buff: 0.55,
+        dash: 0.22,
+        stealth: 0.4,
+        drain: 0.6,
+        dot: 0.6,
+      }[sk.type] || 0.45;
+
+    p.attacking = castTime + 0.35;
+    this.updateAim();
+    p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+
+    const castColor =
+      sk.type === "heal" ? "#4ecf8a" : sk.type === "bolt" || sk.type === "stealth" ? "#6ec8ff" : sk.type === "drain" || sk.type === "dot" ? "#8b3fd4" : "#e8d48b";
+    this.fx?.cast(p.x, p.z, castColor, castTime);
+    this.net.sendEvent({
+      type: "fx",
+      kind: "skill",
+      skill: "cast",
+      x: p.x,
+      z: p.z,
+      color: castColor,
+      r: castTime,
+      from: p.id,
+    });
+    audio.sfx("skill");
+
     const isMagic = !!sk.isMagic || (CLASSES[p.classId].id === "shaman" && sk.type !== "heal");
     const roll = CombatService.rollHit({
       attacker: p,
@@ -1794,31 +1910,47 @@ export class Game {
       isMagic,
     });
     const dmg = roll.hit ? roll.damage : Math.floor(p.atk * (sk.mul || 1) * p.buffMul);
-    const color = p.color;
-    const sfxMap = { heal: "heal", buff: "buff", aoe: "aoe", burst: "aoe", stealth: "skill", drain: "aoe", dot: "aoe" };
-    audio.sfx(sfxMap[sk.type] || "skill");
-    this.fx?.skill(sk.type, p.x, p.z, p.rot, color, sk.type === "burst" ? 3.8 : sk.type === "aoe" ? 5 : 4);
 
-    switch (sk.type) {
+    this.casts.push({
+      kind: "skill",
+      time: castTime,
+      faceAim: sk.type === "cone" || sk.type === "bolt" || sk.type === "dash",
+      skType: sk.type,
+      dmg,
+      color: p.color,
+      skillIndex: i,
+    });
+  }
+
+  _resolveSkillCast(c) {
+    const p = this.local;
+    if (!p) return;
+    this.updateAim();
+    if (c.faceAim) p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+    const dmg = c.dmg;
+    const color = c.color;
+    const sfxMap = { heal: "heal", buff: "buff", aoe: "aoe", burst: "aoe", stealth: "skill", drain: "aoe", dot: "aoe" };
+    audio.sfx(sfxMap[c.skType] || "skill");
+
+    switch (c.skType) {
       case "cone": {
-        this.updateAim();
-        p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+        this.fx?.skill("cone", p.x, p.z, p.rot, "#e8d48b", 3.4);
         this.meleeHit(p, dmg, 0.55, p.range + 1.2);
         this.net.sendEvent({ type: "melee", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, cone: 0.55, range: p.range + 1.2 });
-        this.net.sendEvent({ type: "fx", kind: "skill", skill: "cone", x: p.x, z: p.z, rot: p.rot, color, from: p.id });
+        this.net.sendEvent({ type: "fx", kind: "skill", skill: "cone", x: p.x, z: p.z, rot: p.rot, color: "#e8d48b", from: p.id });
         break;
       }
       case "aoe":
+        this.fx?.skill("aoe", p.x, p.z, p.rot, color, 5);
         this.aoeHit(p.x, p.z, 5, dmg, p.id);
         this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 5, dmg });
         this.net.sendEvent({ type: "fx", kind: "skill", skill: "aoe", x: p.x, z: p.z, r: 5, color, from: p.id });
         break;
       case "bolt": {
-        this.updateAim();
         const boltReach = Math.max(p.range, 14);
         const boltTarget = this.pickAimedTarget(p, boltReach);
         if (boltTarget) p.rot = Math.atan2(boltTarget.x - p.x, boltTarget.z - p.z);
-        else p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+        this.fx?.skill("bolt", p.x, p.z, p.rot, "#6ec8ff");
         this.fireBolt(p.id, p.x, p.z, p.rot, dmg, p.color, boltTarget);
         this.net.sendEvent({
           type: "bolt",
@@ -1831,16 +1963,18 @@ export class Game {
           targetId: boltTarget?.ref?.id,
           targetKind: boltTarget?.type,
         });
-        this.net.sendEvent({ type: "fx", kind: "skill", skill: "bolt", x: p.x, z: p.z, rot: p.rot, color, from: p.id });
+        this.net.sendEvent({ type: "fx", kind: "skill", skill: "bolt", x: p.x, z: p.z, rot: p.rot, color: "#6ec8ff", from: p.id });
         break;
       }
       case "buff":
+        this.fx?.skill("buff", p.x, p.z, p.rot, "#e8d48b");
         p.buffMul = 1.45;
         p.buffUntil = this.time + 8;
         this.ui.toast("Power surges");
-        this.net.sendEvent({ type: "fx", kind: "skill", skill: "buff", x: p.x, z: p.z, color, from: p.id });
+        this.net.sendEvent({ type: "fx", kind: "skill", skill: "buff", x: p.x, z: p.z, color: "#e8d48b", from: p.id });
         break;
       case "dash": {
+        this.fx?.skill("dash", p.x, p.z, p.rot, color);
         p.x += Math.sin(p.rot) * 7;
         p.z += Math.cos(p.rot) * 7;
         p.x = clamp(p.x, -MAP_HALF + 1.2, MAP_HALF - 1.2);
@@ -1852,22 +1986,26 @@ export class Game {
         break;
       }
       case "stealth":
+        this.fx?.skill("stealth", p.x, p.z, p.rot, "#3a9fd4");
         p.stealthUntil = this.time + 3.5;
         this.ui.toast("Vanished");
         this.net.sendEvent({ type: "fx", kind: "skill", skill: "stealth", x: p.x, z: p.z, color: "#3a9fd4", from: p.id });
         break;
       case "burst":
+        this.fx?.skill("burst", p.x, p.z, p.rot, "#3a9fd4", 3.8);
         this.aoeHit(p.x, p.z, 3.8, dmg, p.id);
         this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 3.8, dmg });
         this.net.sendEvent({ type: "fx", kind: "skill", skill: "burst", x: p.x, z: p.z, r: 3.8, color: "#3a9fd4", from: p.id });
         break;
       case "dot":
       case "drain":
-        this.aoeHit(p.x, p.z, 4.5, dmg, p.id, sk.type === "drain");
-        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 4.5, dmg, drain: sk.type === "drain" });
-        this.net.sendEvent({ type: "fx", kind: "skill", skill: sk.type, x: p.x, z: p.z, r: 4.5, color: "#8b3fd4", from: p.id });
+        this.fx?.skill(c.skType, p.x, p.z, p.rot, "#8b3fd4", 4.5);
+        this.aoeHit(p.x, p.z, 4.5, dmg, p.id, c.skType === "drain");
+        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 4.5, dmg, drain: c.skType === "drain" });
+        this.net.sendEvent({ type: "fx", kind: "skill", skill: c.skType, x: p.x, z: p.z, r: 4.5, color: "#8b3fd4", from: p.id });
         break;
       case "heal":
+        this.fx?.skill("heal", p.x, p.z, p.rot, "#4ecf8a");
         p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.4);
         this.ui.toast("Healed");
         this.net.sendEvent({ type: "fx", kind: "skill", skill: "heal", x: p.x, z: p.z, from: p.id });

@@ -916,11 +916,13 @@ export function animateCharacter(mesh, dt, { moving = false, attacking = 0, spee
   }
 
   if (d.attacking > 0) {
-    const t = 1 - d.attacking / 0.28;
-    const swing = Math.sin(t * Math.PI) * 1.4;
-    d.rightArm.rotation.x = -0.4 - swing;
-    d.rightArm.rotation.z = swing * 0.35;
-    d.weapon.rotation.x = -swing * 0.5;
+    // Longer Metin-style swing (matches ~0.5s attack window)
+    const t = 1 - d.attacking / 0.52;
+    const swing = Math.sin(Math.min(1, Math.max(0, t)) * Math.PI) * 1.55;
+    d.rightArm.rotation.x = -0.55 - swing;
+    d.rightArm.rotation.z = swing * 0.4;
+    if (d.weapon) d.weapon.rotation.x = -swing * 0.55;
+    d.hips.rotation.y = swing * 0.12;
   } else {
     d.rightArm.rotation.z *= 0.8;
     d.weapon.rotation.x *= 0.8;
