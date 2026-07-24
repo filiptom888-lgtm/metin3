@@ -1,6 +1,6 @@
 /**
  * Procedural BGM + SFX via Web Audio (no asset downloads).
- * Starts after first user gesture (browser autoplay rules).
+ * Adventure / village feel — bright pentatonic, not gloomy drones.
  */
 export class AudioManager {
   constructor() {
@@ -8,12 +8,15 @@ export class AudioManager {
     this.master = null;
     this.musicGain = null;
     this.sfxGain = null;
-    this.musicVol = Number(localStorage.getItem("metin3_music") ?? 0.35);
+    this.musicVol = Number(localStorage.getItem("metin3_music") ?? 0.4);
     this.sfxVol = Number(localStorage.getItem("metin3_sfx") ?? 0.55);
     this.muted = localStorage.getItem("metin3_mute") === "1";
     this._bgmNodes = [];
     this._started = false;
     this._bgmOn = true;
+    this._step = 0;
+    this._melodyTimer = 0;
+    this._bassTimer = 0;
   }
 
   async unlock() {
@@ -24,9 +27,16 @@ export class AudioManager {
     this.master = this.ctx.createGain();
     this.musicGain = this.ctx.createGain();
     this.sfxGain = this.ctx.createGain();
-    this.musicGain.connect(this.master);
+    // Soft music bus with gentle high shelf warmth
+    const musicFilter = this.ctx.createBiquadFilter();
+    musicFilter.type = "lowpass";
+    musicFilter.frequency.value = 4200;
+    musicFilter.Q.value = 0.4;
+    this.musicGain.connect(musicFilter);
+    musicFilter.connect(this.master);
     this.sfxGain.connect(this.master);
     this.master.connect(this.ctx.destination);
+    this._musicFilter = musicFilter;
     this._applyVolumes();
     if (this.ctx.state === "suspended") await this.ctx.resume();
     this._started = true;
@@ -67,38 +77,57 @@ export class AudioManager {
   startBgm() {
     if (!this.ctx || this._bgmNodes.length) return;
     this._bgmOn = true;
+    this._step = 0;
     const t0 = this.ctx.currentTime + 0.05;
-    // Soft drone pad — Asian-ish pentatonic feel
-    const notes = [110, 146.83, 164.81, 196, 220];
-    for (let i = 0; i < notes.length; i++) {
+
+    // Warm major pad (C major-ish open voicing) — airy, not dark
+    const padNotes = [261.63, 329.63, 392.0, 523.25]; // C4 E4 G4 C5
+    for (let i = 0; i < padNotes.length; i++) {
       const osc = this.ctx.createOscillator();
       const g = this.ctx.createGain();
       const f = this.ctx.createBiquadFilter();
-      osc.type = i % 2 ? "triangle" : "sine";
-      osc.frequency.value = notes[i];
+      osc.type = i < 2 ? "sine" : "triangle";
+      osc.frequency.value = padNotes[i];
       f.type = "lowpass";
-      f.frequency.value = 600 + i * 80;
-      g.gain.value = 0.04 + (i === 0 ? 0.03 : 0);
+      f.frequency.value = 1800 + i * 200;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(0.028 + i * 0.004, t0 + 1.8);
       osc.connect(f);
       f.connect(g);
       g.connect(this.musicGain);
       osc.start(t0);
-      // slow vibrato / swell
+      // gentle chorus wobble
       const lfo = this.ctx.createOscillator();
       const lfoG = this.ctx.createGain();
-      lfo.frequency.value = 0.08 + i * 0.02;
-      lfoG.gain.value = 4 + i;
+      lfo.frequency.value = 0.12 + i * 0.03;
+      lfoG.gain.value = 1.5 + i * 0.4;
       lfo.connect(lfoG);
       lfoG.connect(osc.frequency);
       lfo.start(t0);
       this._bgmNodes.push(osc, lfo, g, f, lfoG);
     }
-    // Light pulse "drum" via filtered noise envelope loop
-    this._pulseTimer = setInterval(() => this._pulse(), 1800);
+
+    // Soft shimmer (high fifth)
+    const shimmer = this.ctx.createOscillator();
+    const shG = this.ctx.createGain();
+    shimmer.type = "sine";
+    shimmer.frequency.value = 783.99; // G5
+    shG.gain.value = 0.012;
+    shimmer.connect(shG);
+    shG.connect(this.musicGain);
+    shimmer.start(t0);
+    this._bgmNodes.push(shimmer, shG);
+
+    // Melodic sequence — bright pentatonic adventure (C D E G A)
+    // Tempo ~92 BPM, 8th notes
+    this._melodyTimer = setInterval(() => this._melodyStep(), 160);
+    this._bassTimer = setInterval(() => this._bassStep(), 640);
   }
 
   stopBgm() {
     this._bgmOn = false;
+    clearInterval(this._melodyTimer);
+    clearInterval(this._bassTimer);
     clearInterval(this._pulseTimer);
     for (const n of this._bgmNodes) {
       try {
@@ -111,21 +140,93 @@ export class AudioManager {
     this._bgmNodes = [];
   }
 
-  _pulse() {
+  /** Lead melody — plucked pentatonic phrases */
+  _melodyStep() {
     if (!this.ctx || this.muted || !this._bgmOn) return;
+    const scale = [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5]; // C5–C6 pentatonic-ish
+    // Phrase patterns (index into scale, -1 = rest)
+    const phrases = [
+      [0, 2, 4, 2, 3, 4, 2, -1],
+      [4, 3, 2, 0, 2, 3, 4, 5],
+      [2, 4, 5, 4, 3, 2, 0, -1],
+      [0, 2, 3, 4, 3, 2, 4, 2],
+    ];
+    const phrase = phrases[Math.floor(this._step / 8) % phrases.length];
+    const noteIdx = phrase[this._step % 8];
+    this._step++;
+    if (noteIdx < 0) return;
+
+    const t = this.ctx.currentTime;
+    const freq = scale[noteIdx];
+    // Soft pluck: triangle + short sine
+    this._pluck(t, freq, 0.32, 0.07);
+    if (this._step % 4 === 0) this._pluck(t + 0.02, freq * 1.5, 0.18, 0.025); // sparkle
+  }
+
+  _bassStep() {
+    if (!this.ctx || this.muted || !this._bgmOn) return;
+    const roots = [130.81, 146.83, 164.81, 196.0]; // C3 D3 E3 G3
+    const i = Math.floor(this._step / 8) % roots.length;
     const t = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
     const g = this.ctx.createGain();
     osc.type = "sine";
-    osc.frequency.setValueAtTime(55, t);
-    osc.frequency.exponentialRampToValueAtTime(40, t + 0.25);
+    osc.frequency.setValueAtTime(roots[i], t);
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.08, t + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+    g.gain.exponentialRampToValueAtTime(0.06, t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
     osc.connect(g);
     g.connect(this.musicGain);
     osc.start(t);
-    osc.stop(t + 0.45);
+    osc.stop(t + 0.6);
+
+    // Light wood-block tick
+    this._tick(t, 0.035);
+  }
+
+  _pluck(t, freq, dur, vol) {
+    const osc = this.ctx.createOscillator();
+    const osc2 = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    const f = this.ctx.createBiquadFilter();
+    osc.type = "triangle";
+    osc2.type = "sine";
+    osc.frequency.setValueAtTime(freq, t);
+    osc2.frequency.setValueAtTime(freq * 2.01, t);
+    f.type = "lowpass";
+    f.frequency.setValueAtTime(2400, t);
+    f.frequency.exponentialRampToValueAtTime(800, t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(f);
+    osc2.connect(f);
+    f.connect(g);
+    g.connect(this.musicGain);
+    osc.start(t);
+    osc2.start(t);
+    osc.stop(t + dur + 0.02);
+    osc2.stop(t + dur + 0.02);
+  }
+
+  _tick(t, vol) {
+    const len = Math.floor(this.ctx.sampleRate * 0.04);
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const f = this.ctx.createBiquadFilter();
+    f.type = "bandpass";
+    f.frequency.value = 1800;
+    f.Q.value = 4;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+    src.connect(f);
+    f.connect(g);
+    g.connect(this.musicGain);
+    src.start(t);
   }
 
   sfx(kind) {
