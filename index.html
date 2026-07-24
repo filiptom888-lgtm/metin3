@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>METIN3</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800;900&family=Noto+Sans+KR:wght@400;600;700&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="app">
+      <section id="lobby" class="screen active">
+        <div class="lobby-bg" aria-hidden="true"></div>
+        <div class="lobby-panel">
+          <p class="brand">METIN3</p>
+          <h1>3D multiplayer arena</h1>
+          <p class="sub">Same small map. Live players. Shatter metins together.</p>
+
+          <label class="field">
+            <span>Display name</span>
+            <input id="inp-name" maxlength="16" placeholder="Wanderer" autocomplete="off" />
+          </label>
+
+          <div class="class-row" id="class-row"></div>
+
+          <label class="field">
+            <span>Room code</span>
+            <input id="inp-room" maxlength="8" placeholder="ARENA" autocomplete="off" />
+          </label>
+
+          <p id="lobby-error" class="error" hidden></p>
+          <button id="btn-join" class="btn btn-primary" type="button">Enter Arena</button>
+          <p class="hint">WASD move · mouse aim · click attack · 1–4 skills · tab scoreboard</p>
+          <p class="hint muted" id="config-hint"></p>
+        </div>
+      </section>
+
+      <section id="game-screen" class="screen">
+        <canvas id="c"></canvas>
+        <div id="hud">
+          <div class="hud-top">
+            <div class="brand-mini">METIN3</div>
+            <div id="room-chip">ROOM</div>
+            <div id="host-chip">CLIENT</div>
+            <div id="players-chip">1 online</div>
+          </div>
+          <div class="hud-bottom">
+            <div class="bars">
+              <div class="name-row"><span id="hud-name">—</span><span id="hud-level">Lv.1</span></div>
+              <div class="bar hp"><i id="bar-hp"></i><span id="txt-hp">100</span></div>
+              <div class="bar sp"><i id="bar-sp"></i><span id="txt-sp">50</span></div>
+            </div>
+            <div id="skill-bar" class="skills"></div>
+            <div class="stats">
+              <div><span>Metins</span><b id="stat-metins">0</b></div>
+              <div><span>Kills</span><b id="stat-kills">0</b></div>
+            </div>
+          </div>
+        </div>
+        <div id="minimap"><canvas id="mini" width="140" height="140"></canvas></div>
+        <div id="toast" hidden></div>
+        <div id="scoreboard" hidden>
+          <h3>Arena</h3>
+          <ul id="score-list"></ul>
+        </div>
+        <button id="btn-leave" class="btn-leave" type="button">Leave</button>
+      </section>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

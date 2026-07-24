@@ -1,0 +1,18 @@
+{
+  "name": "metin3",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^8.1.1"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.8",
+    "three": "^0.185.1"
+  }
+}
