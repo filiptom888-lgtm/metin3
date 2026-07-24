@@ -1047,6 +1047,8 @@ function groundShadow(scale = 1) {
   );
   s.rotation.x = -Math.PI / 2;
   s.position.y = 0.03;
+  // Don't steal combat raycasts from the body
+  s.raycast = () => {};
   return s;
 }
 

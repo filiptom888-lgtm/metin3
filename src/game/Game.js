@@ -72,6 +72,22 @@ export class Game {
     this.aim = new THREE.Vector3();
     this.aimEntity = null;
     this._aimProj = new THREE.Vector3();
+    this._aimGround = new THREE.Vector3();
+    this._prevHighlight = null;
+    // Ground reticule so facing/hits match the cursor
+    this.aimMarker = new THREE.Mesh(
+      new THREE.RingGeometry(0.35, 0.55, 24),
+      new THREE.MeshBasicMaterial({
+        color: "#e8d48b",
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+      })
+    );
+    this.aimMarker.rotation.x = -Math.PI / 2;
+    this.aimMarker.position.y = 0.06;
+    this.aimMarker.visible = false;
+    this.scene.add(this.aimMarker);
 
     this.local = null;
     this.localMesh = null;
@@ -1005,33 +1021,59 @@ export class Game {
   }
 
   updateAim() {
+    // Face the ground point under the cursor — never snap facing onto a nearby mob
     this.raycaster.setFromCamera(this.mouse.ndc, this.camera);
-    const hit = new THREE.Vector3();
-    if (this.raycaster.ray.intersectPlane(this.groundPlane, hit)) {
-      this.aim.copy(hit);
+    if (this.raycaster.ray.intersectPlane(this.groundPlane, this._aimGround)) {
+      this.aim.copy(this._aimGround);
     }
-    // Lock to enemy under / near cursor (mesh raycast, then screen soft-lock)
-    this.aimEntity = this._raycastEnemyUnderCursor() || this._softLockEnemyNearCursor();
-    if (this.aimEntity) {
-      this.aim.x = this.aimEntity.x;
-      this.aim.z = this.aimEntity.z;
+    if (this.aimMarker) {
+      this.aimMarker.visible = !!this.local && !this.pendingDeath;
+      this.aimMarker.position.x = this.aim.x;
+      this.aimMarker.position.z = this.aim.z;
     }
+    this.aimEntity = this._pickEnemyAtCursor();
+    this._updateAimHighlight();
+  }
+
+  /** Enemy the cursor is actually on / pointing at (mesh hit, else closest to ground aim). */
+  _pickEnemyAtCursor() {
+    const meshHit = this._raycastEnemyUnderCursor();
+    if (meshHit) return meshHit;
+
+    // Closest enemy to the ground aim point (must be near the reticule — not screen soft-lock)
+    const aimX = this.aim.x;
+    const aimZ = this.aim.z;
+    let best = null;
+    let bestD = 2.15; // world units from cursor ground point
+
+    const consider = (type, ref, x, z, pad) => {
+      if (!this._entityOnCurrentMap(ref) || ref.hp <= 0) return;
+      const dAim = dist2(aimX, aimZ, x, z);
+      if (dAim > bestD + pad) return;
+      if (dAim < bestD) {
+        bestD = dAim;
+        best = { type, ref, x, z };
+      }
+    };
+
+    for (const [, m] of this.mobs) consider("mob", m, m.x, m.z, 0.15);
+    if (!DungeonService.isInside()) {
+      for (const [, m] of this.metins) consider("metin", m, m.x, m.z, 0.55);
+    }
+    return best;
   }
 
   _raycastEnemyUnderCursor() {
     const meshes = [];
     for (const [, m] of this.mobs) {
-      if (m.hp > 0 && m.mesh && this._entityOnCurrentMap(m)) meshes.push(m.mesh);
+      if (m.hp > 0 && m.mesh?.visible && this._entityOnCurrentMap(m)) meshes.push(m.mesh);
     }
     for (const [, m] of this.metins) {
-      if (m.hp > 0 && m.mesh && this._entityOnCurrentMap(m)) meshes.push(m.mesh);
+      if (m.hp > 0 && m.mesh?.visible && this._entityOnCurrentMap(m)) meshes.push(m.mesh);
     }
     if (!meshes.length) return null;
     this.raycaster.setFromCamera(this.mouse.ndc, this.camera);
     const hits = this.raycaster.intersectObjects(meshes, true);
-    if (!hits.length) return null;
-    const node = hits[0].object;
-    // Skip HP bar / label sprites — lock the body behind them
     for (const h of hits) {
       if (h.object?.isSprite) continue;
       for (const [, m] of this.mobs) {
@@ -1045,49 +1087,36 @@ export class Game {
         }
       }
     }
-    // Sprite-only hit: still resolve parent mob/metin
-    for (const [, m] of this.mobs) {
-      if (this._meshContains(m.mesh, node)) return { type: "mob", ref: m, x: m.x, z: m.z };
-    }
-    for (const [, m] of this.metins) {
-      if (this._meshContains(m.mesh, node)) return { type: "metin", ref: m, x: m.x, z: m.z };
-    }
     return null;
   }
 
-  /** Screen-space soft lock when the cursor is near an enemy but not exactly on the mesh. */
-  _softLockEnemyNearCursor() {
-    const rect = this.canvas.getBoundingClientRect();
-    const mx = this.mouse.x;
-    const my = this.mouse.y;
-    const maxPx = 48;
-    let best = null;
-    let bestD = maxPx;
-
-    const consider = (type, ref, x, z, y = 0.9) => {
-      if (!this._entityOnCurrentMap(ref)) return;
-      this._aimProj.set(x, y, z).project(this.camera);
-      if (this._aimProj.z > 1) return;
-      const sx = (this._aimProj.x * 0.5 + 0.5) * rect.width;
-      const sy = (-this._aimProj.y * 0.5 + 0.5) * rect.height;
-      const d = Math.hypot(sx - mx, sy - my);
-      if (d < bestD) {
-        bestD = d;
-        best = { type, ref, x, z };
-      }
-    };
-
-    for (const [, m] of this.mobs) {
-      if (m.hp <= 0) continue;
-      consider("mob", m, m.x, m.z, 0.85);
+  _updateAimHighlight() {
+    const next = this.aimEntity?.ref || null;
+    if (this._prevHighlight && this._prevHighlight !== next) {
+      this._setMeshHighlight(this._prevHighlight.mesh, false);
     }
-    if (!DungeonService.isInside()) {
-      for (const [, m] of this.metins) {
-        if (m.hp <= 0) continue;
-        consider("metin", m, m.x, m.z, 1.2);
+    if (next) this._setMeshHighlight(next.mesh, true);
+    this._prevHighlight = next;
+  }
+
+  _setMeshHighlight(mesh, on) {
+    if (!mesh) return;
+    mesh.traverse((o) => {
+      if (!o.isMesh || !o.material || o.material.opacity < 1) return;
+      if (on) {
+        if (o.userData._hiEmissive == null) {
+          o.userData._hiEmissive = o.material.emissive?.getHex?.() ?? 0;
+          o.userData._hiIntensity = o.material.emissiveIntensity ?? 0;
+        }
+        o.material.emissive?.setHex?.(0xffcc66);
+        o.material.emissiveIntensity = 0.35;
+      } else if (o.userData._hiEmissive != null) {
+        o.material.emissive?.setHex?.(o.userData._hiEmissive);
+        o.material.emissiveIntensity = o.userData._hiIntensity ?? 0;
+        delete o.userData._hiEmissive;
+        delete o.userData._hiIntensity;
       }
-    }
-    return best;
+    });
   }
 
   _meshContains(root, node) {
@@ -1101,14 +1130,37 @@ export class Game {
   }
 
   /**
-   * Enemy under cursor if in reach — no wide cone (that felt random).
+   * Enemy under / at the cursor if in reach.
+   * Facing always uses ground aim — this only chooses who takes the hit.
    */
   pickAimedTarget(p, range) {
-    if (!this.aimEntity) return null;
-    const pad = this.aimEntity.type === "metin" ? 1.5 : 1.05;
-    const d = dist2(p.x, p.z, this.aimEntity.x, this.aimEntity.z);
-    if (d <= range + pad) return this.aimEntity;
-    return null;
+    // Fresh pick at attack time (cursor may have moved)
+    const aimed = this._pickEnemyAtCursor();
+    this.aimEntity = aimed;
+    if (!aimed) return null;
+    const pad = aimed.type === "metin" ? 1.6 : 1.1;
+    const d = dist2(p.x, p.z, aimed.x, aimed.z);
+    if (d <= range + pad) return aimed;
+
+    // Out of reach of reticule target — allow a single enemy in a tight cone toward cursor
+    const face = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+    let best = null;
+    let bestD = range + pad;
+    const consider = (type, ref, x, z, extra) => {
+      if (!this._entityOnCurrentMap(ref) || ref.hp <= 0) return;
+      const dPlayer = dist2(p.x, p.z, x, z);
+      if (dPlayer > range + extra) return;
+      if (!this.inCone(p.x, p.z, face, x, z, range + extra, 0.28)) return;
+      if (dPlayer < bestD) {
+        bestD = dPlayer;
+        best = { type, ref, x, z };
+      }
+    };
+    for (const [, m] of this.mobs) consider("mob", m, m.x, m.z, 1.0);
+    if (!DungeonService.isInside()) {
+      for (const [, m] of this.metins) consider("metin", m, m.x, m.z, 1.4);
+    }
+    return best;
   }
 
   update(dt) {
@@ -1667,10 +1719,9 @@ export class Game {
 
     const ranged = cls.id === "shaman" || p.range > 4;
     const reach = ranged ? Math.max(p.range, 12) : p.range + 0.95;
+    // Always face the ground point under the cursor (reticule)
+    p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
     const target = this.pickAimedTarget(p, reach);
-    // Always face the cursor / locked target
-    if (target) p.rot = Math.atan2(target.x - p.x, target.z - p.z);
-    else p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
 
     const roll = CombatService.rollHit({
       attacker: p,
@@ -1826,14 +1877,11 @@ export class Game {
     }
   }
 
-  /** Apply damage to the cursor-aimed target. Host / dungeon authority resolve damage. */
+  /** Apply damage to the cursor-aimed target only (no wide cone spray). */
   meleeHitAimed(p, dmg, target) {
     const canApply = this.net.isHost || this.isDungeonAuthority();
     if (!canApply) return;
-    if (!target) {
-      this.meleeHit(p, dmg, 0.38, p.range + 0.7);
-      return;
-    }
+    if (!target) return; // miss — swing toward cursor but nothing locked
     if (target.type === "mob" && target.ref?.hp > 0) this.damageMob(target.ref, dmg, p.id);
     else if (target.type === "metin" && target.ref?.hp > 0) this.damageMetin(target.ref, dmg, p.id);
   }
