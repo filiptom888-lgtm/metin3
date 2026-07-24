@@ -1,11 +1,13 @@
 import "./style.css";
-import { CLASSES } from "./game/data.js";
+import { CLASSES, MAP_SIZE } from "./game/data.js";
 import { Game } from "./game/Game.js";
-import { RoomNet } from "./net/room.js";
+import { RoomNet, randomRoomCode } from "./net/room.js";
 import { ensureAuth, hasSupabase, configHint, supabase } from "./net/supabase.js";
-import { MAP_SIZE } from "./game/data.js";
 
 const $ = (s) => document.querySelector(s);
+
+let selectedClass = "warrior";
+let currentProfile = null;
 
 const ui = {
   toastTimer: 0,
@@ -23,8 +25,10 @@ const ui = {
   },
   updateHud(p) {
     $("#hud-level").textContent = `Lv.${p.level}`;
-    $("#bar-hp").style.transform = `scaleX(${Math.max(0, p.hp / p.maxHp)})`;
-    $("#bar-sp").style.transform = `scaleX(${Math.max(0, p.sp / p.maxSp)})`;
+    const hpR = Math.max(0, Math.min(1, p.hp / p.maxHp));
+    const spR = Math.max(0, Math.min(1, p.sp / p.maxSp));
+    $("#bar-hp").style.transform = `scaleX(${hpR})`;
+    $("#bar-sp").style.transform = `scaleX(${spR})`;
     $("#txt-hp").textContent = `${Math.ceil(p.hp)}/${p.maxHp}`;
     $("#txt-sp").textContent = `${Math.floor(p.sp)}/${p.maxSp}`;
     $("#stat-metins").textContent = String(p.metins);
@@ -75,6 +79,25 @@ const ui = {
       list.appendChild(li);
     }
   },
+  updateWaiting(peers, isCreator, roomCode) {
+    $("#wait-code").textContent = roomCode;
+    $("#wait-role").textContent = isCreator ? "You are the creator" : "Waiting as member";
+    $("#wait-count").textContent = `${peers.length} player${peers.length === 1 ? "" : "s"}`;
+    $("#btn-start").hidden = !isCreator;
+    $("#wait-status").textContent = isCreator
+      ? "Start when your party is ready."
+      : "Waiting for host to start…";
+
+    const list = $("#wait-list");
+    list.innerHTML = "";
+    const sorted = [...peers].sort((a, b) => Number(b.isCreator) - Number(a.isCreator) || (a.joinedAt || 0) - (b.joinedAt || 0));
+    for (const p of sorted) {
+      const li = document.createElement("li");
+      const cls = CLASSES[p.classId]?.name || p.classId || "?";
+      li.innerHTML = `<span>${p.name} · ${cls}</span><span class="tag">${p.isCreator ? "Creator" : "Ready"}</span>`;
+      list.appendChild(li);
+    }
+  },
   drawMinimap(local, remotes, metins, mobs) {
     const c = $("#mini");
     const ctx = c.getContext("2d");
@@ -85,12 +108,7 @@ const ui = {
     ctx.fillRect(0, 0, w, h);
     ctx.strokeStyle = "rgba(201,162,39,0.35)";
     ctx.strokeRect(1, 1, w - 2, h - 2);
-
-    const to = (x, z) => [
-      ((x + MAP_SIZE / 2) / MAP_SIZE) * w,
-      ((z + MAP_SIZE / 2) / MAP_SIZE) * h,
-    ];
-
+    const to = (x, z) => [((x + MAP_SIZE / 2) / MAP_SIZE) * w, ((z + MAP_SIZE / 2) / MAP_SIZE) * h];
     ctx.fillStyle = "#8b1e1e";
     for (const [, m] of metins) {
       const [px, py] = to(m.x, m.z);
@@ -120,8 +138,6 @@ const ui = {
   },
 };
 
-// Lobby class picker
-let selectedClass = "warrior";
 const row = $("#class-row");
 Object.values(CLASSES).forEach((cls) => {
   const btn = document.createElement("button");
@@ -137,7 +153,6 @@ Object.values(CLASSES).forEach((cls) => {
   row.appendChild(btn);
 });
 
-$("#inp-room").value = "ARENA";
 $("#inp-name").value = `Hero${Math.floor(Math.random() * 90 + 10)}`;
 $("#config-hint").textContent = configHint();
 
@@ -146,85 +161,149 @@ const game = new Game($("#c"), ui, net);
 
 function show(screen) {
   $("#lobby").classList.toggle("active", screen === "lobby");
+  $("#waiting").classList.toggle("active", screen === "waiting");
   $("#game-screen").classList.toggle("active", screen === "game");
 }
 
-$("#btn-join").addEventListener("click", async () => {
+function readProfileBase() {
+  const name = ($("#inp-name").value || "Wanderer").trim().slice(0, 16);
+  const cls = CLASSES[selectedClass];
+  return { name, cls };
+}
+
+async function enterWaiting(roomCode, asCreator) {
   const err = $("#lobby-error");
   err.hidden = true;
-  const btn = $("#btn-join");
-  btn.disabled = true;
-  btn.textContent = "Connecting…";
+  const { name, cls } = readProfileBase();
 
-  try {
-    const name = ($("#inp-name").value || "Wanderer").trim().slice(0, 16);
-    const room = ($("#inp-room").value || "ARENA").trim();
-    const cls = CLASSES[selectedClass];
-
-    // Offline solo (no Supabase) — still 3D playable while you wire keys
-    if (!hasSupabase) {
-      const profile = {
-        id: `local_${Math.random().toString(36).slice(2, 9)}`,
-        name,
-        classId: cls.id,
-        color: cls.color,
-      };
-      net.playerId = profile.id;
-      net.roomCode = "SOLO";
-      net.isHost = true;
-      net.sendPlayer = () => {};
-      net.sendWorld = () => {};
-      net.sendEvent = () => {};
-      net.updatePresence = async () => {};
-      net.leave = async () => {};
-      show("game");
-      game.start(profile);
-      ui.setRoom("SOLO");
-      ui.setHost(true);
-      ui.setPlayers(1);
-      ui.toast("Solo mode · add Supabase env for multiplayer");
-      return;
-    }
-
-    const user = await ensureAuth();
-    const profile = {
-      id: user.id,
+  if (!hasSupabase) {
+    // Solo offline: skip waiting, go straight in as host
+    currentProfile = {
+      id: `local_${Math.random().toString(36).slice(2, 9)}`,
       name,
       classId: cls.id,
       color: cls.color,
     };
-
-    const code = await net.join(room, profile);
+    net.playerId = currentProfile.id;
+    net.roomCode = "SOLO";
+    net.isHost = true;
+    net.isCreator = true;
+    net.started = true;
+    net.sendPlayer = () => {};
+    net.sendWorld = () => {};
+    net.sendEvent = () => {};
+    net.updatePresence = async () => {};
+    net.leave = async () => {};
     show("game");
-    game.start(profile);
-    ui.toast(`Joined ${code}`);
+    game.start(currentProfile);
+    ui.setRoom("SOLO");
+    ui.setHost(true);
+    ui.setPlayers(1);
+    ui.toast("Solo mode · set Supabase env on Vercel for multiplayer");
+    return;
+  }
 
-    try {
-      await supabase.from("arena_scores").insert({
-        room_code: code,
-        player_name: name,
-        class_id: cls.id,
-        metins: 0,
-        kills: 0,
-      });
-    } catch {
-      /* table optional */
-    }
+  const user = await ensureAuth();
+  currentProfile = {
+    id: user.id,
+    name,
+    classId: cls.id,
+    color: cls.color,
+  };
+
+  const code = await net.join(roomCode, currentProfile, { asCreator });
+  show("waiting");
+  ui.updateWaiting([...net.peers.values()], net.isCreator, code);
+  $("#wait-error").hidden = true;
+}
+
+net.onPeers = (peers) => {
+  if (game.running) game.onPeers(peers);
+  if ($("#waiting").classList.contains("active")) {
+    ui.updateWaiting(peers, net.isCreator, net.roomCode);
+  }
+  if ($("#game-screen").classList.contains("active")) {
+    ui.setPlayers(peers.length);
+    ui.updateScoreboard(peers);
+  }
+};
+
+net.onMatchStart = () => {
+  if (!currentProfile) return;
+  show("game");
+  game.start(currentProfile);
+  ui.setRoom(net.roomCode);
+  ui.setHost(net.isHost);
+  ui.setPlayers(net.peers.size);
+  ui.toast("Match started");
+};
+
+async function withBusy(btn, label, fn) {
+  const prev = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = label;
+  try {
+    await fn();
   } catch (e) {
     console.error(e);
+    const err = $("#lobby").classList.contains("active") ? $("#lobby-error") : $("#wait-error");
     err.hidden = false;
     err.textContent = e.message || String(e);
   } finally {
     btn.disabled = false;
-    btn.textContent = "Enter Arena";
+    btn.textContent = prev;
+  }
+}
+
+$("#btn-create").addEventListener("click", () => {
+  withBusy($("#btn-create"), "Creating…", () => enterWaiting(randomRoomCode(), true));
+});
+
+$("#btn-join").addEventListener("click", () => {
+  withBusy($("#btn-join"), "Joining…", async () => {
+    const room = ($("#inp-room").value || "").trim();
+    if (!room) throw new Error("Enter a room code to join");
+    await enterWaiting(room, false);
+  });
+});
+
+$("#btn-start").addEventListener("click", () => {
+  withBusy($("#btn-start"), "Starting…", async () => {
+    net.startMatch();
+    try {
+      await supabase?.from("arena_scores").insert({
+        room_code: net.roomCode,
+        player_name: currentProfile?.name || "?",
+        class_id: currentProfile?.classId || "warrior",
+        metins: 0,
+        kills: 0,
+      });
+    } catch {
+      /* optional */
+    }
+  });
+});
+
+$("#btn-copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(net.roomCode);
+    $("#btn-copy").textContent = "Copied";
+    setTimeout(() => {
+      $("#btn-copy").textContent = "Copy";
+    }, 1000);
+  } catch {
+    $("#btn-copy").textContent = net.roomCode;
   }
 });
 
-$("#btn-leave").addEventListener("click", async () => {
+async function leaveAll() {
   game.stop();
   await net.leave();
+  currentProfile = null;
   show("lobby");
-});
+}
 
-// Helpful boot log
+$("#btn-leave-wait").addEventListener("click", leaveAll);
+$("#btn-leave").addEventListener("click", leaveAll);
+
 console.info(`[METIN3] supabase=${hasSupabase ? "ready" : "missing env"}`);

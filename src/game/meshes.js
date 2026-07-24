@@ -143,21 +143,15 @@ export function makePlayerMesh(classId, isLocal = false) {
   blade.position.set(0.45, 1.1, 0.35);
   root.add(blade);
 
-  // Name plate placeholder (updated externally via CSS2D or canvas — we use sprites)
+  // Name + HP plate
   const canvas = document.createElement("canvas");
   canvas.width = 256;
-  canvas.height = 64;
+  canvas.height = 80;
   const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "rgba(0,0,0,0.45)";
-  ctx.fillRect(0, 0, 256, 64);
-  ctx.fillStyle = "#e8d48b";
-  ctx.font = "bold 28px Cinzel, serif";
-  ctx.textAlign = "center";
-  ctx.fillText(cls.name, 128, 40);
   const tex = new THREE.CanvasTexture(canvas);
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-  sprite.position.y = 2.35;
-  sprite.scale.set(2.2, 0.55, 1);
+  sprite.position.y = 2.55;
+  sprite.scale.set(2.4, 0.75, 1);
   root.add(sprite);
   root.userData.labelCanvas = canvas;
   root.userData.labelCtx = ctx;
@@ -165,21 +159,48 @@ export function makePlayerMesh(classId, isLocal = false) {
   root.userData.body = body;
   root.userData.blade = blade;
 
+  drawPlate(root, cls.name, 1);
   return root;
 }
 
-export function setNameplate(mesh, text) {
+export function drawPlate(mesh, text, hpRatio = 1) {
   const ctx = mesh.userData.labelCtx;
   const canvas = mesh.userData.labelCanvas;
   if (!ctx) return;
+  const ratio = Math.max(0, Math.min(1, hpRatio));
+  const key = `${text}|${ratio.toFixed(2)}`;
+  if (mesh.userData.plateKey === key) return;
+  mesh.userData.plateKey = key;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "rgba(0,0,0,0.5)";
-  ctx.fillRect(0, 0, 256, 64);
+
+  // name
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(16, 4, 224, 32);
   ctx.fillStyle = "#e8d48b";
-  ctx.font = "bold 26px Cinzel, serif";
+  ctx.font = "bold 22px Cinzel, serif";
   ctx.textAlign = "center";
-  ctx.fillText(String(text).slice(0, 16), 128, 40);
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(text).slice(0, 16), 128, 20);
+
+  // HP bar background
+  ctx.fillStyle = "rgba(0,0,0,0.7)";
+  ctx.fillRect(28, 44, 200, 18);
+  ctx.strokeStyle = "rgba(232, 212, 139, 0.55)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(28, 44, 200, 18);
+
+  // HP fill
+  const grd = ctx.createLinearGradient(28, 0, 228, 0);
+  grd.addColorStop(0, "#6b1515");
+  grd.addColorStop(1, ratio > 0.35 ? "#c43c2e" : "#ff6644");
+  ctx.fillStyle = grd;
+  ctx.fillRect(30, 46, 196 * ratio, 14);
+
   mesh.userData.labelTex.needsUpdate = true;
+}
+
+export function setNameplate(mesh, text, hpRatio = 1) {
+  drawPlate(mesh, text, hpRatio);
 }
 
 export function makeMetinMesh(tier = 1) {

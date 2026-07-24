@@ -71,8 +71,7 @@ export class Game {
     };
     this._onResize = () => this.resize();
 
-    // Net hooks
-    net.onPeers = (peers) => this.onPeers(peers);
+    // Net hooks (onPeers is wired from main so lobby UI can share it)
     net.onPlayerState = (s) => this.onRemotePlayer(s);
     net.onWorldState = (w) => this.onWorldState(w);
     net.onEvent = (e) => this.onNetEvent(e);
@@ -132,7 +131,7 @@ export class Game {
     };
 
     this.localMesh = makePlayerMesh(profile.classId, true);
-    setNameplate(this.localMesh, profile.name);
+    setNameplate(this.localMesh, profile.name, 1);
     this.scene.add(this.localMesh);
 
     this.bindInput(true);
@@ -302,6 +301,7 @@ export class Game {
     this.localMesh.position.set(p.x, 0, p.z);
     this.localMesh.rotation.y = p.rot;
     this.localMesh.visible = !stealth || Math.sin(this.time * 20) > -0.2;
+    setNameplate(this.localMesh, p.name, p.hp / p.maxHp);
     if (p.attacking > 0) {
       this.localMesh.userData.blade.rotation.x = Math.sin(p.attacking * 40) * 0.8;
     } else {
@@ -321,9 +321,11 @@ export class Game {
       r.state.z += (t.z - r.state.z) * Math.min(1, 12 * dt);
       r.state.rot = t.rot;
       r.state.hp = t.hp;
+      r.state.maxHp = t.maxHp || r.state.maxHp || 100;
       r.mesh.position.set(r.state.x, 0, r.state.z);
       r.mesh.rotation.y = r.state.rot;
       r.mesh.visible = !t.stealth;
+      setNameplate(r.mesh, t.name || "Player", (t.hp || 0) / (t.maxHp || 100));
       if (t.attacking) r.mesh.userData.blade.rotation.x = Math.sin(this.time * 30) * 0.7;
       else r.mesh.userData.blade.rotation.x = 0;
     }
@@ -778,16 +780,16 @@ export class Game {
     let r = this.remotes.get(s.id);
     if (!r) {
       const mesh = makePlayerMesh(s.classId || "warrior", false);
-      setNameplate(mesh, s.name || "Player");
+      setNameplate(mesh, s.name || "Player", (s.hp || 100) / (s.maxHp || 100));
       this.scene.add(mesh);
       r = {
         mesh,
-        state: { x: s.x, z: s.z, rot: s.rot || 0, hp: s.hp },
+        state: { x: s.x, z: s.z, rot: s.rot || 0, hp: s.hp, maxHp: s.maxHp || 100 },
         target: s,
       };
       this.remotes.set(s.id, r);
     } else {
-      setNameplate(r.mesh, s.name || "Player");
+      setNameplate(r.mesh, s.name || "Player", (s.hp || 100) / (s.maxHp || 100));
       r.target = s;
     }
   }
@@ -807,7 +809,7 @@ export class Game {
       if (peer.id === this.local?.id) continue;
       if (!this.remotes.has(peer.id)) {
         const mesh = makePlayerMesh(peer.classId || "warrior", false);
-        setNameplate(mesh, peer.name || "Player");
+        setNameplate(mesh, peer.name || "Player", 1);
         mesh.position.set(rand(-4, 4), 0, rand(-4, 4));
         this.scene.add(mesh);
         this.remotes.set(peer.id, {

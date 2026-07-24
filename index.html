@@ -10,12 +10,13 @@
   </head>
   <body>
     <div id="app">
+      <!-- LOBBY -->
       <section id="lobby" class="screen active">
         <div class="lobby-bg" aria-hidden="true"></div>
         <div class="lobby-panel">
           <p class="brand">METIN3</p>
           <h1>3D multiplayer arena</h1>
-          <p class="sub">Same small map. Live players. Shatter metins together.</p>
+          <p class="sub">Create a room, invite friends, host starts the fight.</p>
 
           <label class="field">
             <span>Display name</span>
@@ -24,18 +25,51 @@
 
           <div class="class-row" id="class-row"></div>
 
-          <label class="field">
-            <span>Room code</span>
-            <input id="inp-room" maxlength="8" placeholder="ARENA" autocomplete="off" />
-          </label>
+          <div class="lobby-actions">
+            <button id="btn-create" class="btn btn-primary" type="button">Create Room</button>
+            <div class="or">or join</div>
+            <label class="field">
+              <span>Room code</span>
+              <input id="inp-room" maxlength="8" placeholder="e.g. K7MQ" autocomplete="off" />
+            </label>
+            <button id="btn-join" class="btn btn-ghost-full" type="button">Join Room</button>
+          </div>
 
           <p id="lobby-error" class="error" hidden></p>
-          <button id="btn-join" class="btn btn-primary" type="button">Enter Arena</button>
-          <p class="hint">WASD move · mouse aim · click attack · 1–4 skills · tab scoreboard</p>
           <p class="hint muted" id="config-hint"></p>
         </div>
       </section>
 
+      <!-- WAITING ROOM -->
+      <section id="waiting" class="screen">
+        <div class="lobby-bg" aria-hidden="true"></div>
+        <div class="lobby-panel wait-panel">
+          <p class="brand brand-sm">METIN3</p>
+          <h1>Waiting room</h1>
+          <p class="sub">Share the code. Only the creator can start.</p>
+
+          <div class="room-code-box">
+            <span>Room code</span>
+            <strong id="wait-code">----</strong>
+            <button id="btn-copy" class="btn-mini" type="button">Copy</button>
+          </div>
+
+          <div class="wait-meta">
+            <span id="wait-role">Member</span>
+            <span id="wait-count">1 player</span>
+          </div>
+
+          <ul id="wait-list" class="wait-list"></ul>
+
+          <p id="wait-status" class="wait-status">Waiting for host to start…</p>
+          <p id="wait-error" class="error" hidden></p>
+
+          <button id="btn-start" class="btn btn-primary" type="button" hidden>Start Match</button>
+          <button id="btn-leave-wait" class="btn btn-ghost-full" type="button">Leave Room</button>
+        </div>
+      </section>
+
+      <!-- GAME -->
       <section id="game-screen" class="screen">
         <canvas id="c"></canvas>
         <div id="hud">
@@ -48,8 +82,14 @@
           <div class="hud-bottom">
             <div class="bars">
               <div class="name-row"><span id="hud-name">—</span><span id="hud-level">Lv.1</span></div>
-              <div class="bar hp"><i id="bar-hp"></i><span id="txt-hp">100</span></div>
-              <div class="bar sp"><i id="bar-sp"></i><span id="txt-sp">50</span></div>
+              <div class="bar hp">
+                <div class="fill" id="bar-hp"></div>
+                <span id="txt-hp">100/100</span>
+              </div>
+              <div class="bar sp">
+                <div class="fill" id="bar-sp"></div>
+                <span id="txt-sp">50/50</span>
+              </div>
             </div>
             <div id="skill-bar" class="skills"></div>
             <div class="stats">

@@ -63,6 +63,14 @@ Add env vars in Vercel project settings:
 
 Redeploy after setting env.
 
+## Play flow
+
+1. **Create Room** → get a code → share it  
+2. Friends **Join Room** with that code  
+3. Waiting room lists everyone  
+4. **Only the creator** clicks **Start Match**  
+5. Fight together on the small 3D map  
+
 ## Controls
 
 | Input | Action |
@@ -72,8 +80,18 @@ Redeploy after setting env.
 | Click / Space | Attack |
 | 1–4 | Skills |
 | Tab | Scoreboard |
-| Leave | Exit room |
+
+## Vercel env (not the database password!)
+
+In Vercel → Project → Settings → Environment Variables, add:
+
+- `VITE_SUPABASE_URL` = Project URL (Settings → API)  
+- `VITE_SUPABASE_ANON_KEY` = `anon` `public` key  
+
+Do **not** put the database password in Vercel — that is only for Postgres tools. The browser uses the anon key.
+
+Also in Supabase: **Authentication → Providers → Anonymous → Enable**.
 
 ## Room tip
 
-Share one code (e.g. `ARENA` or `PARTY1`). Max comfort on free Realtime: a handful of players on the small map.
+Share one code from Create Room. Free Realtime is fine for a small party on one map.
