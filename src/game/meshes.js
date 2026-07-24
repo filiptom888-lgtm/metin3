@@ -235,14 +235,15 @@ export function createScene() {
 
   const colors = ["#6a5a48", "#5a4a3a", "#7a6a55", "#4a4035"];
   const layouts = [
-    [8, 7], [11, -8], [-10, 9], [-12, -7],
+    [11, -8], [-12, -7],
     [14, 11], [12, -13], [-15, 10], [-13, -14],
     [7, 15], [-8, 16], [16, 4], [-17, -3],
     [5, -16], [-6, -17], [15, -5], [-14, 5],
   ];
   layouts.forEach(([bx, bz], i) => {
     if (Math.hypot(bx, bz) > CITY_RADIUS - 5.5) return;
-    if (Math.hypot(bx, bz) < 5) return;
+    // Keep fountain + NPC ring clear (shop/smith at ±5.5)
+    if (Math.hypot(bx, bz) < 9) return;
     const b = makeBuilding(3.8 + (i % 3) * 0.8, 3.4 + (i % 4) * 0.7, 3.8 + (i % 2) * 1.1, colors[i % colors.length]);
     b.position.set(bx, 0, bz);
     b.rotation.y = (i * 0.7) % Math.PI;
@@ -1189,7 +1190,7 @@ export function makeNpcMesh(npc) {
 
   const roleLabel = { shop: "Merchant", blacksmith: "Blacksmith", teleport: "Teleporter", quest: "Elder" }[role] || "NPC";
   ctx.clearRect(0, 0, 256, 64);
-  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.fillStyle = role === "blacksmith" ? "rgba(60,30,10,0.75)" : "rgba(0,0,0,0.45)";
   ctx.fillRect(20, 8, 216, 48);
   ctx.font = "bold 22px Cinzel, serif";
   ctx.fillStyle = "#e8d48b";

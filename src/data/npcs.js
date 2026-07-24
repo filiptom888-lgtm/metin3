@@ -1,9 +1,12 @@
-/** One of each service NPC in the city plaza */
+/**
+ * One of each service NPC — placed on open plaza roads (not inside houses).
+ * Camera faces +Z roughly; east = +X (right of fountain).
+ */
 export const NPCS = [
-  { id: "shop", name: "General Goods", role: "shop", kingdom: 0, x: -7, z: 5 },
-  { id: "smith", name: "Blacksmith", role: "blacksmith", kingdom: 0, x: 7, z: 5 },
-  { id: "tele", name: "Teleporter", role: "teleport", kingdom: 0, x: 0, z: 10 },
   { id: "quest_elder", name: "Village Elder", role: "quest", kingdom: 0, x: 0, z: 2 },
+  { id: "shop", name: "General Goods", role: "shop", kingdom: 0, x: -5.5, z: 0 },
+  { id: "smith", name: "Blacksmith", role: "blacksmith", kingdom: 0, x: 5.5, z: 0 },
+  { id: "tele", name: "Teleporter", role: "teleport", kingdom: 0, x: 0, z: 9 },
 ];
 
 /** Shop stock grouped for UI tabs */
