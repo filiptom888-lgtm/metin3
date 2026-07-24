@@ -2125,7 +2125,8 @@ export class Game {
           : kindOrTable
         : kindOrTable || "wolf";
     const drops = DropService.roll(tableId, tableId === "metin" ? 1 + tier * 0.08 : 1);
-    if (bonusGold > 0 || Math.random() < 0.9) {
+    // Ground yang bags were nearly guaranteed — match item scarcity (~50x rarer)
+    if (bonusGold > 0 && Math.random() < 0.9 / 50) {
       this.createLoot(x + rand(-1, 1), z + rand(-1, 1), null, Math.max(20, Math.floor(bonusGold * 0.35)));
     }
     for (const drop of drops) {
