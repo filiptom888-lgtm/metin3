@@ -1,6 +1,6 @@
 /**
- * Procedural BGM + SFX via Web Audio (no asset downloads).
- * Adventure / village feel — bright pentatonic, not gloomy drones.
+ * BGM from /music/bgm.mp3 when available, procedural village theme as fallback.
+ * SFX stay procedural via Web Audio.
  */
 export class AudioManager {
   constructor() {
@@ -17,6 +17,9 @@ export class AudioManager {
     this._step = 0;
     this._melodyTimer = 0;
     this._bassTimer = 0;
+    this._bgmEl = null;
+    this._bgmMedia = null;
+    this._usingFileBgm = false;
   }
 
   async unlock() {
@@ -30,8 +33,8 @@ export class AudioManager {
     // Soft music bus with gentle high shelf warmth
     const musicFilter = this.ctx.createBiquadFilter();
     musicFilter.type = "lowpass";
-    musicFilter.frequency.value = 4200;
-    musicFilter.Q.value = 0.4;
+    musicFilter.frequency.value = 5200;
+    musicFilter.Q.value = 0.35;
     this.musicGain.connect(musicFilter);
     musicFilter.connect(this.master);
     this.sfxGain.connect(this.master);
@@ -40,7 +43,7 @@ export class AudioManager {
     this._applyVolumes();
     if (this.ctx.state === "suspended") await this.ctx.resume();
     this._started = true;
-    if (this._bgmOn && !this.muted) this.startBgm();
+    if (this._bgmOn && !this.muted) await this.startBgm();
   }
 
   _applyVolumes() {
@@ -48,6 +51,7 @@ export class AudioManager {
     this.master.gain.value = this.muted ? 0 : 1;
     if (this.musicGain) this.musicGain.gain.value = this.musicVol;
     if (this.sfxGain) this.sfxGain.gain.value = this.sfxVol;
+    if (this._bgmEl) this._bgmEl.volume = 1; // routed through musicGain
   }
 
   setMusicVolume(v) {
@@ -66,7 +70,15 @@ export class AudioManager {
     this.muted = !!m;
     localStorage.setItem("metin3_mute", this.muted ? "1" : "0");
     this._applyVolumes();
-    if (!this.muted && this._started && this._bgmOn && !this._bgmNodes.length) this.startBgm();
+    if (this.muted) {
+      this._bgmEl?.pause();
+    } else if (this._started && this._bgmOn) {
+      if (this._bgmEl) {
+        this._bgmEl.play().catch(() => {});
+      } else if (!this._bgmNodes.length) {
+        this.startBgm();
+      }
+    }
   }
 
   toggleMute() {
@@ -74,9 +86,72 @@ export class AudioManager {
     return this.muted;
   }
 
-  startBgm() {
-    if (!this.ctx || this._bgmNodes.length) return;
+  async startBgm() {
+    if (!this.ctx || this._bgmNodes.length || this._bgmEl) return;
     this._bgmOn = true;
+
+    const startedFile = await this._startFileBgm();
+    if (startedFile) return;
+
+    this._startProceduralBgm();
+  }
+
+  async _startFileBgm() {
+    try {
+      const el = new Audio("/music/bgm.mp3");
+      el.loop = true;
+      el.preload = "auto";
+      el.crossOrigin = "anonymous";
+
+      const ok = await new Promise((resolve) => {
+        let settled = false;
+        const done = (v) => {
+          if (settled) return;
+          settled = true;
+          resolve(v);
+        };
+        el.addEventListener("canplaythrough", () => done(true), { once: true });
+        el.addEventListener("error", () => done(false), { once: true });
+        // Timeout — fall back to procedural if the big file is slow
+        setTimeout(() => done(el.readyState >= 2), 4000);
+        el.load();
+      });
+      if (!ok) return false;
+
+      // MediaElementSource can only be created once per element
+      const src = this.ctx.createMediaElementSource(el);
+      src.connect(this.musicGain);
+      this._bgmEl = el;
+      this._bgmMedia = src;
+      this._usingFileBgm = true;
+      this._bgmNodes.push(src);
+
+      await el.play();
+      return true;
+    } catch {
+      this._teardownFileBgm();
+      return false;
+    }
+  }
+
+  _teardownFileBgm() {
+    try {
+      this._bgmEl?.pause();
+      if (this._bgmEl) {
+        this._bgmEl.removeAttribute("src");
+        this._bgmEl.load();
+      }
+      this._bgmMedia?.disconnect?.();
+    } catch {
+      /* ignore */
+    }
+    this._bgmEl = null;
+    this._bgmMedia = null;
+    this._usingFileBgm = false;
+  }
+
+  _startProceduralBgm() {
+    this._usingFileBgm = false;
     this._step = 0;
     const t0 = this.ctx.currentTime + 0.05;
 
@@ -96,7 +171,6 @@ export class AudioManager {
       f.connect(g);
       g.connect(this.musicGain);
       osc.start(t0);
-      // gentle chorus wobble
       const lfo = this.ctx.createOscillator();
       const lfoG = this.ctx.createGain();
       lfo.frequency.value = 0.12 + i * 0.03;
@@ -107,19 +181,16 @@ export class AudioManager {
       this._bgmNodes.push(osc, lfo, g, f, lfoG);
     }
 
-    // Soft shimmer (high fifth)
     const shimmer = this.ctx.createOscillator();
     const shG = this.ctx.createGain();
     shimmer.type = "sine";
-    shimmer.frequency.value = 783.99; // G5
+    shimmer.frequency.value = 783.99;
     shG.gain.value = 0.012;
     shimmer.connect(shG);
     shG.connect(this.musicGain);
     shimmer.start(t0);
     this._bgmNodes.push(shimmer, shG);
 
-    // Melodic sequence — bright pentatonic adventure (C D E G A)
-    // Tempo ~92 BPM, 8th notes
     this._melodyTimer = setInterval(() => this._melodyStep(), 160);
     this._bassTimer = setInterval(() => this._bassStep(), 640);
   }
@@ -129,6 +200,7 @@ export class AudioManager {
     clearInterval(this._melodyTimer);
     clearInterval(this._bassTimer);
     clearInterval(this._pulseTimer);
+    this._teardownFileBgm();
     for (const n of this._bgmNodes) {
       try {
         n.stop?.();
@@ -142,9 +214,8 @@ export class AudioManager {
 
   /** Lead melody — plucked pentatonic phrases */
   _melodyStep() {
-    if (!this.ctx || this.muted || !this._bgmOn) return;
-    const scale = [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5]; // C5–C6 pentatonic-ish
-    // Phrase patterns (index into scale, -1 = rest)
+    if (!this.ctx || this.muted || !this._bgmOn || this._usingFileBgm) return;
+    const scale = [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5];
     const phrases = [
       [0, 2, 4, 2, 3, 4, 2, -1],
       [4, 3, 2, 0, 2, 3, 4, 5],
@@ -158,14 +229,13 @@ export class AudioManager {
 
     const t = this.ctx.currentTime;
     const freq = scale[noteIdx];
-    // Soft pluck: triangle + short sine
     this._pluck(t, freq, 0.32, 0.07);
-    if (this._step % 4 === 0) this._pluck(t + 0.02, freq * 1.5, 0.18, 0.025); // sparkle
+    if (this._step % 4 === 0) this._pluck(t + 0.02, freq * 1.5, 0.18, 0.025);
   }
 
   _bassStep() {
-    if (!this.ctx || this.muted || !this._bgmOn) return;
-    const roots = [130.81, 146.83, 164.81, 196.0]; // C3 D3 E3 G3
+    if (!this.ctx || this.muted || !this._bgmOn || this._usingFileBgm) return;
+    const roots = [130.81, 146.83, 164.81, 196.0];
     const i = Math.floor(this._step / 8) % roots.length;
     const t = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
@@ -179,8 +249,6 @@ export class AudioManager {
     g.connect(this.musicGain);
     osc.start(t);
     osc.stop(t + 0.6);
-
-    // Light wood-block tick
     this._tick(t, 0.035);
   }
 
