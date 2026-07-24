@@ -299,9 +299,128 @@ export function createScene() {
 }
 
 export function createCamera() {
-  const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 200);
+  const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 220);
   camera.position.set(0, 28, 28);
   return camera;
+}
+
+/** Shared floating HP / name sprite for mobs & metins */
+export function attachHpBar(root, { y = 1.6, scaleX = 1.8, scaleY = 0.45 } = {}) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: true, depthWrite: false })
+  );
+  sprite.position.y = y;
+  sprite.scale.set(scaleX, scaleY, 1);
+  root.add(sprite);
+  root.userData.hpCanvas = canvas;
+  root.userData.hpCtx = ctx;
+  root.userData.hpTex = tex;
+  root.userData.hpSprite = sprite;
+  root.userData.hpKey = "";
+  return sprite;
+}
+
+export function updateHpBar(mesh, { name = "", hp = 1, maxHp = 1, level = 0, color = "#e23a2e" } = {}) {
+  const ctx = mesh.userData?.hpCtx;
+  const canvas = mesh.userData?.hpCanvas;
+  if (!ctx || !canvas) return;
+  const ratio = Math.max(0, Math.min(1, maxHp > 0 ? hp / maxHp : 0));
+  const key = `${name}|${level}|${ratio.toFixed(2)}|${Math.ceil(hp)}`;
+  if (mesh.userData.hpKey === key) return;
+  mesh.userData.hpKey = key;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (name) {
+    ctx.font = "bold 18px Cinzel, serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(28, 4, 200, 22);
+    ctx.fillStyle = "#ffe9a0";
+    const label = level ? `Lv${level} ${name}` : name;
+    ctx.fillText(String(label).slice(0, 18), 128, 15);
+  }
+  ctx.fillStyle = "rgba(0,0,0,0.75)";
+  ctx.fillRect(36, 34, 184, 18);
+  ctx.strokeStyle = "#c9a227";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(36, 34, 184, 18);
+  const grd = ctx.createLinearGradient(36, 0, 220, 0);
+  grd.addColorStop(0, "#4a0000");
+  grd.addColorStop(1, ratio > 0.35 ? color : "#ff8844");
+  ctx.fillStyle = grd;
+  ctx.fillRect(38, 36, 180 * ratio, 14);
+  mesh.userData.hpTex.needsUpdate = true;
+  if (mesh.userData.hpSprite) mesh.userData.hpSprite.visible = hp < maxHp || true;
+}
+
+/** Quest bang / question over NPC heads */
+export function attachQuestMarker(root, y = 2.55) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false })
+  );
+  sprite.position.y = y;
+  sprite.scale.set(0.85, 0.85, 1);
+  sprite.visible = false;
+  root.add(sprite);
+  root.userData.questCanvas = canvas;
+  root.userData.questCtx = ctx;
+  root.userData.questTex = tex;
+  root.userData.questSprite = sprite;
+  root.userData.questState = "";
+  return sprite;
+}
+
+export function setQuestMarker(mesh, state) {
+  // state: "!" | "?" | "done" | "" 
+  const sprite = mesh.userData?.questSprite;
+  const ctx = mesh.userData?.questCtx;
+  const canvas = mesh.userData?.questCanvas;
+  if (!sprite || !ctx) return;
+  if (mesh.userData.questState === state) return;
+  mesh.userData.questState = state;
+  if (!state) {
+    sprite.visible = false;
+    return;
+  }
+  sprite.visible = true;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const color = state === "!" ? "#ffd24a" : state === "?" ? "#4aa3ff" : "#4ecf8a";
+  // glow disc
+  const g = ctx.createRadialGradient(64, 64, 8, 64, 64, 56);
+  g.addColorStop(0, color);
+  g.addColorStop(0.45, color);
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(64, 64, 56, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#1a1208";
+  ctx.beginPath();
+  ctx.arc(64, 58, 28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = color;
+  ctx.strokeStyle = "#1a1208";
+  ctx.lineWidth = 4;
+  ctx.font = "bold 64px Cinzel, serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const glyph = state === "done" ? "✓" : state;
+  ctx.strokeText(glyph, 64, 60);
+  ctx.fillText(glyph, 64, 60);
+  mesh.userData.questTex.needsUpdate = true;
 }
 
 /** Rigged low-poly humanoid with animatable limbs */
@@ -585,6 +704,29 @@ export function makeMetinMesh(tier = 1, colorOverride = null) {
   root.userData.crystal = crystal;
   root.userData.shard = shard;
   root.userData.tier = tier;
+  // extra shards for detail
+  for (const [x, y, z, s] of [
+    [-0.75, 1.1, 0.2, 0.35],
+    [0.2, 2.1, -0.3, 0.4],
+    [-0.3, 0.9, -0.7, 0.28],
+  ]) {
+    const bit = new THREE.Mesh(
+      new THREE.OctahedronGeometry(s, 0),
+      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4, flatShading: true })
+    );
+    bit.position.set(x, y, z);
+    bit.castShadow = true;
+    root.add(bit);
+  }
+  const runes = new THREE.Mesh(
+    new THREE.TorusGeometry(1.05, 0.04, 6, 24),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.6 })
+  );
+  runes.rotation.x = Math.PI / 2;
+  runes.position.y = 0.55;
+  root.add(runes);
+  root.userData.runes = runes;
+  attachHpBar(root, { y: 3.1, scaleX: 2.2, scaleY: 0.5 });
   return root;
 }
 
@@ -680,6 +822,11 @@ function makeWolfMesh() {
     kind: "wolf",
     animPhase: Math.random() * 10,
   };
+  // fur tufts / collar detail
+  addPart(rig, new THREE.ConeGeometry(0.14, 0.28, 5), dark, 0, 0.95, 0.15, 0.4, 0, 0);
+  addPart(rig, new THREE.ConeGeometry(0.1, 0.2, 4), dark, -0.2, 0.9, 0.05, 0.3, 0, 0.4);
+  addPart(rig, new THREE.ConeGeometry(0.1, 0.2, 4), dark, 0.2, 0.9, 0.05, 0.3, 0, -0.4);
+  attachHpBar(root, { y: 1.45, scaleX: 1.55, scaleY: 0.4 });
   return root;
 }
 
@@ -774,6 +921,11 @@ function makeOrkMesh(elite = false) {
     kind: elite ? "elite_ork" : "ork",
     animPhase: Math.random() * 10,
   };
+  // shoulder spikes / belt detail
+  addPart(hips, new THREE.ConeGeometry(0.08, 0.22, 4), iron, -0.38, 0.7, 0, 0, 0, -0.6);
+  addPart(hips, new THREE.ConeGeometry(0.08, 0.22, 4), iron, 0.38, 0.7, 0, 0, 0, 0.6);
+  addPart(hips, new THREE.BoxGeometry(0.75, 0.1, 0.12), mat("#8b6b1e", { metalness: 0.5 }), 0, 0.05, 0.22);
+  attachHpBar(root, { y: elite ? 2.55 : 2.25, scaleX: 1.7, scaleY: 0.42 });
   return root;
 }
 
@@ -979,6 +1131,7 @@ export function makeNpcMesh(npc) {
     kind: "npc",
     animPhase: Math.random() * 10,
   };
+  attachQuestMarker(root, 2.7);
   return root;
 }
 
@@ -992,6 +1145,11 @@ export function animateNpc(mesh, dt) {
   if (d.gem) {
     d.gem.rotation.y += dt * 1.8;
     d.gem.position.y = 0.4 + Math.sin(d.animPhase * 2) * 0.04;
+  }
+  const qs = d.questSprite;
+  if (qs && qs.visible) {
+    qs.position.y = 2.7 + Math.sin(d.animPhase * 3) * 0.12;
+    qs.material.rotation = Math.sin(d.animPhase * 2) * 0.08;
   }
 }
 

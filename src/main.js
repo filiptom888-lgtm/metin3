@@ -320,6 +320,7 @@ function renderQuests(ch) {
         const err = QuestService.accept(ch, q.id);
         ui.toast(err || "Quest accepted");
         renderQuests(ch);
+        game.refreshQuestMarkers?.();
       };
     } else if (st.state === "completed") {
       btn.textContent = "Claim";
@@ -331,6 +332,7 @@ function renderQuests(ch) {
         } else ui.toast(err);
         renderQuests(ch);
         renderInventory(ch);
+        game.refreshQuestMarkers?.();
       };
     } else {
       btn.textContent = state;

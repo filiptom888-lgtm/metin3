@@ -12,6 +12,8 @@ import {
   animateCharacter,
   animateMob,
   animateNpc,
+  updateHpBar,
+  setQuestMarker,
 } from "./meshes.js";
 import { FxSystem } from "./fx.js";
 import { derivedStats, applyLevelUps } from "./character.js";
@@ -31,6 +33,7 @@ import { SpawnService } from "../services/SpawnService.js";
 import { SkillService } from "../services/SkillService.js";
 import { MONSTERS } from "../data/monsters.js";
 import { METINS } from "../data/metins.js";
+import { QUESTS } from "../data/quests.js";
 import * as THREE from "three";
 
 export class Game {
@@ -69,6 +72,10 @@ export class Game {
     this.pendingDeath = false;
     this.npcMeshes = [];
 
+    this.camDist = 38;
+    this.camDistTarget = 38;
+    this.camYaw = 0.0;
+    this.camPitch = 0.72; // radians-ish tilt factor
     this.camOffset = new THREE.Vector3(0, 26, 26);
     this.time = 0;
     this.sendAcc = 0;
@@ -77,6 +84,9 @@ export class Game {
     this.waveTimer = 2;
     this._last = 0;
     this._raf = 0;
+    this._orbiting = false;
+    this._lastOrbitX = 0;
+    this._lastOrbitY = 0;
 
     this._onKeyDown = (e) => {
       const k = e.key.toLowerCase();
@@ -95,12 +105,32 @@ export class Game {
       this.mouse.y = e.clientY - rect.top;
       this.mouse.ndc.x = (this.mouse.x / rect.width) * 2 - 1;
       this.mouse.ndc.y = -(this.mouse.y / rect.height) * 2 + 1;
+      if (this._orbiting) {
+        const dx = e.clientX - this._lastOrbitX;
+        const dy = e.clientY - this._lastOrbitY;
+        this._lastOrbitX = e.clientX;
+        this._lastOrbitY = e.clientY;
+        this.camYaw -= dx * 0.005;
+        this.camPitch = clamp(this.camPitch + dy * 0.003, 0.35, 1.15);
+      }
     };
     this._onDown = (e) => {
       if (e.button === 0) this.mouse.down = true;
+      if (e.button === 1 || e.button === 2) {
+        this._orbiting = true;
+        this._lastOrbitX = e.clientX;
+        this._lastOrbitY = e.clientY;
+      }
     };
-    this._onUp = () => {
-      this.mouse.down = false;
+    this._onUp = (e) => {
+      if (e.button === 0) this.mouse.down = false;
+      if (e.button === 1 || e.button === 2) this._orbiting = false;
+    };
+    this._onWheel = (e) => {
+      if (!this.running) return;
+      e.preventDefault();
+      const dir = Math.sign(e.deltaY);
+      this.camDistTarget = clamp(this.camDistTarget + dir * 3.2, 12, 62);
     };
     this._onResize = () => this.resize();
 
@@ -237,10 +267,48 @@ export class Game {
     for (const npc of NpcService.list) {
       const mesh = makeNpcMesh(npc);
       mesh.position.set(npc.x, 0, npc.z);
-      // Face roughly toward plaza center
       mesh.rotation.y = Math.atan2(-npc.x, -npc.z);
       this.scene.add(mesh);
       this.npcMeshes.push(mesh);
+    }
+    this.refreshQuestMarkers();
+  }
+
+  refreshQuestMarkers() {
+    const ch = this.character;
+    if (!ch) return;
+    QuestService.ensure(ch);
+    for (const mesh of this.npcMeshes) {
+      const npc = mesh.userData?.npc;
+      if (!npc || npc.role !== "quest") {
+        setQuestMarker(mesh, "");
+        continue;
+      }
+      let best = "";
+      for (const q of QUESTS) {
+        const st = ch.quests[q.id];
+        if (st?.state === "completed") {
+          best = "done";
+          break;
+        }
+      }
+      if (!best) {
+        for (const q of QUESTS) {
+          if (!ch.quests[q.id] && ch.level >= q.levelReq) {
+            best = "!";
+            break;
+          }
+        }
+      }
+      if (!best) {
+        for (const q of QUESTS) {
+          if (ch.quests[q.id]?.state === "accepted") {
+            best = "?";
+            break;
+          }
+        }
+      }
+      setQuestMarker(mesh, best);
     }
   }
 
@@ -252,6 +320,7 @@ export class Game {
     this.canvas[fn]("mousemove", this._onMove);
     this.canvas[fn]("mousedown", this._onDown);
     window[fn]("mouseup", this._onUp);
+    this.canvas[fn]("wheel", this._onWheel, { passive: false });
     this.canvas[fn]("contextmenu", prevent);
   }
 
@@ -433,10 +502,23 @@ export class Game {
       speed: p.buffMul,
     });
 
-    // Camera follow
+    // Camera follow — scroll zoom + RMB/MMB orbit
+    this.camDist += (this.camDistTarget - this.camDist) * Math.min(1, 8 * dt);
+    const dist = this.camDist;
+    const height = dist * (0.35 + this.camPitch * 0.55);
+    const flat = dist * (0.55 + (1.2 - this.camPitch) * 0.25);
+    this.camOffset.set(
+      Math.sin(this.camYaw) * flat,
+      height,
+      Math.cos(this.camYaw) * flat
+    );
     const desired = new THREE.Vector3(p.x, 0, p.z).add(this.camOffset);
-    this.camera.position.lerp(desired, 1 - Math.pow(0.002, dt));
-    this.camera.lookAt(p.x, 0.8, p.z);
+    this.camera.position.lerp(desired, 1 - Math.pow(0.0015, dt));
+    this.camera.lookAt(p.x, 1.1, p.z);
+    // FOV breathes slightly when zoomed in for a closer feel
+    const wantFov = THREE.MathUtils.lerp(48, 36, clamp((62 - dist) / 50, 0, 1));
+    this.camera.fov += (wantFov - this.camera.fov) * Math.min(1, 6 * dt);
+    this.camera.updateProjectionMatrix();
 
     // Remotes interpolate
     for (const [, r] of this.remotes) {
@@ -542,6 +624,7 @@ export class Game {
     this.ui.drawMinimap(p, this.remotes, this.metins, this.mobs);
     this.fx?.update(dt);
     for (const mesh of this.npcMeshes) animateNpc(mesh, dt);
+    this.refreshQuestMarkers();
     // Pulse marker on nearest NPC
     for (const mesh of this.npcMeshes) {
       const marker = mesh.userData?.marker;
@@ -550,6 +633,33 @@ export class Game {
       marker.material.opacity = isNear ? 0.75 : 0.4;
       const s = isNear ? 1.15 + Math.sin(this.time * 4) * 0.08 : 1;
       marker.scale.set(s, s, s);
+    }
+
+    // Enemy + metin HP bars
+    for (const [, mob] of this.mobs) {
+      if (!mob.mesh) continue;
+      const label = mob.kind === "ork" ? "Orc" : mob.kind === "elite_ork" ? "Orc Capt." : "Wolf";
+      updateHpBar(mob.mesh, {
+        name: label,
+        hp: mob.hp,
+        maxHp: mob.maxHp,
+        level: MONSTERS[mob.templateId]?.level || (mob.kind === "ork" ? 12 : 3),
+        color: "#e23a2e",
+      });
+      if (mob.mesh.userData.hpSprite) {
+        mob.mesh.userData.hpSprite.visible = mob.hp < mob.maxHp * 0.999 || dist2(p.x, p.z, mob.x, mob.z) < 18;
+      }
+    }
+    for (const [, met] of this.metins) {
+      if (!met.mesh) continue;
+      updateHpBar(met.mesh, {
+        name: met.name || "Metin",
+        hp: met.hp,
+        maxHp: met.maxHp,
+        level: met.tier * 10,
+        color: "#c45cff",
+      });
+      if (met.mesh.userData.runes) met.mesh.userData.runes.rotation.z += dt * 0.6;
     }
 
     this.saveTimer += dt;
@@ -959,6 +1069,7 @@ export class Game {
       this.fx?.buff(this.local.x, this.local.z);
     }
     this.onCharacterChange(this.character, this.local);
+    this.refreshQuestMarkers();
   }
 
   spawnLootAt(x, z, kindOrTable, tier = 1, bonusGold = 0) {
