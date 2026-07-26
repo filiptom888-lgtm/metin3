@@ -145,7 +145,8 @@ export function fieldHeightAt(x, z, mapId = "overworld") {
     1.25;
   let hill = Math.max(0, n) * (mapId === "valley" ? 2.2 : 1.85);
   const edgeDist = MAP_HALF - Math.max(Math.abs(x), Math.abs(z));
-  const rim = edgeDist < 14 ? (1 - edgeDist / 14) * 1.5 : 0;
+  // Rise into foothills so the playable tile blends into the mountain rim
+  const rim = edgeDist < 28 ? Math.pow(1 - edgeDist / 28, 1.35) * 5.5 : 0;
   let h = (hill + rim) * fade;
 
   // Carve river channel

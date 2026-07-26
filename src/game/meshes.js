@@ -1260,10 +1260,129 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 22
   return group;
 }
 
+/**
+ * Irregular mountain rim + distant skirt so the map never ends in a green void.
+ * Leaves gaps at edge portals. Breaks the hard square silhouette with foothills.
+ */
+function makeMountainPeak(h, rockMat, tipMat, foothill = false) {
+  const g = new THREE.Group();
+  const baseR = foothill ? h * 0.58 : h * 0.4;
+  const base = new THREE.Mesh(new THREE.ConeGeometry(baseR, h, foothill ? 5 : 6), rockMat);
+  base.position.y = h * 0.5;
+  base.castShadow = true;
+  base.receiveShadow = true;
+  g.add(base);
+  if (!foothill && h > 9) {
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(baseR * 0.32, h * 0.26, 5), tipMat);
+    tip.position.y = h * 0.86;
+    tip.castShadow = true;
+    g.add(tip);
+  }
+  if (!foothill) {
+    const side = new THREE.Mesh(new THREE.ConeGeometry(baseR * 0.48, h * 0.55, 5), rockMat);
+    side.position.set(baseR * 0.55, h * 0.28, baseR * 0.1);
+    side.castShadow = true;
+    g.add(side);
+  }
+  return g;
+}
+
+function nearPortalGap(x, z, gaps) {
+  for (const p of gaps) {
+    if (Math.hypot(x - p.x, z - p.z) < (p.w || 16)) return true;
+  }
+  return false;
+}
+
+export function addMapHorizon(root, { half = MAP_HALF, arid = false, portalGaps = [] } = {}) {
+  const g = new THREE.Group();
+  g.name = "map_horizon";
+
+  // Outer skirt — fills the void beyond the playable tile
+  const skirtCol = arid ? "#5a4a32" : "#3a4a30";
+  const skirt = new THREE.Mesh(
+    new THREE.RingGeometry(half * 0.88, half * 3.4, 72),
+    new THREE.MeshStandardMaterial({ color: skirtCol, roughness: 1, flatShading: true })
+  );
+  skirt.rotation.x = -Math.PI / 2;
+  skirt.position.y = -1.1;
+  skirt.receiveShadow = true;
+  g.add(skirt);
+
+  // Soft haze plate under fog color
+  const haze = new THREE.Mesh(
+    new THREE.CircleGeometry(half * 3.55, 48),
+    new THREE.MeshBasicMaterial({
+      color: arid ? "#a89878" : "#8aa090",
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false,
+    })
+  );
+  haze.rotation.x = -Math.PI / 2;
+  haze.position.y = -1.6;
+  g.add(haze);
+
+  const rock = mat(arid ? "#6a5848" : "#5c564c", { roughness: 0.97 });
+  const tip = mat(arid ? "#c8b898" : "#d0d8cc", { roughness: 0.92 });
+  const foot = mat(arid ? "#4a5a30" : "#2a4a28", { roughness: 0.95 });
+
+  const steps = 80;
+  for (let i = 0; i < steps; i++) {
+    const ang = (i / steps) * Math.PI * 2;
+    // Wobbly radius — not a perfect circle/square
+    const wobble =
+      Math.sin(ang * 2.7) * 7 +
+      Math.sin(ang * 6.1 + 1.3) * 4.2 +
+      Math.cos(ang * 1.4) * 5;
+    const rOut = half + 6 + Math.abs(wobble) * 0.85 + (i % 4) * 2.8;
+    const x = Math.cos(ang) * rOut;
+    const z = Math.sin(ang) * rOut;
+    if (nearPortalGap(x, z, portalGaps)) continue;
+
+    const peakH = 9 + Math.abs(Math.sin(ang * 2.2 + i * 0.15)) * 16 + (i % 6) * 1.4;
+    const peak = makeMountainPeak(peakH, rock, tip, false);
+    peak.position.set(x, -0.4, z);
+    peak.rotation.y = ang + Math.PI * 0.5;
+    peak.scale.setScalar(0.9 + (i % 5) * 0.08);
+    g.add(peak);
+
+    // Inner foothills bite into the square map edge
+    if (i % 2 === 0) {
+      const rIn = half - 2 - Math.abs(Math.sin(ang * 3.5)) * 7 - (i % 3) * 1.5;
+      const fx = Math.cos(ang) * rIn;
+      const fz = Math.sin(ang) * rIn;
+      if (nearPortalGap(fx, fz, portalGaps)) continue;
+      if (Math.max(Math.abs(fx), Math.abs(fz)) > half - 0.5) continue;
+      const hill = makeMountainPeak(3.8 + (i % 4) * 1.8, rock, foot, true);
+      hill.position.set(fx, 0, fz);
+      hill.rotation.y = ang;
+      g.add(hill);
+    }
+  }
+
+  // Extra mid-ring peaks for depth
+  for (let i = 0; i < 36; i++) {
+    const ang = (i / 36) * Math.PI * 2 + 0.2;
+    const r = half + 18 + Math.sin(ang * 4) * 8 + (i % 3) * 5;
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (nearPortalGap(x, z, portalGaps)) continue;
+    const peak = makeMountainPeak(14 + (i % 5) * 3, rock, tip, false);
+    peak.position.set(x, -0.6, z);
+    peak.rotation.y = ang;
+    peak.scale.setScalar(1.05 + (i % 3) * 0.1);
+    g.add(peak);
+  }
+
+  root.add(g);
+  return g;
+}
+
 export function createScene() {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color("#8aab72");
-  scene.fog = new THREE.Fog("#9aba80", 55, 195);
+  scene.background = new THREE.Color("#7ea8c8");
+  scene.fog = new THREE.Fog("#9ab4a0", 75, 280);
 
   const hemi = new THREE.HemisphereLight(0xfff2e0, 0x5a4a28, 0.95);
   scene.add(hemi);
@@ -1374,22 +1493,14 @@ export function createScene() {
   addCityWalls(overworld);
   addCityCozyProps(overworld, { warm: true });
 
-  const cliffTex = makeBrickTexture({ brick: "#5a554c", mortar: "#8a8478", vary: 18 });
-  cliffTex.repeat.set(18, 1.2);
-  const cliff = mat("#ffffff", { map: cliffTex, roughness: 0.95, tint: "#ddd6c8" });
-  const wallGeo = new THREE.BoxGeometry(MAP_SIZE + 2, 2.6, 1.5);
-  for (const [x, z, ry] of [
-    [0, -MAP_HALF, 0],
-    [0, MAP_HALF, 0],
-    [-MAP_HALF, 0, Math.PI / 2],
-    [MAP_HALF, 0, Math.PI / 2],
-  ]) {
-    const w = new THREE.Mesh(wallGeo, cliff);
-    w.position.set(x, 1.3, z);
-    w.rotation.y = ry;
-    w.castShadow = true;
-    overworld.add(w);
-  }
+  addMapHorizon(overworld, {
+    half: MAP_HALF,
+    arid: false,
+    portalGaps: [
+      { x: EDGE_PORTAL, z: 0, w: 18 },
+      { x: TOWER_CORNER.x, z: TOWER_CORNER.z, w: 22 },
+    ],
+  });
 
   // River + big bridge (east road crossing), then roads / wilderness
   addFieldRiver(overworld, "overworld");
@@ -1497,22 +1608,14 @@ export function makeValleyMapRoot() {
   addCityWalls(root);
   addCityCozyProps(root, { warm: false });
 
-  const cliffTex = makeBrickTexture({ brick: "#6a5040", mortar: "#a89078", vary: 16 });
-  cliffTex.repeat.set(18, 1.2);
-  const cliff = mat("#ffffff", { map: cliffTex, roughness: 0.96, tint: "#e0d0b8" });
-  const wallGeo = new THREE.BoxGeometry(MAP_SIZE + 2, 2.6, 1.5);
-  for (const [x, z, ry] of [
-    [0, -MAP_HALF, 0],
-    [0, MAP_HALF, 0],
-    [-MAP_HALF, 0, Math.PI / 2],
-    [MAP_HALF, 0, Math.PI / 2],
-  ]) {
-    const w = new THREE.Mesh(wallGeo, cliff);
-    w.position.set(x, 1.3, z);
-    w.rotation.y = ry;
-    w.castShadow = true;
-    root.add(w);
-  }
+  addMapHorizon(root, {
+    half: MAP_HALF,
+    arid: true,
+    portalGaps: [
+      { x: -EDGE_PORTAL, z: 0, w: 18 },
+      { x: EDGE_PORTAL, z: 0, w: 18 },
+    ],
+  });
 
   addFieldRiver(root, "valley");
   const valleyDirt = new THREE.MeshStandardMaterial({
@@ -1803,20 +1906,12 @@ export function makeOrcMapRoot() {
     }
   }
 
-  // Soft cliff walls far out so the map edge reads
-  const cliff = mat("#2a3228", { roughness: 1 });
-  const wallGeo = new THREE.BoxGeometry(ORC_MAP_SIZE + 4, 3.2, 2.2);
-  for (const [x, z, ry] of [
-    [0, -ORC_MAP_HALF, 0],
-    [0, ORC_MAP_HALF, 0],
-    [-ORC_MAP_HALF, 0, Math.PI / 2],
-    [ORC_MAP_HALF, 0, Math.PI / 2],
-  ]) {
-    const w = new THREE.Mesh(wallGeo, cliff);
-    w.position.set(x, 1.2, z);
-    w.rotation.y = ry;
-    root.add(w);
-  }
+  // Mountain ring around the isles — no flat void box walls
+  addMapHorizon(root, {
+    half: ORC_MAP_HALF,
+    arid: false,
+    portalGaps: [{ x: -68.5, z: 0, w: 18 }],
+  });
 
   const westPortal = makeMapPortalMesh("#c47a3a", "Seungryong");
   westPortal.position.set(-68.5, 0, 0);
@@ -2060,7 +2155,7 @@ export function makeDungeonMapRoot() {
 }
 
 export function createCamera() {
-  const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 420);
+  const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 560);
   camera.position.set(0, 5.5, -11);
   return camera;
 }
