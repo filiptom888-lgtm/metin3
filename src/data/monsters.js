@@ -202,6 +202,25 @@ export const MONSTERS = {
     maps: ["valley"],
     zone: "camp",
   },
+  /** Demon Tower final boss — animated ophanim GLB */
+  ophanim: {
+    id: "ophanim",
+    name: "Ophanim",
+    level: 45,
+    rank: "boss",
+    hp: 2400,
+    atk: 48,
+    def: 22,
+    exp: 800,
+    yang: 2200,
+    speed: 2.8,
+    aggro: 32,
+    leash: 48,
+    drop_table: "orc_chief",
+    kind: "ophanim",
+    maps: ["demon_tower"],
+    zone: "camp",
+  },
 };
 
 /** Overworld / valley spawn rings (distance from map origin). Orc Isles use island tiers. */

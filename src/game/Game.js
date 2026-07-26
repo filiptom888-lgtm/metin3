@@ -25,6 +25,7 @@ import {
 import { clampFieldWalk, isFieldWalkable } from "./terrain.js";
 import { bridgeCenter } from "./rivers.js";
 import { applyDayNight, DAY_LENGTH } from "./DayNight.js";
+import { AssetKit } from "./AssetKit.js";
 import { questHuntFor, zoneRing } from "../data/mapMarkers.js";
 import { NPCS } from "../data/npcs.js";
 import { FxSystem } from "./fx.js";
@@ -1212,6 +1213,9 @@ export class Game {
       this.ui.toast(gate.reason);
       return;
     }
+
+    // Warm the animated tower boss while floors 1–5 run
+    AssetKit.preloadTowerBoss().catch(() => {});
 
     // Snapshot party before enter (leader pulls everyone on this list)
     const partySnap =

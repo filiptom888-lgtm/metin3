@@ -70,7 +70,7 @@ export const DEMON_TOWER = {
       floor: 6,
       name: "Floor 6 — Infernal Spire",
       mobs: [{ id: "elite_ork", n: 1 }],
-      boss: { id: "elite_ork", name: "Spire Captain", hpMul: 2.8, atkMul: 1.35 },
+      boss: { id: "ophanim", name: "Ophanim", hpMul: 3.2, atkMul: 1.45 },
       hpMul: 2.5,
       xp: 900,
       yang: 4200,

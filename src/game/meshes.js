@@ -662,36 +662,21 @@ function addCityCozyProps(scene, { warm = true } = {}) {
     [6, 6], [-6, 6], [6, -6], [-6, -6],
     [10, 0], [-10, 0], [0, 10], [0, -10],
     [14, 8], [-14, -8], [8, -14], [-8, 14],
-    [12, 12], [-12, 12], [12, -12], [-12, -12],
   ];
-  let lampBudget = AssetKit.hasProp("lampposts") ? 6 : 0;
+  const lampGlass = mat("#f0d070", { emissive: "#ffb050", emissiveIntensity: 1.1, roughness: 0.4 });
   for (const [lx, lz] of lanternSpots) {
     if (Math.hypot(lx, lz) > CITY_RADIUS - 3) continue;
-    if (lampBudget > 0) {
-      const lamp = AssetKit.clonePropToHeight("lampposts", 4.6);
-      if (lamp) {
-        lamp.position.set(lx, 0, lz);
-        lamp.rotation.y = Math.atan2(-lx, -lz);
-        lamp.traverse((o) => {
-          if (o.isMesh) {
-            o.castShadow = false;
-            o.receiveShadow = true;
-          }
-        });
-        scene.add(lamp);
-        lampBudget -= 1;
-      }
-    } else {
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 2.4, 6), iron);
-      pole.position.set(lx, 1.2, lz);
-      scene.add(pole);
-      const lampGlass = mat("#f0d070", { emissive: "#ffb050", emissiveIntensity: 1.1, roughness: 0.4 });
-      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), lampGlass);
-      bulb.position.set(lx, 2.35, lz);
-      scene.add(bulb);
-    }
-    const light = new THREE.PointLight(warm ? 0xffc070 : 0xc0d8ff, 0, 22, 1.4);
-    light.position.set(lx, 3.2, lz);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 2.6, 6), iron);
+    pole.position.set(lx, 1.3, lz);
+    scene.add(pole);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.08), iron);
+    arm.position.set(lx + 0.22, 2.45, lz);
+    scene.add(arm);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), lampGlass);
+    bulb.position.set(lx + 0.42, 2.35, lz);
+    scene.add(bulb);
+    const light = new THREE.PointLight(warm ? 0xffc070 : 0xc0d8ff, 0, 20, 1.4);
+    light.position.set(lx + 0.42, 2.4, lz);
     light.name = "torch_light";
     scene.add(light);
     cityLights.push(light);
@@ -1072,51 +1057,20 @@ function tagFadeTree(tree) {
   return tree;
 }
 
-/** Sparse custom landmarks — never dense skinned trees near the city */
+/** Sparse landmarks — Kenney trees only (no heavy custom GLB scenery) */
 function dressMapLandmarks(group, mapId, arid = false) {
-  // One viking hut homestead far from walls
-  const hutSpot = mapId === "overworld" ? [-52, 48] : [-55, -48];
-  const [hx, hz] = hutSpot;
-  if (!skipWildernessSpot(mapId, hx, hz, { clearRoad: 4 }) && AssetKit.hasProp("viking_hut")) {
-    const hut = AssetKit.clonePropToHeight("viking_hut", 6.2);
-    if (hut) {
-      hut.rotation.y = Math.random() * Math.PI * 2;
-      hut.traverse((o) => {
-        if (o.isMesh) {
-          o.castShadow = false;
-          o.receiveShadow = true;
-        }
-      });
-      placeAtHeight(hut, hx, hz, mapId);
-      group.add(hut);
-      for (let i = 0; i < 2; i++) {
-        const ang = (i / 2) * Math.PI * 2 + 0.4;
-        plantTreeAt(group, hx + Math.cos(ang) * 9, hz + Math.sin(ang) * 9, mapId, arid, 1.05);
-      }
-    }
-  }
-
-  // Few willows / tree-rows far out (landmarks only)
-  const landmarkN = 4;
-  for (let i = 0; i < landmarkN; i++) {
-    const ang = (i / landmarkN) * Math.PI * 2 + 0.4;
-    const r = CITY_RADIUS + 55 + Math.random() * 35;
+  // A few Kenney landmark trees far from the city for silhouette
+  for (let i = 0; i < 5; i++) {
+    const ang = (i / 5) * Math.PI * 2 + 0.35;
+    const r = CITY_RADIUS + 58 + Math.random() * 28;
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
     if (skipWildernessSpot(mapId, x, z, { clearRoad: 6 })) continue;
-    const tree = AssetKit.landmarkTree(11 + Math.random() * 5);
-    if (!tree) continue;
-    tree.rotation.y = ang + Math.PI / 2;
-    tagFadeTree(tree);
-    tree.traverse((o) => {
-      if (o.isMesh) o.castShadow = false;
-    });
-    placeAtHeight(tree, x, z, mapId);
-    group.add(tree);
+    plantTreeAt(group, x, z, mapId, arid, 1.35);
   }
 }
 
-/** City houses — house_small for density; at most two house_large landmarks */
+/** City houses — house_small GLB when ready, else procedural (taller than player) */
 function placeCityBuildings(root, { arid = false } = {}) {
   const colors = arid
     ? ["#d2b48c", "#c4a574", "#e0c4a0", "#b8956a", "#cbb08a"]
@@ -1140,15 +1094,11 @@ function placeCityBuildings(root, { arid = false } = {}) {
     [15, -5],
     [-14, 5],
   ];
-  let largeLeft = AssetKit.hasProp("house_large") ? 2 : 0;
   layouts.forEach(([bx, bz], i) => {
     if (Math.hypot(bx, bz) > CITY_RADIUS - 5.5) return;
     if (Math.hypot(bx, bz) < 9) return;
-    const useLarge = largeLeft > 0 && (i === 2 || i === 9);
-    if (useLarge) largeLeft -= 1;
-    const targetH = useLarge ? 8.0 : 6.2 + (i % 4) * 0.45;
-    let b = AssetKit.clonePropToHeight(useLarge ? "house_large" : "house_small", targetH);
-    if (!b) b = AssetKit.clonePropToHeight("house_small", targetH);
+    const targetH = 6.0 + (i % 4) * 0.4;
+    let b = AssetKit.clonePropToHeight("house_small", targetH);
     if (b) {
       b.rotation.y = (i * 0.85) % (Math.PI * 2);
       b.position.set(bx, 0, bz);
@@ -1180,7 +1130,7 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 22
   group.name = "wilderness_dressing";
 
   plantRoadForests(group, mapId, arid);
-  plantForestPatches(group, mapId, arid, arid ? 8 : 10);
+  plantForestPatches(group, mapId, arid, arid ? 6 : 8);
 
   // Fill open field (not only near roads)
   for (let i = 0; i < treeCount; i++) {
@@ -1318,56 +1268,26 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 22
     const og = new THREE.Group();
     og.name = `outpost_${op.id}`;
 
-    // One heavy outpost tent per site when available
-    let placedBigTent = false;
-    if (AssetKit.hasProp("outpost_tent")) {
-      const big = AssetKit.clonePropToHeight("outpost_tent", 5.8 + Math.random() * 1.2);
-      if (big) {
-        big.rotation.y = Math.random() * Math.PI * 2;
-        placeAtHeight(big, op.x, op.z, mapId);
-        big.traverse((o) => {
-          if (o.isMesh) {
-            o.castShadow = false;
-            o.receiveShadow = true;
-          }
-        });
-        og.add(big);
-        placedBigTent = true;
-      }
-    }
-
-    if (!placedBigTent) {
-      for (let t = 0; t < (op.tents || 1); t++) {
-        const ang = t * 2.2 + 0.5;
-        const rr = 2.8 + t;
-        const tx = op.x + Math.cos(ang) * rr;
-        const tz = op.z + Math.sin(ang) * rr;
-        const pad = new THREE.Mesh(
-          new THREE.CircleGeometry(1.4, 8),
-          mat("#4a3a28", { roughness: 0.97 })
-        );
-        pad.rotation.x = -Math.PI / 2;
-        pad.position.set(tx, fieldHeightAt(tx, tz, mapId) + 0.03, tz);
-        pad.receiveShadow = true;
-        og.add(pad);
-        let tent = NatureKit.cloneToHeight(op.ruined ? "tent_small_open" : "tent_open", 2.4);
-        if (!tent) tent = makeBiologistTent();
-        tent.rotation.y = ang + Math.PI;
-        if (op.ruined) tent.rotation.z = (Math.random() - 0.5) * 0.25;
-        placeAtHeight(tent, tx, tz, mapId);
-        og.add(tent);
-      }
-    } else {
-      // Small side tent near the big outpost
-      const ang = 1.2;
-      const tx = op.x + Math.cos(ang) * 6.5;
-      const tz = op.z + Math.sin(ang) * 6.5;
-      let tent = NatureKit.cloneToHeight("tent_small_closed", 2.3);
-      if (tent) {
-        tent.rotation.y = ang + Math.PI;
-        placeAtHeight(tent, tx, tz, mapId);
-        og.add(tent);
-      }
+    // Kenney / procedural tents only
+    for (let t = 0; t < (op.tents || 1); t++) {
+      const ang = t * 2.2 + 0.5;
+      const rr = 2.8 + t;
+      const tx = op.x + Math.cos(ang) * rr;
+      const tz = op.z + Math.sin(ang) * rr;
+      const pad = new THREE.Mesh(
+        new THREE.CircleGeometry(1.4, 8),
+        mat("#4a3a28", { roughness: 0.97 })
+      );
+      pad.rotation.x = -Math.PI / 2;
+      pad.position.set(tx, fieldHeightAt(tx, tz, mapId) + 0.03, tz);
+      pad.receiveShadow = true;
+      og.add(pad);
+      let tent = NatureKit.cloneToHeight(op.ruined ? "tent_small_open" : "tent_open", 2.4);
+      if (!tent) tent = makeBiologistTent();
+      tent.rotation.y = ang + Math.PI;
+      if (op.ruined) tent.rotation.z = (Math.random() - 0.5) * 0.25;
+      placeAtHeight(tent, tx, tz, mapId);
+      og.add(tent);
     }
 
     // Dead / sparse fire
@@ -1375,11 +1295,11 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 22
       new THREE.CylinderGeometry(0.7, 0.9, 0.18, 8),
       mat("#2a2218", { roughness: 1 })
     );
-    placeAtHeight(ash, op.x + (placedBigTent ? 5.5 : 0), op.z + (placedBigTent ? 2.2 : 0), mapId, 0.08);
+    placeAtHeight(ash, op.x, op.z, mapId, 0.08);
     og.add(ash);
     const logs = NatureKit.cloneToHeight("campfire_logs", 1.2);
     if (logs) {
-      placeAtHeight(logs, op.x + (placedBigTent ? 5.8 : 0.3), op.z - (placedBigTent ? 1.5 : 0.2), mapId);
+      placeAtHeight(logs, op.x + 0.3, op.z - 0.2, mapId);
       og.add(logs);
     }
 
@@ -1675,9 +1595,9 @@ export function createScene() {
   dressFieldWilderness(overworld, {
     mapId: "overworld",
     arid: false,
-    treeCount: 70,
-    rockCount: 100,
-    bushCount: 90,
+    treeCount: 55,
+    rockCount: 70,
+    bushCount: 65,
   });
 
   // East-edge portal to Seungryong
@@ -1771,9 +1691,9 @@ export function makeValleyMapRoot() {
   dressFieldWilderness(root, {
     mapId: "valley",
     arid: true,
-    treeCount: 75,
-    rockCount: 110,
-    bushCount: 85,
+    treeCount: 50,
+    rockCount: 85,
+    bushCount: 55,
   });
 
   // NW rogue hamlet — 2–3 detailed houses
@@ -1801,32 +1721,13 @@ function makeBanditCampMesh() {
   g.name = "bandit_camp";
   g.position.set(BANDIT_CAMP.x, fieldHeightAt(BANDIT_CAMP.x, BANDIT_CAMP.z, "valley"), BANDIT_CAMP.z);
 
-  // Prefer a tall viking hut as the bandit hall, plus GLB side houses
-  const hall = AssetKit.clonePropToHeight("viking_hut", 7.2);
-  if (hall) {
-    hall.position.set(0, 0, -1.2);
-    hall.rotation.y = 0.35;
-    hall.traverse((o) => {
-      if (o.isMesh) {
-        o.castShadow = false;
-        o.receiveShadow = true;
-      }
-    });
-    g.add(hall);
-  }
-
-  const houses = hall
-    ? [
-        { x: -6.5, z: 3.2, w: 3.6, h: 2.9, d: 3.4, rot: -0.4, color: "#a88860", roof: "#4a2018" },
-        { x: 6.2, z: 2.8, w: 3.8, h: 3.0, d: 3.2, rot: 0.1, color: "#c4a070", roof: "#2a1810" },
-      ]
-    : [
-        { x: -3.2, z: -2.4, w: 4.2, h: 3.2, d: 3.6, rot: 0.25, color: "#b8956a", roof: "#3a2418" },
-        { x: 3.4, z: -1.8, w: 3.6, h: 2.9, d: 3.4, rot: -0.4, color: "#a88860", roof: "#4a2018" },
-        { x: 0.6, z: 3.6, w: 3.8, h: 3.0, d: 3.2, rot: 0.1, color: "#c4a070", roof: "#2a1810" },
-      ];
+  // Procedural rogue hamlet — 3 houses (taller than the player)
+  const houses = [
+    { x: -3.2, z: -2.4, w: 4.2, h: 3.4, d: 3.6, rot: 0.25, color: "#b8956a", roof: "#3a2418" },
+    { x: 3.4, z: -1.8, w: 3.6, h: 3.1, d: 3.4, rot: -0.4, color: "#a88860", roof: "#4a2018" },
+    { x: 0.6, z: 3.6, w: 3.8, h: 3.2, d: 3.2, rot: 0.1, color: "#c4a070", roof: "#2a1810" },
+  ];
   for (const h of houses) {
-    // Small pad under each house only (no giant mud “puddle” ring)
     const pad = new THREE.Mesh(
       new THREE.CircleGeometry(Math.max(h.w, h.d) * 0.55, 12),
       mat("#5a4a30", { roughness: 0.96 })
@@ -1835,18 +1736,9 @@ function makeBanditCampMesh() {
     pad.position.set(h.x, 0.04, h.z);
     pad.receiveShadow = true;
     g.add(pad);
-    let b = AssetKit.clonePropToHeight("house_small", 5.8);
-    if (b) {
-      b.position.set(h.x, 0, h.z);
-      b.rotation.y = h.rot;
-      b.traverse((o) => {
-        if (o.isMesh) o.receiveShadow = true;
-      });
-    } else {
-      b = makeBuilding(h.w, h.h, h.d, h.color, { roofColor: h.roof, smoke: true });
-      b.position.set(h.x, 0, h.z);
-      b.rotation.y = h.rot;
-    }
+    const b = makeBuilding(h.w, h.h, h.d, h.color, { roofColor: h.roof, smoke: true });
+    b.position.set(h.x, 0, h.z);
+    b.rotation.y = h.rot;
     g.add(b);
   }
 
@@ -1963,24 +1855,12 @@ export function makeOrcMapRoot() {
       root.add(rock);
     }
 
-    // Cozy camp clutter on outer islets
+    // Cozy camp clutter on outer islets — procedural huts
     if (isle.tier !== "main" && isle.r > 6) {
-      const hut =
-        AssetKit.clonePropToHeight("viking_hut", 5.2) ||
-        AssetKit.clonePropToHeight("house_small", 4.8);
-      if (hut) {
-        hut.position.set(isle.x + isle.r * 0.15, 0.2, isle.z - isle.r * 0.1);
-        hut.rotation.y = Math.random() * Math.PI;
-        hut.traverse((o) => {
-          if (o.isMesh) o.receiveShadow = true;
-        });
-        root.add(hut);
-      } else {
-        const proc = makeBuilding(2.6, 2.2, 2.4, "#8a7a58", { roofColor: "#3a2a18", smoke: true });
-        proc.position.set(isle.x + isle.r * 0.15, 0.2, isle.z - isle.r * 0.1);
-        proc.scale.setScalar(0.85);
-        root.add(proc);
-      }
+      const proc = makeBuilding(2.8, 2.6, 2.6, "#8a7a58", { roofColor: "#3a2a18", smoke: true });
+      proc.position.set(isle.x + isle.r * 0.15, 0.2, isle.z - isle.r * 0.1);
+      proc.rotation.y = Math.random() * Math.PI;
+      root.add(proc);
     }
   }
 
@@ -2031,7 +1911,7 @@ export function makeOrcMapRoot() {
   root.userData.telePad = telePad;
 
   // Light Kenney forest around the tower
-  for (let i = 0; i < 35; i++) {
+  for (let i = 0; i < 28; i++) {
     const ang = Math.random() * Math.PI * 2;
     const r = 9 + Math.random() * 22;
     const x = Math.cos(ang) * r;
@@ -3003,19 +2883,20 @@ function addPart(parent, geo, material, x, y, z, rx = 0, ry = 0, rz = 0) {
   return m;
 }
 
-/** Prefer custom enemy GLBs; fall back to procedural low-poly */
+/** Procedural field mobs; only ophanim uses a GLB (Demon Tower final boss). */
 export function makeMobMesh(kind = "wolf") {
-  const gltf = AssetKit.enemyForKind(kind);
-  if (gltf) {
-    const isBoss = kind === "orc_chief" || kind === "rogue_chief" || kind === "black_ork_brute" || kind === "ophanim";
-    const isWolfish = kind === "wolf" || kind === "dog" || kind === "alpha_wolf";
-    gltf.add(groundShadow(isBoss ? 1.6 : isWolfish ? 1.15 : 1.25));
-    attachHpBar(gltf, {
-      y: isBoss ? 3.4 : isWolfish ? 2.05 : 2.55,
-      scaleX: isBoss ? 2.2 : 1.7,
-      scaleY: 0.4,
-    });
-    return gltf;
+  if (kind === "ophanim" || kind === "tower_boss") {
+    const gltf = AssetKit.enemyForKind(kind);
+    if (gltf) {
+      gltf.add(groundShadow(1.8));
+      attachHpBar(gltf, { y: 4.2, scaleX: 2.4, scaleY: 0.45 });
+      return gltf;
+    }
+    // Fallback while GLB loads — scaled elite orc silhouette
+    const fallback = makeOrkMesh({ black: true, elite: true, brute: true });
+    fallback.scale.setScalar(1.35);
+    fallback.userData.kind = "ophanim";
+    return fallback;
   }
   if (kind === "ork") return makeOrkMesh({});
   if (kind === "elite_ork") return makeOrkMesh({ elite: true });

@@ -19,25 +19,11 @@ const CRITICAL_PROPS = {
   wooden_gate: "/models/props/wooden_gate.glb",
 };
 
-/** Background — heavy / optional scenery */
-const BACKGROUND_PROPS = {
-  house_large: "/models/props/house_large.glb",
-  viking_hut: "/models/props/viking_hut.glb",
-  outpost_tent: "/models/props/outpost_tent.glb",
-  lampposts: "/models/props/lampposts.glb",
-  willow: "/models/terrain/willow.glb",
-  trees_row: "/models/terrain/trees_row.glb",
-  // tree_single is skinned — never plant for forest density; landmark only if needed
-  tree_single: "/models/terrain/tree_single.glb",
-};
+/** Background — other classes only (no heavy scenery/enemies at boot) */
+const BACKGROUND_PROPS = {};
 
+/** Only special animated boss — never field trash */
 const ENEMY_FILES = {
-  orc: "/models/enemies/orc.glb",
-  orc_boss: "/models/enemies/orc_boss.glb",
-  alpha_wolf: "/models/enemies/alpha_wolf.glb",
-  wolfman: "/models/enemies/wolfman.glb",
-  spider: "/models/enemies/spider.glb",
-  phoenix: "/models/enemies/phoenix.glb",
   ophanim: "/models/enemies/demon_tower/ophanim.glb",
 };
 
@@ -132,13 +118,7 @@ function pickClip(clips, patterns) {
 }
 
 function kindToEnemyKey(kind) {
-  const k = String(kind || "wolf");
-  if (k === "dog" || k === "wolf") return "wolfman";
-  if (k === "alpha_wolf") return "alpha_wolf";
-  if (k === "ork" || k === "elite_ork") return "orc";
-  if (k === "black_ork" || k === "black_ork_brute" || k === "orc_chief") return "orc_boss";
-  if (k === "spider") return "spider";
-  if (k === "phoenix") return "phoenix";
+  const k = String(kind || "");
   if (k === "ophanim" || k === "tower_boss") return "ophanim";
   return null;
 }
@@ -220,12 +200,13 @@ export const AssetKit = {
     return p;
   },
 
-  /** Kick enemy loads for common field kinds after world starts. */
-  preloadCommonEnemies() {
-    for (const k of ["wolfman", "orc", "orc_boss", "alpha_wolf"]) {
-      this.ensureEnemy(k).catch(() => {});
-    }
+  /** Kick ophanim load when approaching / entering Demon Tower */
+  preloadTowerBoss() {
+    return this.ensureEnemy("ophanim");
   },
+
+  /** @deprecated field enemies are procedural — no-op kept for callers */
+  preloadCommonEnemies() {},
 
   hasClass(classId) {
     return cache.has("class:" + classId);
@@ -355,68 +336,15 @@ export const AssetKit = {
     return wrapper;
   },
 
+  /** Only ophanim GLB — all other kinds return null (procedural meshes). */
   enemyForKind(kind) {
-    const k = String(kind || "wolf");
-    if (k === "bandit" || k === "human") {
-      const body = this.classBody("ninja", 1.75);
-      if (!body) return null;
-      return wrapClassEnemy(body, k);
-    }
-    if (k === "soldier") {
-      const body = this.classBody("warrior", 1.85);
-      if (!body) return null;
-      return wrapClassEnemy(body, k);
-    }
-    if (k === "rogue_chief") {
-      const body = this.classBody("sura", 2.15);
-      if (!body) return null;
-      return wrapClassEnemy(body, k);
-    }
-
-    const enemyKey = kindToEnemyKey(k);
+    const enemyKey = kindToEnemyKey(kind);
     if (!enemyKey) return null;
     if (!this.hasEnemy(enemyKey)) {
-      // Kick load; caller uses procedural until ready
       this.ensureEnemy(enemyKey).catch(() => {});
       return null;
     }
-    const heights = {
-      wolfman: k === "dog" ? 1.25 : 1.75,
-      alpha_wolf: 2.05,
-      orc: k === "elite_ork" ? 2.75 : 2.35,
-      orc_boss: k === "orc_chief" ? 3.9 : k === "black_ork_brute" ? 3.45 : 2.9,
-      spider: 1.15,
-      phoenix: 3.2,
-      ophanim: 4.6,
-    };
-    return this.enemyBody(enemyKey, heights[enemyKey] || 1.8, k);
-  },
-
-  /** Landmarks only — bulk forests use NatureKit. */
-  landmarkTree(targetHeight = 12) {
-    if (Math.random() < 0.55 && this.hasProp("willow")) {
-      return this.clonePropToHeight("willow", targetHeight);
-    }
-    if (this.hasProp("trees_row")) {
-      return this.clonePropToHeight("trees_row", targetHeight * 1.4);
-    }
-    return this.clonePropToHeight("willow", targetHeight);
+    return this.enemyBody(enemyKey, 4.6, String(kind || "ophanim"));
   },
 };
 
-function wrapClassEnemy(body, kind) {
-  const wrapper = new THREE.Group();
-  const rig = new THREE.Group();
-  wrapper.add(rig);
-  rig.add(body);
-  wrapper.userData = {
-    useGltf: true,
-    gltfEnemy: true,
-    gltfBody: body,
-    mixer: null,
-    rig,
-    kind,
-    animPhase: Math.random() * 10,
-  };
-  return wrapper;
-}

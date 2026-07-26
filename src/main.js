@@ -1926,7 +1926,6 @@ await Promise.all([
   AssetKit.preloadCritical("warrior"),
 ]).catch((err) => console.warn("[assets]", err));
 AssetKit.preloadBackground();
-AssetKit.preloadCommonEnemies();
 const game = new Game($("#c"), ui, net);
 
 function drawMapRing(ctx, toX, toY, minR, maxR, color, { fill = true, dash = null } = {}) {
