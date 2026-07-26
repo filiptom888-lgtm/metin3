@@ -1,6 +1,8 @@
 import { supabase } from "../net/supabase.js";
 import { KINGDOMS, SPECS, validateName, villageSpawn } from "../data/meta.js";
 import { xpForLevel, baseStatsFor } from "../data/stats.js";
+import { ITEM_TEMPLATES } from "../data/items.js";
+import { ItemService } from "./ItemService.js";
 
 export const CharacterService = {
   KINGDOMS,
@@ -216,6 +218,38 @@ function withHotbarMeta(ch) {
   };
 }
 
+function sanitizeStack(raw) {
+  if (!raw) return null;
+  if (typeof raw === "string") return ItemService.createInstance(raw);
+  const id = raw.itemId || raw.id;
+  if (!id || !ITEM_TEMPLATES[id]) return null;
+  const qtyN = Number(raw.qty);
+  return {
+    ...raw,
+    itemId: id,
+    qty: Number.isFinite(qtyN) && qtyN > 0 ? Math.floor(qtyN) : 1,
+    upgrade: Number(raw.upgrade) || 0,
+    bonuses: Array.isArray(raw.bonuses) ? raw.bonuses : [],
+    sockets: Array.isArray(raw.sockets) ? raw.sockets : [],
+    uid: raw.uid || `ii_${Math.random().toString(36).slice(2, 11)}`,
+  };
+}
+
+function sanitizeInventory(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map(sanitizeStack).filter(Boolean);
+}
+
+function sanitizeEquipment(equip) {
+  const clean = stripEquipMeta(equip || {});
+  const out = {};
+  for (const [slot, ref] of Object.entries(clean)) {
+    const s = sanitizeStack(ref);
+    if (s) out[slot] = { ...s, qty: 1 };
+  }
+  return out;
+}
+
 function toClient(ch) {
   const equip = ch.equipment || {};
   return {
@@ -239,8 +273,8 @@ function toClient(ch) {
     respawnX: ch.respawnX ?? ch.respawn_x ?? ch.x ?? 0,
     respawnZ: ch.respawnZ ?? ch.respawn_z ?? ch.z ?? 0,
     deletePin: ch.deletePin || ch.delete_pin || "0000",
-    inventory: ch.inventory || [],
-    equipment: stripEquipMeta(equip),
+    inventory: sanitizeInventory(ch.inventory),
+    equipment: sanitizeEquipment(equip),
     hotbarPotions: ch.hotbarPotions || readHotbar(equip),
     skillLevels: ch.skillLevels || readSkillLevels(equip),
     quests: ch.quests || {},

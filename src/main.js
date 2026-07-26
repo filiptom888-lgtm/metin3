@@ -548,11 +548,24 @@ function renderInventory(ch) {
       continue;
     }
     const def = getItem(stack.itemId);
-    if (!def) continue;
+    if (!def) {
+      cell.className = "inv-cell empty-slot";
+      cell.disabled = true;
+      cell.title = `Unknown item (${stack.itemId || "?"})`;
+      grid.appendChild(cell);
+      continue;
+    }
+    // Repair legacy / bad rows so bag never shows ×undefined / ×null
+    if (stack.qty == null || !Number.isFinite(Number(stack.qty)) || Number(stack.qty) < 1) {
+      stack.qty = 1;
+    } else {
+      stack.qty = Math.floor(Number(stack.qty));
+    }
     cell.className = "inv-cell";
     cell.style.borderColor = RARITY_COLOR[def.rarity] || "#666";
     const up = stack.upgrade ? `+${stack.upgrade}` : "";
-    cell.innerHTML = `${up ? `<span class="up-tag">${up}</span>` : ""}${itemIconHtml(def)}<span class="qty">×${stack.qty}</span>`;
+    const qtyHtml = def.stackable || stack.qty > 1 ? `<span class="qty">×${stack.qty}</span>` : "";
+    cell.innerHTML = `${up ? `<span class="up-tag">${up}</span>` : ""}${itemIconHtml(def)}${qtyHtml}`;
     cell.title = def.skillBook
       ? `${ItemService.displayName(stack)} — click to open Skills`
       : isPotionItem(def)

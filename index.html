@@ -94,30 +94,30 @@
               <button type="button" id="btn-hud-quests" class="hud-menu-btn" title="Quests (Q)">Quest</button>
               <button type="button" id="btn-hud-menu" class="hud-menu-btn" title="Menu (Esc)">Menu</button>
             </div>
+
+            <aside id="quest-scroll" class="quest-scroll" hidden>
+              <div class="quest-scroll-inner">
+                <div class="quest-scroll-ribbon">Quest Scroll</div>
+                <h4 id="quest-scroll-title">—</h4>
+                <p id="quest-scroll-giver" class="quest-scroll-giver"></p>
+                <p id="quest-scroll-body" class="quest-scroll-body"></p>
+                <p id="quest-scroll-meta" class="quest-scroll-meta"></p>
+                <p id="quest-scroll-reward" class="quest-scroll-reward"></p>
+                <div class="quest-scroll-actions">
+                  <button type="button" id="quest-scroll-begin" class="btn-mini">Begin</button>
+                  <button type="button" id="quest-scroll-decline" class="btn-mini">Decline</button>
+                </div>
+              </div>
+            </aside>
+
+            <div id="quest-tracker" class="quest-tracker" hidden>
+              <div class="quest-tracker-title">Active Quests</div>
+              <div id="quest-tracker-list"></div>
+            </div>
           </div>
 
           <div id="minimap" class="m2-minimap">
             <canvas id="mini" width="148" height="148"></canvas>
-          </div>
-
-          <aside id="quest-scroll" class="quest-scroll" hidden>
-            <div class="quest-scroll-inner">
-              <div class="quest-scroll-ribbon">Quest Scroll</div>
-              <h4 id="quest-scroll-title">—</h4>
-              <p id="quest-scroll-giver" class="quest-scroll-giver"></p>
-              <p id="quest-scroll-body" class="quest-scroll-body"></p>
-              <p id="quest-scroll-meta" class="quest-scroll-meta"></p>
-              <p id="quest-scroll-reward" class="quest-scroll-reward"></p>
-              <div class="quest-scroll-actions">
-                <button type="button" id="quest-scroll-begin" class="btn-mini">Begin</button>
-                <button type="button" id="quest-scroll-decline" class="btn-mini">Decline</button>
-              </div>
-            </div>
-          </aside>
-
-          <div id="quest-tracker" class="quest-tracker" hidden>
-            <div class="quest-tracker-title">Active Quests</div>
-            <div id="quest-tracker-list"></div>
           </div>
 
           <div class="m2-bottom">

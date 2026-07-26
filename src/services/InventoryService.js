@@ -35,7 +35,11 @@ export const InventoryService = {
     const t = ITEM_TEMPLATES[stack.itemId];
     const prev = ch.equipment[t.slot];
     if (prev) {
-      ch.inventory.push(typeof prev === "object" ? prev : ItemService.createInstance(prev));
+      const back =
+        typeof prev === "object"
+          ? { ...prev, qty: Math.max(1, Number(prev.qty) || 1) }
+          : ItemService.createInstance(prev);
+      if (back) ch.inventory.push(back);
     }
     ch.equipment[t.slot] = { ...stack, qty: 1 };
     this.remove(ch, uid, 1);
@@ -44,7 +48,11 @@ export const InventoryService = {
   unequip(ch, slot) {
     const prev = ch.equipment[slot];
     if (!prev) return "Empty";
-    ch.inventory.push(typeof prev === "object" ? prev : ItemService.createInstance(prev));
+    const back =
+      typeof prev === "object"
+        ? { ...prev, qty: Math.max(1, Number(prev.qty) || 1) }
+        : ItemService.createInstance(prev);
+    if (back) ch.inventory.push(back);
     delete ch.equipment[slot];
     return null;
   },

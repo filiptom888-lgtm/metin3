@@ -5,8 +5,11 @@ export function itemIconUrl(itemOrId) {
   const id = typeof itemOrId === "string" ? itemOrId : itemOrId?.id || itemOrId?.itemId;
   if (!id) return null;
   const def = typeof itemOrId === "object" && itemOrId.sprite ? itemOrId : ITEM_TEMPLATES[id];
-  if (def?.sprite) return def.sprite;
-  return `/icons/items/${id}.svg`;
+  if (def?.sprite) {
+    // Cache-bust framed icon SVGs that were replaced
+    return def.sprite.includes("?") ? def.sprite : `${def.sprite}?v=3`;
+  }
+  return `/icons/items/${id}.svg?v=3`;
 }
 
 /**
