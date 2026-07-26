@@ -739,18 +739,17 @@ function renderQuests(ch = game.character, giver = questPanelGiver) {
   list.className = "quest-list";
   const quests = QuestService.forGiver(questPanelGiver);
 
-  // Sort: turn-in → in progress → available → locked → finished
+  // Sort: turn-in → in progress → available → locked (hide finished / claimed)
   const rank = (q) => {
     const st = ch.quests[q.id];
     if (st?.state === "completed") return 0;
     if (st?.state === "accepted") return 1;
-    if (!QuestService.canAccept(ch, q)) {
-      if (st?.state === "claimed") return 4;
-      return 3;
-    }
+    if (!QuestService.canAccept(ch, q)) return 3;
     return 2;
   };
-  const sorted = [...quests].sort((a, b) => rank(a) - rank(b));
+  const sorted = [...quests]
+    .filter((q) => ch.quests[q.id]?.state !== "claimed")
+    .sort((a, b) => rank(a) - rank(b));
 
   for (const q of sorted) {
     const st = ch.quests[q.id];
@@ -828,9 +827,6 @@ function renderQuests(ch = game.character, giver = questPanelGiver) {
       btn.textContent = `${prog}`;
       btn.disabled = true;
       btn.title = "In progress — hunt, then return";
-    } else if (state === "claimed") {
-      btn.textContent = "Done";
-      btn.disabled = true;
     } else {
       btn.textContent = "Locked";
       btn.disabled = true;
@@ -844,7 +840,9 @@ function renderQuests(ch = game.character, giver = questPanelGiver) {
   if (!sorted.length) {
     const empty = document.createElement("p");
     empty.className = "sub";
-    empty.textContent = "No quests here.";
+    empty.textContent = questPanelGiver
+      ? "No open quests here — check back after new tasks unlock."
+      : "No open quests.";
     body.appendChild(empty);
   } else {
     body.appendChild(list);
