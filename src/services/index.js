@@ -8,6 +8,7 @@ export * from "./UpgradeService.js";
 export * from "./DropService.js";
 export * from "./SkillService.js";
 export * from "./QuestService.js";
+export * from "./QuestMail.js";
 export * from "./NpcService.js";
 export * from "./SpawnService.js";
 

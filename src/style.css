@@ -504,7 +504,8 @@ button, input { font: inherit; color: inherit; }
   pointer-events: none;
 }
 .hud-top-left .hud-menu-btns,
-.hud-top-left .quest-scroll,
+.hud-top-left .quest-mail-btn,
+.hud-top-left .quest-letter,
 .hud-top-left .quest-tracker {
   pointer-events: auto;
 }
@@ -1769,30 +1770,95 @@ button, input { font: inherit; color: inherit; }
 }
 .shop-list, .quest-list { margin-top: 0.4rem; }
 
-/* Quest offer — sits under HUD buttons, not on top of them */
-.quest-scroll {
+/* Metin2 quest mail — floating scroll + letter to Continue */
+.quest-mail-btn {
   position: relative;
-  top: auto;
-  left: auto;
-  z-index: 12;
-  width: min(280px, 72vw);
-  margin-top: 0.35rem;
+  z-index: 14;
+  width: 52px;
+  height: 64px;
+  margin-top: 0.45rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
   pointer-events: auto;
   animation: scrollIn 0.35s ease-out;
+}
+.quest-mail-btn:hover { filter: brightness(1.12); }
+.quest-mail-scroll {
+  display: block;
+  width: 44px;
+  height: 52px;
+  margin: 0 auto;
+  background:
+    linear-gradient(180deg, #e8d4a8 0%, #c9a86a 40%, #8a6820 100%);
+  border: 1px solid #5a4030;
+  border-radius: 3px 3px 8px 8px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 240, 200, 0.35),
+    0 4px 10px rgba(0, 0, 0, 0.45);
+  position: relative;
+}
+.quest-mail-scroll::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+  width: 28px;
+  height: 10px;
+  background: #a81828;
+  border-radius: 2px;
+  box-shadow: 0 14px 0 #a81828;
+}
+.quest-mail-scroll::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 8px;
+  height: 3px;
+  background: rgba(60, 40, 16, 0.35);
+  box-shadow: 0 -6px 0 rgba(60, 40, 16, 0.25), 0 -12px 0 rgba(60, 40, 16, 0.2);
+}
+.quest-mail-count {
+  position: absolute;
+  left: 50%;
+  bottom: -2px;
+  transform: translateX(-50%);
+  min-width: 1.2rem;
+  padding: 0.05rem 0.3rem;
+  font-family: var(--font-b);
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 1px 3px #000;
+  background: rgba(10, 8, 6, 0.75);
+  border: 1px solid #5a564c;
+  border-radius: 2px;
 }
 @keyframes scrollIn {
   from { opacity: 0; transform: translateY(-12px) scale(0.96); }
   to { opacity: 1; transform: none; }
 }
-.quest-scroll-inner {
-  padding: 0.85rem 0.95rem 0.9rem;
-  border-radius: 1px;
+
+.quest-letter {
+  position: relative;
+  z-index: 15;
+  width: min(300px, 78vw);
+  margin-top: 0.4rem;
+  pointer-events: auto;
+  animation: scrollIn 0.3s ease-out;
+}
+.quest-letter-inner {
+  padding: 0.9rem 1rem 0.95rem;
   border: 1px solid #5a564c;
+  border-radius: 1px;
   background: var(--m2-panel-bg);
-  box-shadow: var(--m2-bevel), 0 10px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--m2-bevel), 0 12px 28px rgba(0, 0, 0, 0.5);
   color: var(--bone);
 }
-.quest-scroll-ribbon {
+.quest-letter-ribbon {
   display: inline-block;
   margin-bottom: 0.4rem;
   padding: 0.12rem 0.45rem;
@@ -1803,52 +1869,29 @@ button, input { font: inherit; color: inherit; }
   color: var(--gold-soft);
   background: #3a2018;
   border: 1px solid #5a4030;
-  border-radius: 1px;
 }
-.quest-scroll-inner h4 {
-  margin: 0 0 0.3rem;
+.quest-letter-inner h4 {
+  margin: 0 0 0.4rem;
   font-family: var(--font-d);
   font-size: 1.05rem;
   letter-spacing: 0.04em;
   color: var(--gold-soft);
-  text-shadow: none;
 }
-.quest-scroll-giver {
-  margin: 0 0 0.45rem;
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: var(--mist);
-  letter-spacing: 0.04em;
-}
-.quest-scroll-body {
-  margin: 0 0 0.45rem;
-  font-size: 0.85rem;
-  line-height: 1.45;
+.quest-letter-body {
+  margin: 0 0 0.75rem;
+  font-size: 0.86rem;
+  line-height: 1.5;
   color: var(--bone);
-  font-style: normal;
+  white-space: pre-wrap;
 }
-.quest-scroll-meta,
-.quest-scroll-reward {
-  margin: 0 0 0.25rem;
-  font-size: 0.75rem;
-  color: var(--mist);
-}
-.quest-scroll-reward { color: var(--gold); font-weight: 700; }
-.quest-scroll-actions {
-  display: flex;
-  gap: 0.4rem;
-  margin-top: 0.65rem;
-}
-.quest-scroll-actions .btn-mini {
-  flex: 1;
-}
-.quest-scroll-actions #quest-scroll-begin {
-  border-color: var(--gold);
-  background: linear-gradient(180deg, #5a4820, #2a2010);
-  color: var(--gold-soft);
+.quest-letter-continue {
+  width: 100%;
+  border-color: var(--gold) !important;
+  background: linear-gradient(180deg, #5a4820, #2a2010) !important;
+  color: var(--gold-soft) !important;
 }
 
-/* Active quest log — flows under buttons / offer scroll */
+/* Active quest objectives under HUD */
 .quest-tracker {
   position: relative;
   top: auto;
@@ -1896,7 +1939,7 @@ button, input { font: inherit; color: inherit; }
 .quest-track-row.ready b { color: #7dff9a; }
 .quest-track-row.ready span { color: #7dff9a; }
 @media (max-width: 800px) {
-  .quest-scroll, .quest-tracker { width: min(260px, 88vw); }
+  .quest-letter, .quest-tracker { width: min(280px, 88vw); }
 }
 
 .npc-flavor {

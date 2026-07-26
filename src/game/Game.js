@@ -3330,9 +3330,8 @@ export class Game {
 
     const killKind = kind === "metin" ? "metin" : kind;
     const questUpdates = QuestService.onKill(this.character, killKind);
-    for (const u of questUpdates) {
-      if (u.completed) this.ui.toast(`Quest complete: ${u.name} — turn in!`);
-      else this.ui.toast(`${u.name}: ${u.progress}/${u.count}`);
+    if (questUpdates.length) {
+      this.ui.pushQuestMailFromKills?.(questUpdates);
     }
 
     const prevLv = this.character.level;

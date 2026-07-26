@@ -11,6 +11,7 @@ import { AuthService } from "./services/AuthService.js";
 import { CharacterService } from "./services/CharacterService.js";
 import { SkillService } from "./services/SkillService.js";
 import { QuestService } from "./services/QuestService.js";
+import { QuestMail } from "./services/QuestMail.js";
 import { NpcService } from "./services/NpcService.js";
 import { ItemService } from "./services/ItemService.js";
 import { PartyService } from "./services/PartyService.js";
@@ -60,6 +61,21 @@ const ui = {
     $("#hud-level").textContent = `Lv.${p.level} ${cls.name}`;
     this.renderHotbar(p, game.character);
     this.chat(`${p.name} entered the kingdom`, "sys");
+  },
+  pushQuestMailFromKills(updates) {
+    QuestMail.fromKillUpdates(updates);
+    notifyQuestMail();
+    refreshQuestUi();
+  },
+  scanQuestHints(ch) {
+    QuestMail.scanHints(ch);
+    notifyQuestMail();
+  },
+  resetQuestMail(ch) {
+    QuestMail.clear();
+    hideQuestLetter();
+    QuestMail.scanHints(ch);
+    notifyQuestMail();
   },
   renderHotbar(p, ch) {
     const skills = SkillService.listWithLevels(ch).slice(0, 4);
@@ -755,10 +771,19 @@ function renderQuests(ch = game.character, giver = questPanelGiver) {
     btn.className = "btn-mini";
 
     if (state === "available") {
-      btn.textContent = "Read scroll";
+      btn.textContent = "Accept";
       btn.onclick = () => {
-        audio.sfx("ui");
-        showQuestScrollOffer(q);
+        const err = QuestService.accept(ch, q.id);
+        if (err) {
+          ui.toast(err);
+          return;
+        }
+        audio.sfx("level");
+        QuestMail.onAccepted(q);
+        QuestMail.scanHints(ch);
+        notifyQuestMail();
+        refreshQuestUi();
+        ui.requestSave?.(false);
       };
     } else if (state === "completed") {
       btn.textContent = "Claim";
@@ -775,12 +800,16 @@ function renderQuests(ch = game.character, giver = questPanelGiver) {
         game.local.level = target.level;
         audio.sfx("level");
         const g = target._lastQuestGrants;
+        let grantLine = "";
         if (g?.items?.length) {
-          const names = g.items.map((i) => (i.qty > 1 ? `${i.name} ×${i.qty}` : i.name)).join(", ");
-          ui.toast(`Claimed ${g.name}: ${g.yang || 0} Yang · ${names}`);
-        } else {
-          ui.toast(`Reward claimed: ${q.name}`);
+          grantLine = g.items.map((i) => (i.qty > 1 ? `${i.name} ×${i.qty}` : i.name)).join(", ");
+          if (g.yang) grantLine = `${g.yang} Yang · ${grantLine}`;
+        } else if (g?.yang) {
+          grantLine = `${g.yang} Yang`;
         }
+        QuestMail.onClaimed(q, grantLine || QuestService.formatReward(q.reward));
+        QuestMail.scanHints(target);
+        notifyQuestMail();
         refreshQuestUi();
         if (!$("#panel-inv").hidden) renderInventory(target);
         if (!$("#panel-char").hidden) renderCharacterPanel(target);
@@ -822,56 +851,87 @@ function refreshQuestUi() {
   renderQuestTracker(ch);
   game.refreshQuestMarkers?.();
   game.refreshHuntMarkers?.();
+  refreshQuestMailUi();
 }
 
-let _scrollQuestId = null;
+/** @type {import("./services/QuestMail.js").QuestMailMsg | null} */
+let _openLetter = null;
 
-function hideQuestScroll() {
-  const el = $("#quest-scroll");
-  if (el) el.hidden = true;
-  _scrollQuestId = null;
+function refreshQuestMailUi() {
+  const btn = $("#quest-mail-btn");
+  const countEl = $("#quest-mail-count");
+  const unread = QuestMail.count();
+  const total = unread + (_openLetter ? 1 : 0);
+  if (btn) {
+    btn.hidden = total === 0;
+    if (countEl) countEl.textContent = String(Math.max(1, total));
+  }
+  if (_openLetter) renderOpenLetter(_openLetter);
+  else {
+    const el = $("#quest-letter");
+    if (el) el.hidden = true;
+  }
 }
 
-function offerFirstAvailableScroll(ch, giverId) {
-  if (!ch) return;
-  QuestService.ensure(ch);
-  // canAccept returns null when OK, or an error string
-  const available = QuestService.forGiver(giverId).find((x) => !QuestService.canAccept(ch, x));
-  if (available) showQuestScrollOffer(available);
+/** Push happened — refresh icon and auto-open if nothing is open. */
+function notifyQuestMail() {
+  refreshQuestMailUi();
+  if (!_openLetter && QuestMail.count() > 0) openQuestLetter();
 }
 
-/** Metin2-style parchment offer — Begin accepts and spawns hunt markers */
-function showQuestScrollOffer(q) {
-  const el = $("#quest-scroll");
-  if (!el || !q) return;
-  _scrollQuestId = q.id;
-  const giver =
-    q.giver === "biologist" ? "Biologist" : q.giver === "quest_elder" ? "Village Elder" : "Quest";
-  $("#quest-scroll-title").textContent = q.name;
-  $("#quest-scroll-giver").textContent = `From the ${giver}`;
-  $("#quest-scroll-body").textContent = q.desc;
-  $("#quest-scroll-meta").textContent = `Objective · ${q.count}× ${q.target || "target"} · Lv.${q.levelReq}`;
-  $("#quest-scroll-reward").textContent = `Reward: ${QuestService.formatReward(q.reward)}`;
+function renderOpenLetter(msg) {
+  const el = $("#quest-letter");
+  if (!el || !msg) return;
+  $("#quest-letter-ribbon").textContent = msg.ribbon || "Quest";
+  $("#quest-letter-title").textContent = msg.title;
+  $("#quest-letter-body").textContent = msg.body;
   el.hidden = false;
-  // Keep NPC panel open underneath; scroll is the dialog
 }
 
-function beginQuestFromScroll() {
-  const ch = game.character;
-  if (!ch || !_scrollQuestId) return;
-  const q = QUESTS.find((x) => x.id === _scrollQuestId);
-  const err = QuestService.accept(ch, _scrollQuestId);
-  if (err) {
-    ui.toast(err);
+function hideQuestLetter() {
+  const el = $("#quest-letter");
+  if (el) el.hidden = true;
+  _openLetter = null;
+}
+
+/** Open next unread letter (from queue). */
+function openQuestLetter() {
+  if (_openLetter) return; // finish current first
+  const msg = QuestMail.shift();
+  if (!msg) {
+    hideQuestLetter();
+    refreshQuestMailUi();
     return;
   }
-  audio.sfx("level");
-  ui.toast(`Quest started: ${q?.name || "Quest"}`);
-  hideQuestScroll();
-  refreshQuestUi();
-  game.refreshQuestMarkers?.();
-  game.refreshHuntMarkers?.();
-  ui.requestSave?.(false);
+  _openLetter = msg;
+  audio.sfx("ui");
+  refreshQuestMailUi();
+}
+
+function continueQuestLetter() {
+  audio.sfx("ui");
+  _openLetter = null;
+  hideQuestLetter();
+  // Auto-open next if any remain
+  if (QuestMail.count() > 0) {
+    openQuestLetter();
+  } else {
+    refreshQuestMailUi();
+  }
+}
+
+function onQuestMailBtnClick() {
+  audio.sfx("ui");
+  if (_openLetter) {
+    continueQuestLetter();
+    return;
+  }
+  if (QuestMail.count() > 0) {
+    openQuestLetter();
+    return;
+  }
+  // No mail — open quest log like Metin2 scroll → quests
+  togglePanel("quests");
 }
 
 function renderQuestTracker(ch = game.character) {
@@ -1014,13 +1074,11 @@ function renderNpcPanel(npc) {
     $("#panel-quests").hidden = false;
     questPanelGiver = "quest_elder";
     renderQuests(ch, "quest_elder");
-    offerFirstAvailableScroll(ch, "quest_elder");
   } else if (npc.role === "biologist") {
     $("#panel-npc").hidden = true;
     $("#panel-quests").hidden = false;
     questPanelGiver = "biologist";
     renderQuests(ch, "biologist");
-    offerFirstAvailableScroll(ch, "biologist");
   } else if (npc.role === "skillmaster") {
     renderSkillMasterUi(body, ch);
   }
@@ -2269,8 +2327,8 @@ window.addEventListener("keydown", (e) => {
   if (k === "m") togglePanel("map");
   if (k === "escape") {
     e.preventDefault();
-    if ($("#quest-scroll") && !$("#quest-scroll").hidden) {
-      hideQuestScroll();
+    if ($("#quest-letter") && !$("#quest-letter").hidden) {
+      continueQuestLetter();
       return;
     }
     // Dismiss overlays first so Esc always recovers a stuck invite / context menu
@@ -2306,12 +2364,14 @@ $("#btn-hud-char")?.addEventListener("click", () => {
   audio.sfx("ui");
   togglePanel("char");
 });
-$("#quest-scroll-begin")?.addEventListener("click", () => {
-  beginQuestFromScroll();
+$("#quest-mail-btn")?.addEventListener("click", () => onQuestMailBtnClick());
+$("#quest-letter-continue")?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  continueQuestLetter();
 });
-$("#quest-scroll-decline")?.addEventListener("click", () => {
-  audio.sfx("ui");
-  hideQuestScroll();
+document.querySelector(".quest-letter-inner")?.addEventListener("click", (e) => {
+  if (e.target?.closest?.("#quest-letter-continue")) return;
+  continueQuestLetter();
 });
 
 $("#btn-hud-quests")?.addEventListener("click", () => {
@@ -2495,6 +2555,7 @@ async function enterWorld(character) {
   game.start(currentProfile, character);
   questPanelGiver = null;
   renderQuestTracker(character);
+  ui.resetQuestMail(character);
   ui.toast(hasSupabase ? "Entered the open world" : "Solo offline");
   ui.requestSave(false);
 }

@@ -95,18 +95,17 @@
               <button type="button" id="btn-hud-menu" class="hud-menu-btn" title="Menu (Esc)">Menu</button>
             </div>
 
-            <aside id="quest-scroll" class="quest-scroll" hidden>
-              <div class="quest-scroll-inner">
-                <div class="quest-scroll-ribbon">Quest Scroll</div>
-                <h4 id="quest-scroll-title">—</h4>
-                <p id="quest-scroll-giver" class="quest-scroll-giver"></p>
-                <p id="quest-scroll-body" class="quest-scroll-body"></p>
-                <p id="quest-scroll-meta" class="quest-scroll-meta"></p>
-                <p id="quest-scroll-reward" class="quest-scroll-reward"></p>
-                <div class="quest-scroll-actions">
-                  <button type="button" id="quest-scroll-begin" class="btn-mini">Begin</button>
-                  <button type="button" id="quest-scroll-decline" class="btn-mini">Decline</button>
-                </div>
+            <button type="button" id="quest-mail-btn" class="quest-mail-btn" hidden title="Quest messages">
+              <span class="quest-mail-scroll" aria-hidden="true"></span>
+              <span id="quest-mail-count" class="quest-mail-count">0</span>
+            </button>
+
+            <aside id="quest-letter" class="quest-letter" hidden>
+              <div class="quest-letter-inner">
+                <div id="quest-letter-ribbon" class="quest-letter-ribbon">Quest</div>
+                <h4 id="quest-letter-title">—</h4>
+                <p id="quest-letter-body" class="quest-letter-body"></p>
+                <button type="button" id="quest-letter-continue" class="btn-mini quest-letter-continue">Continue</button>
               </div>
             </aside>
 
