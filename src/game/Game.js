@@ -12,6 +12,9 @@ import {
   makeDungeonMapRoot,
   makeValleyMapRoot,
   makeOrcMapRoot,
+  makeFirePlainsRoot,
+  makeDesertMapRoot,
+  makeSnowMapRoot,
   makeBoltMesh,
   setNameplate,
   animateCharacter,
@@ -32,6 +35,7 @@ import { FxSystem } from "./fx.js";
 import { derivedStats, applyLevelUps } from "./character.js";
 import { getItem, RARITY_COLOR } from "./items.js";
 import { clampToOrcLand } from "../data/orcMap.js";
+import { isBiomeMap } from "../data/biomeMaps.js";
 import {
   equipFromInventory,
   unequipSlot,
@@ -84,6 +88,9 @@ export class Game {
     this.towerSmithNpc = null;
     this.valleyRoot = null;
     this.orcRoot = null;
+    this.fireRoot = null;
+    this.desertRoot = null;
+    this.snowRoot = null;
     this.arenaMesh = null;
     this.nearWorldPortal = null;
     this.camera = createCamera();
@@ -398,7 +405,13 @@ export class Game {
           ? this.orcRoot || this.scene
           : mapId === "valley"
             ? this.valleyRoot || this.scene
-            : this.overworld || this.scene;
+            : mapId === "fire_plains"
+              ? this.fireRoot || this.scene
+              : mapId === "desert"
+                ? this.desertRoot || this.scene
+                : mapId === "snow"
+                  ? this.snowRoot || this.scene
+                  : this.overworld || this.scene;
       const mesh = makeNpcMesh(npc);
       mesh.position.set(npc.x, 0, npc.z);
       mesh.rotation.y = Math.atan2(-npc.x, -npc.z || 1);
@@ -441,6 +454,9 @@ export class Game {
     if (this.dungeonRoot) this.scene.remove(this.dungeonRoot);
     if (this.valleyRoot) this.scene.remove(this.valleyRoot);
     if (this.orcRoot) this.scene.remove(this.orcRoot);
+    if (this.fireRoot) this.scene.remove(this.fireRoot);
+    if (this.desertRoot) this.scene.remove(this.desertRoot);
+    if (this.snowRoot) this.scene.remove(this.snowRoot);
 
     // Overworld landmark only
     this.towerMesh = makeDemonTowerMesh();
@@ -461,11 +477,17 @@ export class Game {
     }
     this.scene.add(this.dungeonRoot);
 
-    // Field maps: Seungryong + Orc Isles
+    // Field maps: Seungryong + Orc Isles + biomes
     this.valleyRoot = makeValleyMapRoot();
     this.scene.add(this.valleyRoot);
     this.orcRoot = makeOrcMapRoot();
     this.scene.add(this.orcRoot);
+    this.fireRoot = makeFirePlainsRoot();
+    this.scene.add(this.fireRoot);
+    this.desertRoot = makeDesertMapRoot();
+    this.scene.add(this.desertRoot);
+    this.snowRoot = makeSnowMapRoot();
+    this.scene.add(this.snowRoot);
 
     this._collectFadeTrees();
     this.switchMap("overworld");
@@ -521,6 +543,9 @@ export class Game {
     if (this.overworld) this.overworld.visible = mapId === "overworld";
     if (this.valleyRoot) this.valleyRoot.visible = mapId === "valley";
     if (this.orcRoot) this.orcRoot.visible = mapId === "orc_valley";
+    if (this.fireRoot) this.fireRoot.visible = mapId === "fire_plains";
+    if (this.desertRoot) this.desertRoot.visible = mapId === "desert";
+    if (this.snowRoot) this.snowRoot.visible = mapId === "snow";
     if (this.dungeonRoot) this.dungeonRoot.visible = mapId === "demon_tower";
     if (this.local) this.local.mapId = mapId;
     if (this.scene) {
@@ -539,7 +564,14 @@ export class Game {
 
   _collectTorchLights() {
     const lights = [];
-    for (const root of [this.overworld, this.valleyRoot, this.orcRoot]) {
+    for (const root of [
+      this.overworld,
+      this.valleyRoot,
+      this.orcRoot,
+      this.fireRoot,
+      this.desertRoot,
+      this.snowRoot,
+    ]) {
       if (!root?.visible) continue;
       const list = root.userData?.torchLights;
       if (Array.isArray(list)) lights.push(...list);
@@ -577,7 +609,8 @@ export class Game {
       if (!hunt) continue;
       const huntMap = hunt.allField ? mid : hunt.mapId;
       if (huntMap !== mid && !hunt.allField) continue;
-      if (hunt.allField && mid !== "overworld" && mid !== "valley" && mid !== "orc_valley") continue;
+      if (hunt.allField && mid !== "overworld" && mid !== "valley" && mid !== "orc_valley" && !isBiomeMap(mid))
+        continue;
       const ring = zoneRing(huntMap || mid, hunt.zone || "mid");
       if (!ring) continue;
       const midR = (ring.minR + ring.maxR) / 2;
@@ -834,10 +867,16 @@ export class Game {
     if (mapId === MapService.currentId) {
       this.ui.toast(
         mapId === "orc_valley"
-          ? "Black orcs hold the isles — the war tower looms"
-          : mapId === "valley"
-            ? "Bandits roam Seungryong — rogue camp NW · east to Orc Isles"
-            : "Dogs & wolves by the walls — east portal to Seungryong"
+          ? "Black orcs hold the isles — outer portals lead to Fire, Desert & Snow"
+          : mapId === "fire_plains"
+            ? "Plains of Fire — hellhounds and lava orcs"
+            : mapId === "desert"
+              ? "Yongbi Desert — sand wolves and raiders"
+              : mapId === "snow"
+                ? "Mount Sohan — ice wolves and yetis"
+                : mapId === "valley"
+                  ? "Bandits roam Seungryong — rogue camp NW · east to Orc Isles"
+                  : "Dogs & wolves by the walls — east portal to Seungryong"
       );
     }
     this._syncEntityMapVisibility();
@@ -2104,10 +2143,20 @@ export class Game {
     }
 
     // Pulse edge portal rings + cozy chimney smoke
-    for (const root of [this.overworld, this.valleyRoot, this.orcRoot]) {
+    for (const root of [
+      this.overworld,
+      this.valleyRoot,
+      this.orcRoot,
+      this.fireRoot,
+      this.desertRoot,
+      this.snowRoot,
+    ]) {
       if (!root) continue;
       for (const key of ["edgePortal", "edgePortalEast"]) {
         const ep = root.userData?.[key];
+        if (ep?.userData?.ring) ep.userData.ring.rotation.z += dt * 1.2;
+      }
+      for (const ep of root.userData?.biomePortals || []) {
         if (ep?.userData?.ring) ep.userData.ring.rotation.z += dt * 1.2;
       }
       if (root.visible) animateWorldSmoke(root, this.time);

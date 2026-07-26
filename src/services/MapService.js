@@ -1,4 +1,6 @@
-/** Named maps — one city field + Seungryong + Orc Isles + dungeon */
+/** Named maps — kingdom fields + Orc Isles + biomes + dungeon */
+import { BIOME_DEFS } from "../data/biomeMaps.js";
+
 export const MAPS = {
   overworld: {
     id: "overworld",
@@ -29,6 +31,36 @@ export const MAPS = {
     fog: "#4a5a58",
     fogNear: 35,
     fogFar: 130,
+  },
+  fire_plains: {
+    id: "fire_plains",
+    name: BIOME_DEFS.fire_plains.name,
+    kind: "field",
+    half: BIOME_DEFS.fire_plains.half,
+    background: BIOME_DEFS.fire_plains.background,
+    fog: BIOME_DEFS.fire_plains.fog,
+    fogNear: BIOME_DEFS.fire_plains.fogNear,
+    fogFar: BIOME_DEFS.fire_plains.fogFar,
+  },
+  desert: {
+    id: "desert",
+    name: BIOME_DEFS.desert.name,
+    kind: "field",
+    half: BIOME_DEFS.desert.half,
+    background: BIOME_DEFS.desert.background,
+    fog: BIOME_DEFS.desert.fog,
+    fogNear: BIOME_DEFS.desert.fogNear,
+    fogFar: BIOME_DEFS.desert.fogFar,
+  },
+  snow: {
+    id: "snow",
+    name: BIOME_DEFS.snow.name,
+    kind: "field",
+    half: BIOME_DEFS.snow.half,
+    background: BIOME_DEFS.snow.background,
+    fog: BIOME_DEFS.snow.fog,
+    fogNear: BIOME_DEFS.snow.fogNear,
+    fogFar: BIOME_DEFS.snow.fogFar,
   },
   demon_tower: {
     id: "demon_tower",

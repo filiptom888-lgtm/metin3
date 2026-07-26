@@ -6,6 +6,7 @@ import { EDGE_PORTAL } from "../game/data.js";
 import { BANDIT_CAMP, banditCampPoint, inBanditCamp } from "../data/banditCamp.js";
 import { campsOnMap, inWildCamp, wildCampPoint } from "../data/wildCamps.js";
 import { outpostsOnMap, inOutpost } from "../data/outposts.js";
+import { BIOME_EDGE, isBiomeMap } from "../data/biomeMaps.js";
 
 function wildPoint(mapId, minR, maxR) {
   if (mapId === "orc_valley") {
@@ -13,16 +14,16 @@ function wildPoint(mapId, minR, maxR) {
     const zone = mid < 30 ? "near" : mid < 50 ? "mid" : "edge";
     return orcSpawnPoint(zone);
   }
-  const edge = EDGE_PORTAL;
+  const edge = isBiomeMap(mapId) ? BIOME_EDGE : EDGE_PORTAL;
   for (let attempt = 0; attempt < 40; attempt++) {
     const ang = Math.random() * Math.PI * 2;
     const r = minR + Math.random() * Math.max(0.5, maxR - minR);
     const p = { x: Math.cos(ang) * r, z: Math.sin(ang) * r };
     if (mapId === "overworld" && inDemonTowerZone(p.x, p.z)) continue;
-    if (mapId === "overworld" && Math.hypot(p.x - edge, p.z) < 10) continue;
-    if (mapId === "valley" && Math.hypot(p.x + edge, p.z) < 10) continue;
-    if (mapId === "valley" && Math.hypot(p.x - edge, p.z) < 10) continue;
-    // Keep rogue hamlet / tent camps for their own packs
+    if (mapId === "overworld" && Math.hypot(p.x - EDGE_PORTAL, p.z) < 10) continue;
+    if (mapId === "valley" && Math.hypot(p.x + EDGE_PORTAL, p.z) < 10) continue;
+    if (mapId === "valley" && Math.hypot(p.x - EDGE_PORTAL, p.z) < 10) continue;
+    if (isBiomeMap(mapId) && Math.hypot(p.x + edge, p.z) < 12) continue;
     if (mapId === BANDIT_CAMP.mapId && inBanditCamp(p.x, p.z, 4)) continue;
     if (inWildCamp(mapId, p.x, p.z, 3)) continue;
     if (inOutpost(mapId, p.x, p.z, 2)) continue;
@@ -107,6 +108,87 @@ function orcValleyWeights(zone, level) {
   ].filter((e) => e.w > 0);
 }
 
+function fireWeights(zone, level) {
+  if (zone === "near") {
+    return [
+      { id: "hellhound", w: 75 },
+      { id: "flame_imp", w: 25 },
+    ];
+  }
+  if (zone === "mid") {
+    return [
+      { id: "flame_imp", w: 50 },
+      { id: "hellhound", w: 30 },
+      { id: "lava_ork", w: level >= 30 ? 20 : 10 },
+    ];
+  }
+  return [
+    { id: "lava_ork", w: 55 },
+    { id: "flame_imp", w: 30 },
+    { id: "hellhound", w: 15 },
+  ];
+}
+
+function desertWeights(zone, level) {
+  if (zone === "near") {
+    return [
+      { id: "sand_wolf", w: 70 },
+      { id: "desert_raider", w: 30 },
+    ];
+  }
+  if (zone === "mid") {
+    return [
+      { id: "desert_raider", w: 55 },
+      { id: "sand_wolf", w: 25 },
+      { id: "sand_brute", w: level >= 28 ? 20 : 10 },
+    ];
+  }
+  return [
+    { id: "sand_brute", w: 50 },
+    { id: "desert_raider", w: 35 },
+    { id: "sand_wolf", w: 15 },
+  ];
+}
+
+function snowWeights(zone, level) {
+  if (zone === "near") {
+    return [
+      { id: "ice_wolf", w: 70 },
+      { id: "frost_ork", w: 30 },
+    ];
+  }
+  if (zone === "mid") {
+    return [
+      { id: "frost_ork", w: 50 },
+      { id: "ice_wolf", w: 30 },
+      { id: "yeti", w: level >= 32 ? 20 : 10 },
+    ];
+  }
+  return [
+    { id: "yeti", w: 50 },
+    { id: "frost_ork", w: 35 },
+    { id: "ice_wolf", w: 15 },
+  ];
+}
+
+function weightsForMap(mapId, zone, level) {
+  if (mapId === "orc_valley") return orcValleyWeights(zone, level);
+  if (mapId === "valley") return valleyWeights(zone, level);
+  if (mapId === "fire_plains") return fireWeights(zone, level);
+  if (mapId === "desert") return desertWeights(zone, level);
+  if (mapId === "snow") return snowWeights(zone, level);
+  return overworldWeights(zone, level);
+}
+
+function defaultMobId(mapId) {
+  if (mapId === "orc_valley") return "black_ork";
+  if (mapId === "valley") return "bandit";
+  if (mapId === "fire_plains") return "hellhound";
+  if (mapId === "desert") return "sand_wolf";
+  if (mapId === "snow") return "ice_wolf";
+  return "wolf";
+}
+
 export const SpawnService = {
   monsters: MONSTERS,
   metins: METINS,
@@ -116,15 +198,8 @@ export const SpawnService = {
   },
 
   pickMobForZone(mapId = "overworld", zone = "mid", levelBias = 1) {
-    const weights =
-      mapId === "orc_valley"
-        ? orcValleyWeights(zone, levelBias)
-        : mapId === "valley"
-          ? valleyWeights(zone, levelBias)
-          : overworldWeights(zone, levelBias);
-    const id =
-      pickWeighted(weights) ||
-      (mapId === "orc_valley" ? "black_ork" : mapId === "valley" ? "bandit" : "wolf");
+    const weights = weightsForMap(mapId, zone, levelBias);
+    const id = pickWeighted(weights) || defaultMobId(mapId);
     return MONSTERS[id] || MONSTERS.wolf;
   },
 
@@ -178,7 +253,10 @@ export const SpawnService = {
 
   /** Soft population cap for wild (excludes camp / metin waves still add) */
   wildMobCap(mapId = "overworld") {
-    return mapId === "orc_valley" ? 32 : mapId === "valley" ? 45 : 48;
+    if (mapId === "orc_valley") return 32;
+    if (isBiomeMap(mapId)) return 36;
+    if (mapId === "valley") return 45;
+    return 48;
   },
 
   pointInZone(mapId, zone) {
@@ -269,17 +347,23 @@ export const SpawnService = {
             { zone: "mid", count: 14 },
             { zone: "edge", count: 12 },
           ]
-        : mapId === "valley"
+        : isBiomeMap(mapId)
           ? [
-              { zone: "near", count: 16 },
-              { zone: "mid", count: 18 },
-              { zone: "edge", count: 16 },
+              { zone: "near", count: 14 },
+              { zone: "mid", count: 16 },
+              { zone: "edge", count: 14 },
             ]
-          : [
-              { zone: "near", count: 18 },
-              { zone: "mid", count: 20 },
-              { zone: "edge", count: 18 },
-            ];
+          : mapId === "valley"
+            ? [
+                { zone: "near", count: 16 },
+                { zone: "mid", count: 18 },
+                { zone: "edge", count: 16 },
+              ]
+            : [
+                { zone: "near", count: 18 },
+                { zone: "mid", count: 20 },
+                { zone: "edge", count: 18 },
+              ];
 
     for (const { zone, count } of plan) {
       for (let i = 0; i < count; i++) {

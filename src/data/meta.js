@@ -24,6 +24,12 @@ export const WORLD_WARPS = [
   { id: "valley_bandits", name: "Seungryong · Rogue Camp", mapId: "valley", x: -148, z: -148 },
   { id: "orc_tower", name: "Orc Isles · War Tower", mapId: "orc_valley", x: 0, z: 14 },
   { id: "orc_west", name: "Orc Isles · West Portal", mapId: "orc_valley", x: -64, z: 0 },
+  { id: "orc_fire", name: "Orc Isles · Fire Gate", mapId: "orc_valley", x: 50, z: 46 },
+  { id: "orc_desert", name: "Orc Isles · Desert Gate", mapId: "orc_valley", x: 56, z: -40 },
+  { id: "orc_snow", name: "Orc Isles · Snow Gate", mapId: "orc_valley", x: 70, z: 6 },
+  { id: "fire_portal", name: "Plains of Fire · Portal", mapId: "fire_plains", x: -82, z: 0 },
+  { id: "desert_portal", name: "Yongbi Desert · Portal", mapId: "desert", x: -82, z: 0 },
+  { id: "snow_portal", name: "Mount Sohan · Portal", mapId: "snow", x: -82, z: 0 },
 ];
 
 /** Two Metin2-style skill groups per class — chosen at Skill Master (Lv.5+) */

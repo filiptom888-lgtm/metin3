@@ -1964,7 +1964,14 @@ function drawWorldMap(viewId = _mapViewId) {
   const h = canvas.height;
   const pad = 20;
   const mid = _mapViewId;
-  const half = mid === "orc_valley" ? 80 : mid === "demon_tower" ? 18 : MAP_HALF;
+  const half =
+    mid === "orc_valley"
+      ? 80
+      : mid === "fire_plains" || mid === "desert" || mid === "snow"
+        ? 90
+        : mid === "demon_tower"
+          ? 18
+          : MAP_HALF;
   const size = half * 2;
   const toX = (x) => pad + ((x + half) / size) * (w - pad * 2);
   const toY = (z) => pad + ((z + half) / size) * (h - pad * 2);
@@ -1977,6 +1984,15 @@ function drawWorldMap(viewId = _mapViewId) {
   } else if (mid === "orc_valley") {
     g.addColorStop(0, "#2a3a28");
     g.addColorStop(1, "#1a2418");
+  } else if (mid === "fire_plains") {
+    g.addColorStop(0, "#4a2010");
+    g.addColorStop(1, "#2a1008");
+  } else if (mid === "desert") {
+    g.addColorStop(0, "#c4a060");
+    g.addColorStop(1, "#8a6840");
+  } else if (mid === "snow") {
+    g.addColorStop(0, "#c8d8e8");
+    g.addColorStop(1, "#8898a8");
   } else {
     g.addColorStop(0, "#3a5a32");
     g.addColorStop(1, "#243820");
@@ -2090,7 +2106,10 @@ function drawWorldMap(viewId = _mapViewId) {
     const hunt = questHuntFor(full);
     if (!hunt) continue;
     const onThis =
-      hunt.allField || hunt.mapId === mid || (hunt.mapId == null && ["overworld", "valley", "orc_valley"].includes(mid));
+      hunt.allField ||
+      hunt.mapId === mid ||
+      (hunt.mapId == null &&
+        ["overworld", "valley", "orc_valley", "fire_plains", "desert", "snow"].includes(mid));
     const isBio = (aq.giver || full.giver) === "biologist";
     const color = isBio ? "#7dff9a" : hunt.color || "#4db0ff";
     const ring = zoneRing(hunt.mapId || mid, hunt.zone || "mid");
@@ -2108,7 +2127,19 @@ function drawWorldMap(viewId = _mapViewId) {
       ctx.fillText(`${tag}: ${hunt.label}`, toX(lx), toY(lz));
     }
     const mapName =
-      hunt.mapId === "valley" ? "Seungryong" : hunt.mapId === "orc_valley" ? "Orc Isles" : hunt.allField ? "any field" : "Shinsoo";
+      hunt.mapId === "valley"
+        ? "Seungryong"
+        : hunt.mapId === "orc_valley"
+          ? "Orc Isles"
+          : hunt.mapId === "fire_plains"
+            ? "Plains of Fire"
+            : hunt.mapId === "desert"
+              ? "Yongbi Desert"
+              : hunt.mapId === "snow"
+                ? "Mount Sohan"
+                : hunt.allField
+                  ? "any field"
+                  : "Shinsoo";
     const done = aq.state === "completed" ? " — turn in!" : ` ${aq.progress}/${aq.count}`;
     questLines.push(
       `<span style="color:${isBio ? "#7dff9a" : "#4db0ff"}">${isBio ? "Biologist" : "Elder"}:</span> ${aq.name} · ${hunt.label} (${mapName})${done}`

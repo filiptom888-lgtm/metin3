@@ -133,7 +133,28 @@ export const DROP_TABLES = {
     { id: "leather_t75_weapon", chance: 0.015 },
     { id: "cloth_t75_weapon", chance: 0.015 },
   ],
+  // Biome trash — reuse mid/high tables with light tweaks via aliases
+  hellhound: null,
+  flame_imp: null,
+  lava_ork: null,
+  sand_wolf: null,
+  desert_raider: null,
+  sand_brute: null,
+  ice_wolf: null,
+  frost_ork: null,
+  yeti: null,
 };
+
+// Alias biome tables onto existing mid/elite drops (fill after object created)
+DROP_TABLES.hellhound = DROP_TABLES.wolf;
+DROP_TABLES.flame_imp = DROP_TABLES.bandit || DROP_TABLES.ork;
+DROP_TABLES.lava_ork = DROP_TABLES.elite_ork || DROP_TABLES.ork;
+DROP_TABLES.sand_wolf = DROP_TABLES.wolf;
+DROP_TABLES.desert_raider = DROP_TABLES.bandit || DROP_TABLES.ork;
+DROP_TABLES.sand_brute = DROP_TABLES.elite_ork || DROP_TABLES.ork;
+DROP_TABLES.ice_wolf = DROP_TABLES.wolf;
+DROP_TABLES.frost_ork = DROP_TABLES.ork;
+DROP_TABLES.yeti = DROP_TABLES.elite_ork || DROP_TABLES.ork;
 
 /** Resolve monster template id / kind → drop table key */
 export function resolveDropTable(id) {

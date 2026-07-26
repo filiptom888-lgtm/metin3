@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { CLASSES, MAP_HALF, MAP_SIZE, CITY_RADIUS, CITY_GATE, EDGE_PORTAL, TOWER_CORNER } from "./data.js";
 import { ORC_BRIDGES, ORC_ISLANDS, ORC_MAP_HALF, ORC_MAP_SIZE } from "../data/orcMap.js";
+import { BIOME_DEFS, BIOME_EDGE, BIOME_SIZE, ORC_BIOME_GATES, biomeIds } from "../data/biomeMaps.js";
 import { BANDIT_CAMP } from "../data/banditCamp.js";
 import { campsOnMap } from "../data/wildCamps.js";
 import { outpostsOnMap } from "../data/outposts.js";
@@ -2015,6 +2016,10 @@ export function makeOrcMapRoot() {
     for (let i = 0; i < n; i++) {
       const ang = Math.random() * Math.PI * 2;
       const r = 2 + Math.random() * (isle.r - 3.2);
+      // Clear biome portal pads on outer islets
+      if (Math.hypot(isle.x + Math.cos(ang) * r - 50, isle.z + Math.sin(ang) * r - 46) < 6) continue;
+      if (Math.hypot(isle.x + Math.cos(ang) * r - 56, isle.z + Math.sin(ang) * r + 40) < 6) continue;
+      if (Math.hypot(isle.x + Math.cos(ang) * r - 70, isle.z + Math.sin(ang) * r - 6) < 6) continue;
       const tree = NatureKit.randomForestTree(false, 6 + Math.random() * 4);
       if (!tree) continue;
       tagFadeTree(tree);
@@ -2024,11 +2029,14 @@ export function makeOrcMapRoot() {
     }
   }
 
-  // Mountain ring around the isles — no flat void box walls
+  // Mountain ring around the isles — leave gaps for west + biome portals
   addMapHorizon(root, {
     half: ORC_MAP_HALF,
     arid: false,
-    portalGaps: [{ x: -68.5, z: 0, w: 18 }],
+    portalGaps: [
+      { x: -68.5, z: 0, w: 18 },
+      ...ORC_BIOME_GATES.map((g) => ({ x: g.x, z: g.z, w: 14 })),
+    ],
   });
 
   const westPortal = makeMapPortalMesh("#c47a3a", "Seungryong");
@@ -2036,10 +2044,177 @@ export function makeOrcMapRoot() {
   westPortal.rotation.y = Math.PI / 2;
   root.add(westPortal);
 
-  root.userData = { mapId: "orc_valley", edgePortal: westPortal };
+  // Biome gates on outer islets
+  const biomePortals = [];
+  for (const g of ORC_BIOME_GATES) {
+    const mesh = makeMapPortalMesh(g.color, g.label.replace(/^Portal — /, ""));
+    mesh.position.set(g.x, 0, g.z);
+    // Face outward from main island
+    mesh.rotation.y = Math.atan2(g.x, g.z);
+    root.add(mesh);
+    biomePortals.push(mesh);
+    // Clear pad glow
+    const pad = new THREE.Mesh(
+      new THREE.CylinderGeometry(2.6, 2.8, 0.16, 16),
+      new THREE.MeshStandardMaterial({
+        color: g.color,
+        emissive: g.color,
+        emissiveIntensity: 0.35,
+        roughness: 0.55,
+      })
+    );
+    pad.position.set(g.x, 0.08, g.z);
+    root.add(pad);
+  }
+
+  root.userData = {
+    mapId: "orc_valley",
+    edgePortal: westPortal,
+    biomePortals,
+  };
   finalizeMapSmoke(root);
   return root;
 }
+
+/** Open biome field (fire / desert / snow) — flat hunting ground + return portal west. */
+export function makeBiomeMapRoot(biomeId) {
+  const def = BIOME_DEFS[biomeId];
+  if (!def) return null;
+  const root = new THREE.Group();
+  root.name = `map_${biomeId}`;
+  root.visible = false;
+
+  const half = def.half;
+  const size = half * 2;
+  const groundMat = new THREE.MeshStandardMaterial({
+    color: def.groundTint || def.ground,
+    roughness: def.props === "lava" ? 0.88 : 0.96,
+    metalness: def.props === "lava" ? 0.12 : 0.02,
+  });
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(size, size, 48, 48), groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  // Soft rolls for lava / dunes / drifts
+  const pos = ground.geometry.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const lx = pos.getX(i);
+    const ly = pos.getY(i);
+    const d = Math.hypot(lx, ly);
+    let h = 0;
+    if (def.props === "lava") {
+      h = Math.sin(lx * 0.08) * Math.cos(ly * 0.07) * 0.55 + (d > half * 0.7 ? 0.8 : 0);
+    } else if (def.props === "sand") {
+      h = Math.sin(lx * 0.05 + 1.2) * Math.cos(ly * 0.045) * 0.7;
+    } else {
+      h = Math.sin(lx * 0.04) * Math.cos(ly * 0.05) * 0.9 + Math.max(0, (d - half * 0.55) * 0.04);
+    }
+    pos.setZ(i, h);
+  }
+  pos.needsUpdate = true;
+  ground.geometry.computeVertexNormals();
+  root.add(ground);
+
+  // Biome props
+  if (def.props === "lava") {
+    const lavaMat = new THREE.MeshStandardMaterial({
+      color: "#c43c2e",
+      emissive: "#8b1e1e",
+      emissiveIntensity: 0.85,
+      roughness: 0.45,
+    });
+    for (let i = 0; i < 14; i++) {
+      const ang = (i / 14) * Math.PI * 2;
+      const r = 18 + (i % 4) * 12;
+      const pool = new THREE.Mesh(new THREE.CircleGeometry(2.2 + (i % 3) * 0.8, 16), lavaMat);
+      pool.rotation.x = -Math.PI / 2;
+      pool.position.set(Math.cos(ang) * r, 0.06, Math.sin(ang) * r);
+      root.add(pool);
+    }
+    const rock = new THREE.MeshBasicMaterial({ color: "#3a2a22" });
+    for (let i = 0; i < 22; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r = 12 + Math.random() * (half - 22);
+      const peak = new THREE.Mesh(
+        new THREE.ConeGeometry(1.4 + Math.random() * 2.2, 3 + Math.random() * 5, 5),
+        rock
+      );
+      peak.position.set(Math.cos(ang) * r, 1.5, Math.sin(ang) * r);
+      root.add(peak);
+    }
+  } else if (def.props === "sand") {
+    const dune = mat("#c9a878", { roughness: 0.98 });
+    for (let i = 0; i < 16; i++) {
+      const ang = (i / 16) * Math.PI * 2 + 0.2;
+      const r = 22 + (i % 5) * 8;
+      const mound = new THREE.Mesh(new THREE.SphereGeometry(3.5 + (i % 3), 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.45), dune);
+      mound.position.set(Math.cos(ang) * r, 0.2, Math.sin(ang) * r);
+      mound.scale.set(1.4, 0.45, 1.1);
+      root.add(mound);
+    }
+    for (let i = 0; i < 10; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r = 15 + Math.random() * 50;
+      const cactus = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.25, 0.35, 2.2 + Math.random(), 6),
+        mat("#3a6a38")
+      );
+      cactus.position.set(Math.cos(ang) * r, 1.1, Math.sin(ang) * r);
+      root.add(cactus);
+    }
+  } else {
+    // snow — sparse pines + ice rocks
+    for (let i = 0; i < 40; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r = 14 + Math.random() * (half - 24);
+      if (Math.hypot(Math.cos(ang) * r + BIOME_EDGE, Math.sin(ang) * r) < 14) continue;
+      const tree = NatureKit.randomForestTree(false, 6 + Math.random() * 4) || makeFallbackTree(false);
+      if (!tree) continue;
+      tagFadeTree(tree);
+      tree.position.set(Math.cos(ang) * r, 0, Math.sin(ang) * r);
+      tree.rotation.y = Math.random() * Math.PI * 2;
+      // Tint foliage cooler
+      tree.traverse((o) => {
+        if (o.isMesh && o.material?.color) o.material.color.offsetHSL(0, -0.15, 0.12);
+      });
+      root.add(tree);
+    }
+    const ice = new THREE.MeshBasicMaterial({ color: "#b8c8d8" });
+    for (let i = 0; i < 12; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r = 20 + Math.random() * 45;
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(1.2 + Math.random(), 0), ice);
+      rock.position.set(Math.cos(ang) * r, 0.6, Math.sin(ang) * r);
+      root.add(rock);
+    }
+  }
+
+  addMapHorizon(root, {
+    half,
+    arid: def.props !== "snow",
+    portalGaps: [{ x: -BIOME_EDGE, z: 0, w: 18 }],
+  });
+
+  const ret = makeMapPortalMesh(def.portalColor, def.returnLabel);
+  ret.position.set(-BIOME_EDGE, 0, 0);
+  ret.rotation.y = Math.PI / 2;
+  root.add(ret);
+
+  root.userData = { mapId: biomeId, edgePortal: ret };
+  return root;
+}
+
+export function makeFirePlainsRoot() {
+  return makeBiomeMapRoot("fire_plains");
+}
+export function makeDesertMapRoot() {
+  return makeBiomeMapRoot("desert");
+}
+export function makeSnowMapRoot() {
+  return makeBiomeMapRoot("snow");
+}
+
+void biomeIds;
+void BIOME_SIZE;
 
 function makeOrcWarTower() {
   const g = new THREE.Group();
@@ -2973,7 +3148,6 @@ export function makeMobMesh(kind = "wolf") {
       attachHpBar(gltf, { y: 4.2, scaleX: 2.4, scaleY: 0.45 });
       return gltf;
     }
-    // Fallback while GLB loads — scaled elite orc silhouette
     const fallback = makeOrkMesh({ black: true, elite: true, brute: true });
     fallback.scale.setScalar(1.35);
     fallback.userData.kind = "ophanim";
@@ -2984,34 +3158,74 @@ export function makeMobMesh(kind = "wolf") {
   if (kind === "black_ork") return makeOrkMesh({ black: true });
   if (kind === "black_ork_brute") return makeOrkMesh({ black: true, brute: true });
   if (kind === "orc_chief") return makeOrkMesh({ black: true, elite: true, brute: true });
-  if (kind === "human" || kind === "bandit" || kind === "soldier" || kind === "rogue_chief") {
+  if (kind === "lava_ork") return makeOrkMesh({ palette: "lava", elite: true });
+  if (kind === "frost_ork") return makeOrkMesh({ palette: "frost", elite: true });
+  if (kind === "sand_brute" || kind === "yeti") {
+    return makeOrkMesh({
+      palette: kind === "yeti" ? "frost" : "sand",
+      brute: true,
+      elite: true,
+    });
+  }
+  if (
+    kind === "human" ||
+    kind === "bandit" ||
+    kind === "soldier" ||
+    kind === "rogue_chief" ||
+    kind === "desert_raider" ||
+    kind === "flame_imp"
+  ) {
     return makeHumanMobMesh({
-      soldier: kind === "soldier",
+      soldier: kind === "soldier" || kind === "desert_raider",
       chief: kind === "rogue_chief",
+      palette: kind === "flame_imp" ? "lava" : kind === "desert_raider" ? "sand" : null,
     });
   }
   if (kind === "dog") return makeWolfMesh({ dog: true });
   if (kind === "alpha_wolf") return makeWolfMesh({ alpha: true });
+  if (kind === "hellhound") return makeWolfMesh({ alpha: true, palette: "lava" });
+  if (kind === "sand_wolf") return makeWolfMesh({ palette: "sand" });
+  if (kind === "ice_wolf") return makeWolfMesh({ alpha: true, palette: "frost" });
   return makeWolfMesh();
 }
 
-function makeHumanMobMesh({ soldier = false, chief = false } = {}) {
+function makeHumanMobMesh({ soldier = false, chief = false, palette = null } = {}) {
   const root = new THREE.Group();
   const rig = new THREE.Group();
   root.add(rig);
   root.add(groundShadow(chief ? 1.45 : soldier ? 1.2 : 1.05));
   if (chief) root.scale.setScalar(1.22);
+  if (palette === "lava") root.scale.setScalar(0.88);
 
-  const skin = mat("#d4a882", { roughness: 0.7 });
-  const cloth = mat(chief ? "#3a1818" : soldier ? "#6a4a28" : "#4a3a32", { roughness: 0.75 });
-  const accent = mat(chief ? "#c43c2e" : soldier ? "#8a8e92" : "#8a3030", {
-    metalness: chief ? 0.25 : soldier ? 0.45 : 0.15,
-    roughness: 0.5,
-    emissive: chief ? "#4a1010" : 0x000000,
-    emissiveIntensity: chief ? 0.2 : 0,
-  });
+  const skin = mat(
+    palette === "lava" ? "#8a4030" : palette === "sand" ? "#d2b48c" : "#d4a882",
+    { roughness: 0.7 }
+  );
+  const cloth = mat(
+    palette === "lava"
+      ? "#6a2010"
+      : palette === "sand"
+        ? "#c4a060"
+        : chief
+          ? "#3a1818"
+          : soldier
+            ? "#6a4a28"
+            : "#4a3a32",
+    { roughness: 0.75 }
+  );
+  const accent = mat(
+    palette === "lava" ? "#c43c2e" : palette === "sand" ? "#8a6a30" : chief ? "#c43c2e" : soldier ? "#8a8e92" : "#8a3030",
+    {
+      metalness: chief ? 0.25 : soldier ? 0.45 : 0.15,
+      roughness: 0.5,
+      emissive: chief || palette === "lava" ? "#4a1010" : 0x000000,
+      emissiveIntensity: chief || palette === "lava" ? 0.25 : 0,
+    }
+  );
   const hair = mat("#2a1a12");
-  const pants = mat(soldier || chief ? "#3a3228" : "#2a2824");
+  const pants = mat(
+    palette === "lava" ? "#3a1810" : palette === "sand" ? "#6a5840" : soldier || chief ? "#3a3228" : "#2a2824"
+  );
 
   const hips = new THREE.Group();
   hips.position.y = 0.85;
@@ -3086,7 +3300,7 @@ function makeHumanMobMesh({ soldier = false, chief = false } = {}) {
   return root;
 }
 
-function makeWolfMesh({ dog = false, alpha = false } = {}) {
+function makeWolfMesh({ dog = false, alpha = false, palette = null } = {}) {
   const root = new THREE.Group();
   const rig = new THREE.Group();
   root.add(rig);
@@ -3094,14 +3308,46 @@ function makeWolfMesh({ dog = false, alpha = false } = {}) {
   root.scale.setScalar(scale);
   root.add(groundShadow(dog ? 0.85 : alpha ? 1.25 : 1.1));
 
-  const fur = mat(dog ? "#6a5a42" : alpha ? "#3a4230" : "#5a6248", { roughness: 0.88 });
-  const dark = mat(dog ? "#3a3228" : alpha ? "#1e2418" : "#2e3424", { roughness: 0.9 });
-  const snout = mat(dog ? "#8a7a60" : "#6a7058", { roughness: 0.7 });
-  const eye = mat(dog ? "#c8a060" : alpha ? "#ff6a3a" : "#e8c84a", {
-    emissive: dog ? "#6a4010" : alpha ? "#a82810" : "#a87810",
-    emissiveIntensity: alpha ? 0.75 : 0.55,
-    flat: true,
-  });
+  const fur = mat(
+    palette === "lava"
+      ? "#4a1810"
+      : palette === "frost"
+        ? "#d8e4f0"
+        : palette === "sand"
+          ? "#c4a878"
+          : dog
+            ? "#6a5a42"
+            : alpha
+              ? "#3a4230"
+              : "#5a6248",
+    { roughness: 0.88 }
+  );
+  const dark = mat(
+    palette === "lava"
+      ? "#2a0c08"
+      : palette === "frost"
+        ? "#6a8098"
+        : palette === "sand"
+          ? "#8a6a40"
+          : dog
+            ? "#3a3228"
+            : alpha
+              ? "#1e2418"
+              : "#2e3424",
+    { roughness: 0.9 }
+  );
+  const snout = mat(
+    palette === "lava" ? "#6a3020" : palette === "frost" ? "#b0c4d8" : palette === "sand" ? "#d2b896" : dog ? "#8a7a60" : "#6a7058",
+    { roughness: 0.7 }
+  );
+  const eye = mat(
+    palette === "lava" ? "#ff4020" : palette === "frost" ? "#80d0ff" : dog ? "#c8a060" : alpha ? "#ff6a3a" : "#e8c84a",
+    {
+      emissive: palette === "lava" ? "#a01808" : palette === "frost" ? "#2080c0" : dog ? "#6a4010" : alpha ? "#a82810" : "#a87810",
+      emissiveIntensity: alpha || palette ? 0.8 : 0.55,
+      flat: true,
+    }
+  );
   const fang = mat("#e8e0d0", { roughness: 0.4 });
 
   // torso
@@ -3167,7 +3413,7 @@ function makeWolfMesh({ dog = false, alpha = false } = {}) {
   return root;
 }
 
-function makeOrkMesh({ elite = false, black = false, brute = false } = {}) {
+function makeOrkMesh({ elite = false, black = false, brute = false, palette = null } = {}) {
   const root = new THREE.Group();
   const rig = new THREE.Group();
   root.add(rig);
@@ -3176,17 +3422,35 @@ function makeOrkMesh({ elite = false, black = false, brute = false } = {}) {
   rig.scale.setScalar(scale);
 
   const skin = mat(
-    black ? (brute ? "#141812" : "#1e261c") : elite ? "#3a5a28" : "#4a6a32",
+    palette === "lava"
+      ? "#6a2818"
+      : palette === "frost"
+        ? "#c8d8e8"
+        : palette === "sand"
+          ? "#c4a060"
+          : black
+            ? brute
+              ? "#141812"
+              : "#1e261c"
+            : elite
+              ? "#3a5a28"
+              : "#4a6a32",
     { roughness: 0.75 }
   );
-  const leather = mat(black ? "#2a1e14" : "#5a3a22", { roughness: 0.85 });
-  const iron = mat(black ? "#4a4e52" : "#6a6e72", { metalness: 0.55, roughness: 0.4 });
-  const dark = mat("#2a2218");
-  const eye = mat(black ? "#ff4028" : "#c43c2e", {
-    emissive: black ? "#a01808" : "#8b1e1e",
-    emissiveIntensity: black ? 0.85 : 0.6,
+  const leather = mat(
+    palette === "lava" ? "#3a1810" : palette === "frost" ? "#4a5a6a" : palette === "sand" ? "#8a6a40" : black ? "#2a1e14" : "#5a3a22",
+    { roughness: 0.85 }
+  );
+  const iron = mat(
+    palette === "lava" ? "#8a4030" : palette === "frost" ? "#a0c0d8" : palette === "sand" ? "#b09050" : black ? "#4a4e52" : "#6a6e72",
+    { metalness: 0.55, roughness: 0.4 }
+  );
+  const dark = mat(palette === "frost" ? "#3a4858" : "#2a2218");
+  const eye = mat(palette === "lava" ? "#ff5020" : palette === "frost" ? "#60c0ff" : black ? "#ff4028" : "#c43c2e", {
+    emissive: palette === "lava" ? "#a01808" : palette === "frost" ? "#1860a0" : black ? "#a01808" : "#8b1e1e",
+    emissiveIntensity: black || palette ? 0.85 : 0.6,
   });
-  const tusk = mat(black ? "#d0c8b0" : "#e8e0d0", { roughness: 0.35 });
+  const tusk = mat(palette === "frost" ? "#f0f4f8" : black ? "#d0c8b0" : "#e8e0d0", { roughness: 0.35 });
 
   const hips = new THREE.Group();
   hips.position.y = 0.85;

@@ -14,6 +14,15 @@ export const QUEST_HUNT = {
   bandit: { mapId: "valley", zone: "near", label: "Bandits", color: "#e8b84a" },
   soldier: { mapId: "valley", zone: "edge", label: "Soldiers", color: "#d4a060" },
   black_ork: { mapId: "orc_valley", zone: "near", label: "Black Orcs", color: "#6a8a4a" },
+  hellhound: { mapId: "fire_plains", zone: "near", label: "Hellhounds", color: "#ff6a30" },
+  flame_imp: { mapId: "fire_plains", zone: "mid", label: "Flame Imps", color: "#c43c2e" },
+  lava_ork: { mapId: "fire_plains", zone: "edge", label: "Lava Orcs", color: "#a82818" },
+  sand_wolf: { mapId: "desert", zone: "near", label: "Sand Wolves", color: "#c4a060" },
+  desert_raider: { mapId: "desert", zone: "mid", label: "Desert Raiders", color: "#e8c060" },
+  sand_brute: { mapId: "desert", zone: "edge", label: "Sand Brutes", color: "#8a6840" },
+  ice_wolf: { mapId: "snow", zone: "near", label: "Ice Wolves", color: "#a8d8ff" },
+  frost_ork: { mapId: "snow", zone: "mid", label: "Frost Orcs", color: "#80b0d0" },
+  yeti: { mapId: "snow", zone: "edge", label: "Yetis", color: "#e8f0f8" },
   metin: { mapId: null, zone: "mid", label: "Metins", color: "#c43c2e", allField: true },
 };
 
@@ -70,7 +79,7 @@ export const MINIBOSS_AREAS = [
 export function metinSpawnRing(mapId) {
   const rings = SPAWN_ZONES[mapId];
   if (!rings) return null;
-  const half = mapId === "orc_valley" ? 80 : MAP_HALF;
+  const half = mapId === "orc_valley" ? 80 : mapId === "fire_plains" || mapId === "desert" || mapId === "snow" ? 90 : MAP_HALF;
   return {
     minR: Math.max(CITY_RADIUS + 8, rings.mid.minR),
     maxR: Math.min(half - 6, rings.edge.maxR),
@@ -80,7 +89,7 @@ export function metinSpawnRing(mapId) {
 export function zoneRing(mapId, zone) {
   const rings = SPAWN_ZONES[mapId];
   if (!rings?.[zone]) return null;
-  const half = mapId === "orc_valley" ? 80 : MAP_HALF;
+  const half = mapId === "orc_valley" ? 80 : mapId === "fire_plains" || mapId === "desert" || mapId === "snow" ? 90 : MAP_HALF;
   const r = rings[zone];
   return {
     minR: r.minR,

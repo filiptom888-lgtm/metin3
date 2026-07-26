@@ -92,6 +92,10 @@ export function orcSpawnPoint(zone = "mid") {
     const z = isle.z + Math.sin(ang) * r;
     // Keep clear of west portal pad
     if (Math.hypot(x + 68.5, z) < 8) continue;
+    // Keep clear of biome portal pads
+    if (Math.hypot(x - 50, z - 46) < 7) continue;
+    if (Math.hypot(x - 56, z + 40) < 7) continue;
+    if (Math.hypot(x - 70, z - 6) < 7) continue;
     // Keep clear of war tower core
     if (isle.tier === "main" && Math.hypot(x, z) < 9) continue;
     // Keep clear of Isle Gatekeeper teleporter pad (0, 14)
