@@ -106,7 +106,7 @@ const ui = {
       el.title = def ? `${def.name} (key ${i + 5}) — click use · right-click clear` : `Empty potion slot ${i + 5}`;
       el.innerHTML = `
         <span class="k">${i + 5}</span>
-        ${def ? itemIconHtml(def, { cls: "sk-ico item-ico" }) : `<img class="sk-ico item-ico pot-empty" src="/icons/items/red_potion.svg" alt="Empty potion" draggable="false" />`}
+        ${def ? itemIconHtml(def, { cls: "sk-ico item-ico" }) : `<img class="sk-ico item-ico pot-empty" src="/icons/items/red_potion.svg?v=2" alt="Empty potion" draggable="false" />`}
         ${def ? `<span class="sk-qty">×${qty}</span>` : ""}
         <div class="cd" hidden></div>
       `;
@@ -185,7 +185,7 @@ const ui = {
           } else {
             const img = document.createElement("img");
             img.className = "sk-ico item-ico pot-empty";
-            img.src = "/icons/items/red_potion.svg";
+            img.src = "/icons/items/red_potion.svg?v=2";
             img.alt = "Empty potion";
             img.draggable = false;
             ico.replaceWith(img);

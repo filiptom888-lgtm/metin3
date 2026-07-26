@@ -415,6 +415,7 @@ export const ITEM_TEMPLATES = {
     sell: 15,
     stackable: true,
     icon: "🧪",
+    sprite: "/icons/items/red_potion.svg?v=2",
   },
   blue_potion: {
     id: "blue_potion",
@@ -425,6 +426,7 @@ export const ITEM_TEMPLATES = {
     sell: 15,
     stackable: true,
     icon: "🧪",
+    sprite: "/icons/items/blue_potion.svg?v=2",
   },
   orange_potion: {
     id: "orange_potion",
@@ -435,6 +437,7 @@ export const ITEM_TEMPLATES = {
     sell: 60,
     stackable: true,
     icon: "🧪",
+    sprite: "/icons/items/orange_potion.svg?v=2",
   },
   green_potion: {
     id: "green_potion",
@@ -446,6 +449,7 @@ export const ITEM_TEMPLATES = {
     sell: 90,
     stackable: true,
     icon: "🧪",
+    sprite: "/icons/items/green_potion.svg?v=2",
   },
   upgrade_ore: {
     id: "upgrade_ore",

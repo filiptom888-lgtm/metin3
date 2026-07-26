@@ -21,14 +21,14 @@ export function itemIconHtml(itemOrId, { cls = "ico", size = null } = {}) {
   const color = RARITY_COLOR[rarity] || "#c8c8c8";
   const style = [
     size ? `width:${size}px;height:${size}px` : "",
-    `border-color:${color}`,
+    // rarity tint only on fallback emoji — images stay frameless
   ]
     .filter(Boolean)
     .join(";");
 
   const emoji = def?.icon || "·";
   if (url) {
-    return `<img class="${cls} item-ico" src="${url}" alt="${def?.name || id || ""}" style="${style}" draggable="false" onerror="this.style.display='none';this.nextElementSibling&&(this.nextElementSibling.hidden=false)" /><span class="${cls}" style="${style}" hidden>${emoji}</span>`;
+    return `<img class="${cls} item-ico" src="${url}" alt="${def?.name || id || ""}"${style ? ` style="${style}"` : ""} draggable="false" onerror="this.style.display='none';this.nextElementSibling&&(this.nextElementSibling.hidden=false)" /><span class="${cls}" style="color:${color}${style ? `;${style}` : ""}" hidden>${emoji}</span>`;
   }
   return `<span class="${cls}" style="${style}">${emoji}</span>`;
 }
