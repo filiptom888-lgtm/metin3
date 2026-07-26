@@ -158,6 +158,14 @@ export const NatureKit = {
     return g;
   },
 
+  /** Clone scaled so the model’s authored height becomes `targetHeight` world units. */
+  cloneToHeight(key, targetHeight) {
+    const src = cache.get(key);
+    if (!src) return null;
+    const base = src.userData.baseHeight || 1;
+    return this.clone(key, Math.max(0.2, targetHeight / base));
+  },
+
   randomTree(arid = false, scale = 1) {
     const list = arid ? DRY_TREES : GREEN_TREES;
     for (let i = 0; i < 6; i++) {
@@ -168,30 +176,33 @@ export const NatureKit = {
     return null;
   },
 
-  /** Dense forest canopy trees (prefer bulky models). */
-  randomForestTree(arid = false, scale = 1) {
+  /** Dense forest canopy trees sized to real world height (player ~1.8). */
+  randomForestTree(arid = false, targetHeight = 7) {
     const list = arid ? DRY_FOREST : FOREST_TREES;
     for (let i = 0; i < 8; i++) {
       const key = list[(Math.random() * list.length) | 0];
-      const m = this.clone(key, scale);
+      const m = this.cloneToHeight(key, targetHeight);
       if (m) return m;
     }
-    return this.randomTree(arid, scale);
+    // Fallback: absolute scale if height metadata missing
+    return this.randomTree(arid, targetHeight / 2.2);
   },
 
-  randomRock(scale = 1) {
+  randomRock(targetHeight = 1.8) {
     const keys = ["rock_large_a", "rock_large_b", "rock_small_a", "rock_small_b", "cliff_half", "cliff_block"];
     for (let i = 0; i < 6; i++) {
-      const m = this.clone(keys[(Math.random() * keys.length) | 0], scale);
+      const key = keys[(Math.random() * keys.length) | 0];
+      const m = this.cloneToHeight(key, targetHeight);
       if (m) return m;
     }
     return null;
   },
 
-  randomBush(scale = 1) {
-    const keys = ["bush", "bush_detailed", "bush_large"];
+  randomBush(targetHeight = 1.6) {
+    const keys = ["bush_large", "bush_detailed", "bush", "bush_large"];
     for (let i = 0; i < 4; i++) {
-      const m = this.clone(keys[(Math.random() * keys.length) | 0], scale);
+      const key = keys[(Math.random() * keys.length) | 0];
+      const m = this.cloneToHeight(key, targetHeight);
       if (m) return m;
     }
     return null;
