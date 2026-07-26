@@ -83,16 +83,7 @@
           <div class="hud-top-left">
             <div class="brand-mini">METIN3</div>
             <div class="chip-row">
-              <div id="room-chip">WORLD</div>
-              <div id="map-chip">Kingdom</div>
-              <div id="host-chip">CLIENT</div>
-              <div id="players-chip">1</div>
-            </div>
-            <div class="hud-menu-btns">
-              <button type="button" id="btn-hud-inv" class="hud-menu-btn" title="Inventory (I)">Bag</button>
-              <button type="button" id="btn-hud-char" class="hud-menu-btn" title="Character (C)">Char</button>
-              <button type="button" id="btn-hud-quests" class="hud-menu-btn" title="Quests (Q)">Quest</button>
-              <button type="button" id="btn-hud-menu" class="hud-menu-btn" title="Menu (Esc)">Menu</button>
+              <div id="players-chip">1 online</div>
             </div>
 
             <button type="button" id="quest-mail-btn" class="quest-mail-btn" hidden title="Quest messages">
@@ -115,8 +106,13 @@
             </div>
           </div>
 
-          <div id="minimap" class="m2-minimap">
-            <canvas id="mini" width="148" height="148"></canvas>
+          <div class="hud-top-right">
+            <div id="minimap" class="m2-minimap">
+              <canvas id="mini" width="148" height="148"></canvas>
+            </div>
+            <button type="button" id="btn-sys-square" class="sys-square-btn" title="System menu (Esc)">
+              <span class="sys-square-ico" aria-hidden="true"></span>
+            </button>
           </div>
 
           <div class="m2-bottom">
@@ -151,13 +147,7 @@
                 <div class="cast-bar-track"><i id="cast-bar-fill"></i></div>
               </div>
               <div id="skill-bar" class="m2-hotbar"></div>
-              <div class="hotbar-hint">1–4 skills · 5–6 potions · Esc menu · K skills · I inventory</div>
-            </div>
-
-            <div class="m2-stats-panel">
-              <div class="stat-line"><span>Yang</span><b id="stat-gold">0</b></div>
-              <div class="stat-line"><span>Metins</span><b id="stat-metins">0</b></div>
-              <div class="stat-line"><span>Kills</span><b id="stat-kills">0</b></div>
+              <div class="hotbar-hint">1–4 skills · 5–6 potions · Esc menu</div>
             </div>
           </div>
 
@@ -335,6 +325,12 @@
         <div id="panel-menu" class="panel m2-panel panel-menu" hidden>
           <header><h3>System Menu</h3><button type="button" data-close="menu">✕</button></header>
           <div class="panel-body">
+            <div class="menu-status">
+              <div class="menu-status-row"><span>Yang</span><b id="stat-gold">0</b></div>
+              <div class="menu-status-row"><span>Metins</span><b id="stat-metins">0</b></div>
+              <div class="menu-status-row"><span>Kills</span><b id="stat-kills">0</b></div>
+              <div class="menu-status-row"><span>Map</span><b id="menu-map-name">Shinsoo</b></div>
+            </div>
             <p class="menu-hint">Progress saves to your account automatically.</p>
             <div class="menu-nav">
               <button type="button" class="menu-nav-btn" data-menu-panel="char">

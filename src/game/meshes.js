@@ -363,16 +363,17 @@ export function animateWorldSmoke(root, t) {
 export function createRenderer(canvas) {
   const renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias: true,
+    antialias: false,
     powerPreference: "high-performance",
   });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // Soft PCF is expensive with dense forests — basic still reads fine
+  renderer.shadowMap.type = THREE.BasicShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.15;
+  renderer.toneMappingExposure = 1.12;
   return renderer;
 }
 
@@ -679,7 +680,7 @@ function addCityCozyProps(scene, { warm = true } = {}) {
     if (i % 2 === 0) {
       const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.38, 0.7, 10), wood);
       barrel.position.set(bx, 0.35, bz);
-      barrel.castShadow = true;
+      barrel.castShadow = false;
       scene.add(barrel);
       const band = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.03, 6, 14), iron);
       band.rotation.x = Math.PI / 2;
@@ -689,7 +690,7 @@ function addCityCozyProps(scene, { warm = true } = {}) {
       const crate = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.45, 0.55), wood);
       crate.position.set(bx, 0.22, bz);
       crate.rotation.y = ang;
-      crate.castShadow = true;
+      crate.castShadow = false;
       scene.add(crate);
     }
   }
@@ -724,7 +725,7 @@ function makeFallbackTree(arid = false) {
   const trunkH = arid ? 3.6 : 4.4;
   const t = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.62, trunkH, 8), trunk);
   t.position.y = trunkH * 0.5;
-  t.castShadow = true;
+  t.castShadow = false;
   g.add(t);
   const layers = arid
     ? [
@@ -743,7 +744,7 @@ function makeFallbackTree(arid = false) {
   for (const [r, h, y] of layers) {
     const cone = new THREE.Mesh(new THREE.ConeGeometry(r, h, 9), leaf);
     cone.position.y = y;
-    cone.castShadow = true;
+    cone.castShadow = false;
     g.add(cone);
   }
   return g;
@@ -783,6 +784,12 @@ function plantTreeAt(group, x, z, mapId, arid, scaleMul = 1) {
     tree.scale.setScalar(targetH / approx);
   }
   tree.rotation.y = Math.random() * Math.PI * 2;
+  // Only a fraction of trees cast shadows (big FPS win in dense forests)
+  if (Math.random() < 0.12) {
+    tree.traverse((o) => {
+      if (o.isMesh) o.castShadow = true;
+    });
+  }
   placeAtHeight(tree, x, z, mapId);
   group.add(tree);
   if (Math.random() < 0.55) {
@@ -1269,19 +1276,19 @@ function makeMountainPeak(h, rockMat, tipMat, foothill = false) {
   const baseR = foothill ? h * 0.58 : h * 0.4;
   const base = new THREE.Mesh(new THREE.ConeGeometry(baseR, h, foothill ? 5 : 6), rockMat);
   base.position.y = h * 0.5;
-  base.castShadow = true;
-  base.receiveShadow = true;
+  base.castShadow = false;
+  base.receiveShadow = false;
   g.add(base);
   if (!foothill && h > 9) {
     const tip = new THREE.Mesh(new THREE.ConeGeometry(baseR * 0.32, h * 0.26, 5), tipMat);
     tip.position.y = h * 0.86;
-    tip.castShadow = true;
+    tip.castShadow = false;
     g.add(tip);
   }
   if (!foothill) {
     const side = new THREE.Mesh(new THREE.ConeGeometry(baseR * 0.48, h * 0.55, 5), rockMat);
     side.position.set(baseR * 0.55, h * 0.28, baseR * 0.1);
-    side.castShadow = true;
+    side.castShadow = false;
     g.add(side);
   }
   return g;
@@ -1390,14 +1397,17 @@ export function createScene() {
   const sun = new THREE.DirectionalLight(0xffe8c8, 1.25);
   sun.position.set(40, 55, 25);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.near = 5;
-  sun.shadow.camera.far = 420;
-  sun.shadow.camera.left = -220;
-  sun.shadow.camera.right = 220;
-  sun.shadow.camera.top = 220;
-  sun.shadow.camera.bottom = -220;
+  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.camera.near = 2;
+  sun.shadow.camera.far = 140;
+  sun.shadow.camera.left = -55;
+  sun.shadow.camera.right = 55;
+  sun.shadow.camera.top = 55;
+  sun.shadow.camera.bottom = -55;
+  sun.shadow.bias = -0.0008;
+  sun.shadow.normalBias = 0.04;
   scene.add(sun);
+  scene.add(sun.target);
 
   // Full overworld map root (ground + city + wilderness) — swapped vs dungeon maps
   const overworld = new THREE.Group();
@@ -1859,16 +1869,17 @@ export function makeOrcMapRoot() {
     if (Math.hypot(x, z - 14) < 5) continue;
     const g = new THREE.Group();
     const h = 5.5 + Math.random() * 6.5;
+    const cast = Math.random() < 0.12;
     const t = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.58, h, 7), trunk);
     t.position.y = h / 2;
-    t.castShadow = true;
+    t.castShadow = cast;
     g.add(t);
     const c1 = new THREE.Mesh(
       new THREE.ConeGeometry(2.2 + Math.random() * 1.6, 4.2 + Math.random() * 2.4, 7),
       Math.random() < 0.5 ? canopy : canopyDark
     );
     c1.position.y = h + 0.6;
-    c1.castShadow = true;
+    c1.castShadow = cast;
     g.add(c1);
     if (Math.random() < 0.65) {
       const c2 = new THREE.Mesh(
@@ -1876,7 +1887,7 @@ export function makeOrcMapRoot() {
         canopyDark
       );
       c2.position.y = h + 2.4;
-      c2.castShadow = true;
+      c2.castShadow = cast;
       g.add(c2);
     }
     g.position.set(x, 0, z);
@@ -1893,13 +1904,14 @@ export function makeOrcMapRoot() {
       const r = 2 + Math.random() * (isle.r - 3.2);
       const g = new THREE.Group();
       const h = 4.2 + Math.random() * 4.5;
+      const cast = Math.random() < 0.12;
       const t = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.45, h, 6), trunk);
       t.position.y = h / 2;
-      t.castShadow = true;
+      t.castShadow = cast;
       g.add(t);
       const c1 = new THREE.Mesh(new THREE.ConeGeometry(1.8 + Math.random() * 0.9, 3.4, 6), canopyDark);
       c1.position.y = h + 0.35;
-      c1.castShadow = true;
+      c1.castShadow = cast;
       g.add(c1);
       g.position.set(isle.x + Math.cos(ang) * r, 0, isle.z + Math.sin(ang) * r);
       root.add(g);

@@ -2118,6 +2118,13 @@ export class Game {
     // Day / night (field maps) — road torches glow after dusk
     applyDayNight(this.scene, this.sun, this.hemi, this.worldTime, this._collectTorchLights());
 
+    // Keep the tight shadow frustum centered on the local player
+    if (this.sun && p) {
+      this.sun.position.set(p.x + 35, 48, p.z + 22);
+      this.sun.target.position.set(p.x, gy, p.z);
+      this.sun.target.updateMatrixWorld();
+    }
+
     // Stay behind while moving; free orbit when idle / RMB drag
     if (!this._orbiting && p.moving) {
       const behind = p.rot + Math.PI;

@@ -162,9 +162,12 @@ const ui = {
     }
     $("#txt-hp").textContent = `${Math.ceil(p.hp)}`;
     $("#txt-sp").textContent = `${Math.floor(p.sp)}`;
-    $("#stat-metins").textContent = String(p.metins);
-    $("#stat-kills").textContent = String(p.kills);
-    $("#stat-gold").textContent = String(p.gold || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    const elMetins = $("#stat-metins");
+    const elKills = $("#stat-kills");
+    const elGold = $("#stat-gold");
+    if (elMetins) elMetins.textContent = String(p.metins);
+    if (elKills) elKills.textContent = String(p.kills);
+    if (elGold) elGold.textContent = String(p.gold || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     this.updateCastBar(game?.casts);
     // Refresh world map markers (quests / live metins) while open
     if (!$("#panel-map")?.hidden) {
@@ -304,10 +307,13 @@ const ui = {
     this.chat(msg, "sys");
   },
   setRoom(code) {
-    $("#room-chip").textContent = code;
+    const el = $("#room-chip");
+    if (el) el.textContent = code;
   },
   setMap(name, mapId) {
     const el = $("#map-chip");
+    const menuMap = $("#menu-map-name");
+    if (menuMap) menuMap.textContent = name || "Shinsoo";
     if (!el) return;
     el.textContent = name || "Shinsoo";
     el.classList.toggle("dungeon", mapId === "demon_tower");
@@ -316,11 +322,13 @@ const ui = {
   },
   setHost(isHost) {
     const el = $("#host-chip");
+    if (!el) return;
     el.textContent = isHost ? "HOST" : "CLIENT";
     el.classList.toggle("host", isHost);
   },
   setPlayers(n) {
-    $("#players-chip").textContent = `${n} online`;
+    const el = $("#players-chip");
+    if (el) el.textContent = `${n} online`;
   },
   setScoreboard(on) {
     $("#scoreboard").hidden = !on;
@@ -2356,14 +2364,11 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
-$("#btn-hud-inv")?.addEventListener("click", () => {
+$("#btn-sys-square")?.addEventListener("click", () => {
   audio.sfx("ui");
-  togglePanel("inv");
+  togglePanel("menu");
 });
-$("#btn-hud-char")?.addEventListener("click", () => {
-  audio.sfx("ui");
-  togglePanel("char");
-});
+
 $("#quest-mail-btn")?.addEventListener("click", () => onQuestMailBtnClick());
 $("#quest-letter-continue")?.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -2372,15 +2377,6 @@ $("#quest-letter-continue")?.addEventListener("click", (e) => {
 document.querySelector(".quest-letter-inner")?.addEventListener("click", (e) => {
   if (e.target?.closest?.("#quest-letter-continue")) return;
   continueQuestLetter();
-});
-
-$("#btn-hud-quests")?.addEventListener("click", () => {
-  audio.sfx("ui");
-  togglePanel("quests");
-});
-$("#btn-hud-menu")?.addEventListener("click", () => {
-  audio.sfx("ui");
-  togglePanel("menu");
 });
 
 document.querySelectorAll("[data-menu-panel]").forEach((btn) => {

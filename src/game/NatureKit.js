@@ -87,8 +87,9 @@ let loading = null;
 function prep(root) {
   root.traverse((o) => {
     if (o.isMesh) {
-      o.castShadow = true;
-      o.receiveShadow = true;
+      // Default: no shadows — dense forests are the main GPU cost
+      o.castShadow = false;
+      o.receiveShadow = false;
       if (o.material) {
         o.material = o.material.clone();
         o.material.side = THREE.FrontSide;
