@@ -40,6 +40,25 @@ export const NPCS = [
     x: 48,
     z: 57.5,
   },
+  // Mount Sohan frost village — shop + teleporter in NE town
+  {
+    id: "snow_shop",
+    name: "Frost Trader",
+    role: "shop",
+    kingdom: 0,
+    mapId: "snow",
+    x: 46,
+    z: -50,
+  },
+  {
+    id: "snow_tele",
+    name: "Sohan Gatekeeper",
+    role: "teleport",
+    kingdom: 0,
+    mapId: "snow",
+    x: 50,
+    z: -42,
+  },
 ];
 
 /** Shop stock grouped for UI tabs */

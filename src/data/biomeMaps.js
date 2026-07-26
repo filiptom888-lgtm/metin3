@@ -45,10 +45,10 @@ export const BIOME_DEFS = {
     id: "snow",
     name: "Mount Sohan",
     half: BIOME_HALF,
-    background: "#a8c0d8",
-    fog: "#c0d4e8",
-    fogNear: 40,
-    fogFar: 140,
+    background: "#8aa0b8",
+    fog: "#c8d8e8",
+    fogNear: 50,
+    fogFar: 150,
     ground: "#e8eef4",
     groundTint: "#f2f6fa",
     accent: "#6a9aba",
@@ -112,4 +112,11 @@ export const DESERT_CITY = { x: 48, z: 52, r: 16 };
 
 export function inDesertCity(x, z, pad = 0) {
   return Math.hypot(x - DESERT_CITY.x, z - DESERT_CITY.z) < DESERT_CITY.r + pad;
+}
+
+/** Frost village in Mount Sohan NE corner (away from west return portal). */
+export const SNOW_CITY = { x: 50, z: -48, r: 15 };
+
+export function inSnowCity(x, z, pad = 0) {
+  return Math.hypot(x - SNOW_CITY.x, z - SNOW_CITY.z) < SNOW_CITY.r + pad;
 }

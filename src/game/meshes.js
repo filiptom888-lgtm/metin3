@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { CLASSES, MAP_HALF, MAP_SIZE, CITY_RADIUS, CITY_GATE, EDGE_PORTAL, TOWER_CORNER } from "./data.js";
 import { ORC_BRIDGES, ORC_ISLANDS, ORC_MAP_HALF, ORC_MAP_SIZE } from "../data/orcMap.js";
-import { BIOME_DEFS, BIOME_EDGE, BIOME_SIZE, ORC_BIOME_GATES, biomeIds, DESERT_CITY, inDesertCity } from "../data/biomeMaps.js";
+import { BIOME_DEFS, BIOME_EDGE, BIOME_SIZE, ORC_BIOME_GATES, biomeIds, DESERT_CITY, inDesertCity, SNOW_CITY, inSnowCity } from "../data/biomeMaps.js";
 import { BANDIT_CAMP } from "../data/banditCamp.js";
 import { campsOnMap } from "../data/wildCamps.js";
 import { outpostsOnMap } from "../data/outposts.js";
@@ -291,6 +291,24 @@ function makeSandTexture() {
       const v = 140 + ((Math.random() * 50) | 0);
       ctx.fillStyle = `rgb(${v},${v - 25},${v - 55})`;
       ctx.fillRect(Math.random() * s, Math.random() * s, 2, 2);
+    }
+  }, 128, 3, 3);
+}
+
+function makeSnowTexture() {
+  return canvasTex((ctx, s) => {
+    ctx.fillStyle = "#e8eef4";
+    ctx.fillRect(0, 0, s, s);
+    for (let i = 0; i < 4200; i++) {
+      const v = 220 + ((Math.random() * 35) | 0);
+      ctx.fillStyle = `rgb(${v - 8},${v},${v + 4})`;
+      ctx.fillRect(Math.random() * s, Math.random() * s, 2, 2);
+    }
+    for (let i = 0; i < 40; i++) {
+      ctx.fillStyle = "rgba(160, 180, 200, 0.25)";
+      ctx.beginPath();
+      ctx.ellipse(Math.random() * s, Math.random() * s, 8 + Math.random() * 20, 4 + Math.random() * 10, 0, 0, Math.PI * 2);
+      ctx.fill();
     }
   }, 128, 3, 3);
 }
@@ -1312,18 +1330,18 @@ function nearPortalGap(x, z, gaps) {
 }
 
 /** Soft circular apron + cliffs + layered peaks so the square tile edge disappears. */
-export function addMapHorizon(root, { half = MAP_HALF, arid = false, portalGaps = [] } = {}) {
+export function addMapHorizon(root, { half = MAP_HALF, arid = false, snow = false, portalGaps = [] } = {}) {
   const g = new THREE.Group();
   g.name = "map_horizon";
 
-  const grassCol = arid ? "#9a8860" : "#4f7a3e";
-  const midCol = arid ? "#6a5840" : "#3d5234";
-  const rockCol = arid ? "#6a5848" : "#5a554c";
-  const deepCol = arid ? "#3a3020" : "#243028";
-  const hazeCol = arid ? "#b8a888" : "#9ab0a0";
-  const skyCol = arid ? "#c4b090" : "#8eacc4";
-  const tipCol = arid ? "#c8b898" : "#d0d8cc";
-  const footCol = arid ? "#4a5a30" : "#2f4a2a";
+  const grassCol = snow ? "#d8e4f0" : arid ? "#9a8860" : "#4f7a3e";
+  const midCol = snow ? "#9aa0b0" : arid ? "#6a5840" : "#3d5234";
+  const rockCol = snow ? "#6a7080" : arid ? "#6a5848" : "#5a554c";
+  const deepCol = snow ? "#3a4458" : arid ? "#3a3020" : "#243028";
+  const hazeCol = snow ? "#b8c8d8" : arid ? "#b8a888" : "#9ab0a0";
+  const skyCol = snow ? "#a8b8c8" : arid ? "#c4b090" : "#8eacc4";
+  const tipCol = snow ? "#f0f4f8" : arid ? "#c8b898" : "#d0d8cc";
+  const footCol = snow ? "#8a9aaa" : arid ? "#4a5a30" : "#2f4a2a";
 
   // 1) Grass apron ONLY outside the square playfield.
   // Old half*0.82 ring overlapped the map and drew as a bright green wedge over river/terrain.
@@ -2222,6 +2240,279 @@ function dressDesertOasisCity(root) {
   return g;
 }
 
+function makeIgloo(radius = 2.8) {
+  const g = new THREE.Group();
+  const snow = mat("#eef4fa", { roughness: 0.92 });
+  const dome = new THREE.Mesh(
+    new THREE.SphereGeometry(radius, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.52),
+    snow
+  );
+  dome.position.y = 0.15;
+  dome.castShadow = true;
+  g.add(dome);
+  const tunnel = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.85, 1.6, 8), snow);
+  tunnel.rotation.z = Math.PI / 2;
+  tunnel.position.set(radius * 0.75, 0.7, 0);
+  g.add(tunnel);
+  const dark = mat("#1a2430", { roughness: 0.95 });
+  const door = new THREE.Mesh(new THREE.CircleGeometry(0.55, 10), dark);
+  door.position.set(radius * 0.75 + 0.82, 0.7, 0);
+  door.rotation.y = Math.PI / 2;
+  g.add(door);
+  return g;
+}
+
+function makeSnowPine(h = 7) {
+  const tree = NatureKit.randomForestTree(false, h) || makeFallbackTree(false);
+  if (!tree) return null;
+  tagFadeTree(tree);
+  tree.traverse((o) => {
+    if (!o.isMesh || !o.material?.color) return;
+    // Cooler needles + light snow dusting on foliage
+    o.material = o.material.clone();
+    o.material.color.offsetHSL(-0.05, -0.2, 0.08);
+  });
+  return tree;
+}
+
+/** Drifts, pines, ice, packed path — skips frost village */
+function dressSnowField(root, half) {
+  const dress = new THREE.Group();
+  dress.name = "snow_field";
+  const driftMat = mat("#eef2f8", { roughness: 0.98 });
+  const iceMat = mat("#b8c8d8", { roughness: 0.35, metalness: 0.25 });
+  const rockMat = mat("#6a7080", { roughness: 0.92 });
+
+  // Packed snow road: west portal → frost village
+  const roadMat = mat("#d0d8e4", { roughness: 0.96 });
+  const x0 = -BIOME_EDGE + 4;
+  const z0 = 0;
+  const x1 = SNOW_CITY.x - SNOW_CITY.r * 0.5;
+  const z1 = SNOW_CITY.z + SNOW_CITY.r * 0.35;
+  const dx = x1 - x0;
+  const dz = z1 - z0;
+  const len = Math.hypot(dx, dz) || 1;
+  const segs = 14;
+  for (let i = 0; i < segs; i++) {
+    const t0 = i / segs;
+    const t1 = (i + 1) / segs;
+    const mx = x0 + dx * ((t0 + t1) * 0.5);
+    const mz = z0 + dz * ((t0 + t1) * 0.5);
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(len / segs + 0.4, 0.06, 4.0), roadMat);
+    strip.position.set(mx, 0.04, mz);
+    strip.rotation.y = Math.atan2(dx, dz);
+    strip.receiveShadow = true;
+    dress.add(strip);
+  }
+
+  // Snow drifts
+  for (let i = 0; i < 26; i++) {
+    const ang = (i / 26) * Math.PI * 2 + 0.1;
+    const r = 16 + (i % 5) * 10 + Math.random() * 5;
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (inSnowCity(x, z, 6)) continue;
+    if (Math.hypot(x + BIOME_EDGE, z) < 16) continue;
+    const mound = new THREE.Mesh(
+      new THREE.SphereGeometry(2.8 + (i % 3) * 0.8, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.48),
+      driftMat
+    );
+    mound.position.set(x, 0.12, z);
+    mound.scale.set(1.6, 0.35 + Math.random() * 0.2, 1.2);
+    dress.add(mound);
+  }
+
+  // Pine belts
+  for (let i = 0; i < 55; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = 12 + Math.random() * (half - 18);
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (inSnowCity(x, z, 5)) continue;
+    if (Math.hypot(x + BIOME_EDGE, z) < 14) continue;
+    const tree = makeSnowPine(5.5 + Math.random() * 4);
+    if (!tree) continue;
+    tree.position.set(x, 0, z);
+    tree.rotation.y = Math.random() * Math.PI * 2;
+    dress.add(tree);
+  }
+
+  // Ice rocks / crystals
+  for (let i = 0; i < 20; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = 18 + Math.random() * (half - 26);
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (inSnowCity(x, z, 5)) continue;
+    const rock = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.9 + Math.random() * 1.3, 0),
+      i % 3 === 0 ? iceMat : rockMat
+    );
+    rock.position.set(x, 0.5, z);
+    rock.rotation.set(Math.random(), Math.random(), Math.random());
+    dress.add(rock);
+  }
+
+  // Frozen pond landmark (center-south)
+  const pondX = -12;
+  const pondZ = 30;
+  if (!inSnowCity(pondX, pondZ, 10)) {
+    const ice = new THREE.Mesh(
+      new THREE.CircleGeometry(6.5, 28),
+      new THREE.MeshStandardMaterial({
+        color: "#a8c8e0",
+        roughness: 0.2,
+        metalness: 0.4,
+        transparent: true,
+        opacity: 0.92,
+      })
+    );
+    ice.rotation.x = -Math.PI / 2;
+    ice.position.set(pondX, 0.08, pondZ);
+    dress.add(ice);
+    for (let i = 0; i < 4; i++) {
+      const ang = (i / 4) * Math.PI * 2;
+      const tree = makeSnowPine(6 + Math.random());
+      if (!tree) continue;
+      tree.position.set(pondX + Math.cos(ang) * 8.5, 0, pondZ + Math.sin(ang) * 8.5);
+      dress.add(tree);
+    }
+  }
+
+  root.add(dress);
+}
+
+/** Timber + igloo frost village in the NE corner */
+function dressSnowVillage(root) {
+  const { x: cx, z: cz, r } = SNOW_CITY;
+  const g = new THREE.Group();
+  g.name = "snow_frost_village";
+  g.position.set(cx, 0, cz);
+
+  const wood = ["#6a5848", "#5a4a3a", "#7a6a58"];
+  const roofs = ["#4a3a2a", "#3a2a1a", "#5a4030"];
+  const wallMat = mat("#c8d0d8", { roughness: 0.94 });
+  const plazaTex = makeCobbleTexture(false);
+  plazaTex.repeat.set(7, 7);
+
+  const plaza = new THREE.Mesh(
+    new THREE.CircleGeometry(r - 0.5, 40),
+    new THREE.MeshStandardMaterial({ map: plazaTex, color: "#d8e0e8", roughness: 0.92, flatShading: false })
+  );
+  plaza.rotation.x = -Math.PI / 2;
+  plaza.position.y = 0.05;
+  plaza.receiveShadow = true;
+  g.add(plaza);
+
+  // Ice rink / frozen well center
+  const well = new THREE.Mesh(
+    new THREE.CircleGeometry(2.6, 20),
+    new THREE.MeshStandardMaterial({ color: "#90b8d0", roughness: 0.18, metalness: 0.45 })
+  );
+  well.rotation.x = -Math.PI / 2;
+  well.position.y = 0.1;
+  g.add(well);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(2.75, 0.2, 8, 24), mat("#a0b0c0", { roughness: 0.88 }));
+  rim.rotation.x = -Math.PI / 2;
+  rim.position.y = 0.12;
+  g.add(rim);
+
+  // Snow wall ring with gate toward portal
+  const wallSegs = 26;
+  const gateAng = Math.atan2(-cz, -BIOME_EDGE - cx);
+  for (let i = 0; i < wallSegs; i++) {
+    const am = (i / wallSegs) * Math.PI * 2 + Math.PI / wallSegs;
+    let da = am - gateAng;
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    if (Math.abs(da) < 0.3) continue;
+    const seg = new THREE.Mesh(new THREE.BoxGeometry(2.1, 3.0, 0.9), wallMat);
+    seg.position.set(Math.cos(am) * r, 1.5, Math.sin(am) * r);
+    seg.rotation.y = am + Math.PI / 2;
+    seg.castShadow = true;
+    g.add(seg);
+  }
+  for (const side of [-1, 1]) {
+    const ga = gateAng + side * 0.34;
+    const post = new THREE.Mesh(new THREE.BoxGeometry(1.15, 3.8, 1.15), wallMat);
+    post.position.set(Math.cos(ga) * r, 1.9, Math.sin(ga) * r);
+    g.add(post);
+  }
+
+  // Igloos
+  const iglooSpots = [
+    [7, -5],
+    [-8, -4],
+    [9, 6],
+    [-7, 7],
+    [2, -10],
+  ];
+  for (const [ix, iz] of iglooSpots) {
+    if (Math.hypot(ix, iz) > r - 3.5) continue;
+    const ig = makeIgloo(2.4 + Math.random() * 0.5);
+    ig.position.set(ix, 0, iz);
+    ig.rotation.y = Math.atan2(-ix, -iz);
+    g.add(ig);
+  }
+
+  // Timber lodges
+  const layouts = [
+    [6, 10],
+    [-10, 3],
+    [11, -2],
+    [-5, -9],
+    [0, 11],
+  ];
+  layouts.forEach(([bx, bz], i) => {
+    if (Math.hypot(bx, bz) < 5.5) return;
+    if (Math.hypot(bx, bz) > r - 3.5) return;
+    const b = makeBuilding(
+      3.6 + (i % 2) * 0.4,
+      2.9 + (i % 3) * 0.25,
+      3.4,
+      wood[i % wood.length],
+      { roofColor: roofs[i % roofs.length], smoke: true }
+    );
+    b.position.set(bx, 0, bz);
+    b.rotation.y = (i * 0.9) % Math.PI;
+    g.add(b);
+  });
+
+  // Campfire
+  const fire = NatureKit.cloneToHeight("campfire", 1.4);
+  if (fire) {
+    fire.position.set(3.5, 0, 2);
+    g.add(fire);
+  } else {
+    const pit = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.75, 0.2, 8), mat("#2a2218"));
+    pit.position.set(3.5, 0.1, 2);
+    g.add(pit);
+  }
+
+  // Pines just inside wall
+  for (let i = 0; i < 6; i++) {
+    const ang = (i / 6) * Math.PI * 2 + 0.4;
+    const pr = r - 2.2;
+    const tree = makeSnowPine(5 + Math.random() * 2);
+    if (!tree) continue;
+    tree.position.set(Math.cos(ang) * pr, 0, Math.sin(ang) * pr);
+    g.add(tree);
+  }
+
+  const lights = root.userData.torchLights || (root.userData.torchLights = []);
+  for (const [lx, lz] of [
+    [4, 4],
+    [-4, 4],
+    [4, -4],
+    [-4, -4],
+  ]) {
+    placeLamppost(g, lx, lz, "snow", { warm: false, lightsOut: lights });
+  }
+
+  root.add(g);
+  return g;
+}
+
 /** Open biome field (fire / desert / snow) — flat hunting ground + return portal west. */
 export function makeBiomeMapRoot(biomeId) {
   const def = BIOME_DEFS[biomeId];
@@ -2233,10 +2524,13 @@ export function makeBiomeMapRoot(biomeId) {
   const half = def.half;
   const size = half * 2;
   const sandMap = def.props === "sand" ? makeSandTexture() : null;
+  const snowMap = def.props === "snow" ? makeSnowTexture() : null;
   if (sandMap) sandMap.repeat.set(size / 10, size / 10);
+  if (snowMap) snowMap.repeat.set(size / 10, size / 10);
+  const groundTex = sandMap || snowMap;
   const groundMat = new THREE.MeshStandardMaterial({
-    color: sandMap ? "#e8d4a8" : def.groundTint || def.ground,
-    map: sandMap || null,
+    color: sandMap ? "#e8d4a8" : snowMap ? "#f4f8fc" : def.groundTint || def.ground,
+    map: groundTex || null,
     roughness: def.props === "lava" ? 0.88 : 0.96,
     metalness: def.props === "lava" ? 0.12 : 0.02,
     flatShading: false,
@@ -2244,7 +2538,7 @@ export function makeBiomeMapRoot(biomeId) {
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(size, size, 48, 48), groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
-  // Soft rolls for lava / dunes / drifts — keep oasis city flat
+  // Soft rolls for lava / dunes / drifts — keep oasis/village flat
   const pos = ground.geometry.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const lx = pos.getX(i);
@@ -2258,6 +2552,13 @@ export function makeBiomeMapRoot(biomeId) {
     } else if (def.props === "sand") {
       if (inDesertCity(wx, wz, 4)) h = 0;
       else h = Math.sin(lx * 0.05 + 1.2) * Math.cos(ly * 0.045) * 0.55 + Math.sin(lx * 0.11) * 0.18;
+    } else if (def.props === "snow") {
+      if (inSnowCity(wx, wz, 4)) h = 0;
+      else
+        h =
+          Math.sin(lx * 0.04) * Math.cos(ly * 0.05) * 0.7 +
+          Math.max(0, (d - half * 0.55) * 0.035) +
+          Math.sin(lx * 0.09 + 2) * 0.15;
     } else {
       h = Math.sin(lx * 0.04) * Math.cos(ly * 0.05) * 0.9 + Math.max(0, (d - half * 0.55) * 0.04);
     }
@@ -2297,40 +2598,22 @@ export function makeBiomeMapRoot(biomeId) {
   } else if (def.props === "sand") {
     dressDesertField(root, half);
     dressDesertOasisCity(root);
-  } else {
-    // snow — sparse pines + ice rocks
-    for (let i = 0; i < 40; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const r = 14 + Math.random() * (half - 24);
-      if (Math.hypot(Math.cos(ang) * r + BIOME_EDGE, Math.sin(ang) * r) < 14) continue;
-      const tree = NatureKit.randomForestTree(false, 6 + Math.random() * 4) || makeFallbackTree(false);
-      if (!tree) continue;
-      tagFadeTree(tree);
-      tree.position.set(Math.cos(ang) * r, 0, Math.sin(ang) * r);
-      tree.rotation.y = Math.random() * Math.PI * 2;
-      // Tint foliage cooler
-      tree.traverse((o) => {
-        if (o.isMesh && o.material?.color) o.material.color.offsetHSL(0, -0.15, 0.12);
-      });
-      root.add(tree);
-    }
-    const ice = new THREE.MeshBasicMaterial({ color: "#b8c8d8" });
-    for (let i = 0; i < 12; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const r = 20 + Math.random() * 45;
-      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(1.2 + Math.random(), 0), ice);
-      rock.position.set(Math.cos(ang) * r, 0.6, Math.sin(ang) * r);
-      root.add(rock);
-    }
+  } else if (def.props === "snow") {
+    dressSnowField(root, half);
+    dressSnowVillage(root);
   }
 
   const portalGaps = [{ x: -BIOME_EDGE, z: 0, w: 18 }];
   if (biomeId === "desert") {
     portalGaps.push({ x: DESERT_CITY.x, z: DESERT_CITY.z, w: DESERT_CITY.r + 10 });
   }
+  if (biomeId === "snow") {
+    portalGaps.push({ x: SNOW_CITY.x, z: SNOW_CITY.z, w: SNOW_CITY.r + 10 });
+  }
   addMapHorizon(root, {
     half,
-    arid: def.props !== "snow",
+    arid: def.props === "sand" || def.props === "lava",
+    snow: def.props === "snow",
     portalGaps,
   });
 
@@ -2341,6 +2624,7 @@ export function makeBiomeMapRoot(biomeId) {
 
   root.userData = { mapId: biomeId, edgePortal: ret };
   if (biomeId === "desert") root.userData.desertCity = DESERT_CITY;
+  if (biomeId === "snow") root.userData.snowCity = SNOW_CITY;
   return root;
 }
 

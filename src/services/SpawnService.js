@@ -6,7 +6,7 @@ import { EDGE_PORTAL } from "../game/data.js";
 import { BANDIT_CAMP, banditCampPoint, inBanditCamp } from "../data/banditCamp.js";
 import { campsOnMap, inWildCamp, wildCampPoint } from "../data/wildCamps.js";
 import { outpostsOnMap, inOutpost } from "../data/outposts.js";
-import { BIOME_EDGE, isBiomeMap, inDesertCity } from "../data/biomeMaps.js";
+import { BIOME_EDGE, isBiomeMap, inDesertCity, inSnowCity } from "../data/biomeMaps.js";
 
 function wildPoint(mapId, minR, maxR) {
   if (mapId === "orc_valley") {
@@ -25,6 +25,7 @@ function wildPoint(mapId, minR, maxR) {
     if (mapId === "valley" && Math.hypot(p.x - EDGE_PORTAL, p.z) < 10) continue;
     if (isBiomeMap(mapId) && Math.hypot(p.x + edge, p.z) < 12) continue;
     if (mapId === "desert" && inDesertCity(p.x, p.z, 5)) continue;
+    if (mapId === "snow" && inSnowCity(p.x, p.z, 5)) continue;
     if (mapId === BANDIT_CAMP.mapId && inBanditCamp(p.x, p.z, 4)) continue;
     if (inWildCamp(mapId, p.x, p.z, 3)) continue;
     if (inOutpost(mapId, p.x, p.z, 2)) continue;

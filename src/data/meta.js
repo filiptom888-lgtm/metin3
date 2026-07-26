@@ -31,6 +31,7 @@ export const WORLD_WARPS = [
   { id: "desert_portal", name: "Yongbi Desert · Portal", mapId: "desert", x: -82, z: 0 },
   { id: "desert_oasis", name: "Yongbi Desert · Oasis Town", mapId: "desert", x: 48, z: 52 },
   { id: "snow_portal", name: "Mount Sohan · Portal", mapId: "snow", x: -82, z: 0 },
+  { id: "snow_village", name: "Mount Sohan · Frost Village", mapId: "snow", x: 50, z: -48 },
 ];
 
 /** Two Metin2-style skill groups per class — chosen at Skill Master (Lv.5+) */
