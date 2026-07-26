@@ -1,4 +1,5 @@
 ﻿Lobby backgrounds for personal/non-commercial METIN3 prototype.
-- login-bg.jpg — Metin2 wallpaper via ModDB (media.moddb.com)
-- chars-bg.jpg / create-bg.jpg — Metin2 wallpapers via WallpaperCave
+- login-bg.jpg — Metin2 wallpaper (class lineup)
+- chars-bg.jpg — Metin2 wallpaper (tower / cast art via WallpaperCave)
+- create-bg.jpg — Metin2 Lycan wallpaper via WallpaperCave
 Not for commercial redistribution.
