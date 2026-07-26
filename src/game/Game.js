@@ -14,7 +14,6 @@ import {
   makeOrcMapRoot,
   makeBoltMesh,
   setNameplate,
-  attachPlayerNameplate,
   animateCharacter,
   animateMob,
   animateNpc,
@@ -55,7 +54,6 @@ import { MONSTERS } from "../data/monsters.js";
 import { METINS } from "../data/metins.js";
 import { QUESTS } from "../data/quests.js";
 import { audio } from "../audio/Audio.js";
-import { loadHeroModel } from "./CharacterModel.js";
 import * as THREE from "three";
 
 export class Game {
@@ -113,7 +111,7 @@ export class Game {
 
     this.local = null;
     this.localMesh = null;
-    this.heroCtrl = null; // skinned GLB controller when available
+    this.heroCtrl = null;
     this.remotes = new Map(); // id -> { mesh, state, target }
     this.mobs = new Map();
     this.metins = new Map();
@@ -314,7 +312,6 @@ export class Game {
     this.localMesh = makePlayerMesh(character.classId, true);
     setNameplate(this.localMesh, character.name, 1, character.level, character.classId);
     this.scene.add(this.localMesh);
-    this.heroCtrl = null;
     this.spawnDemonTower();
     this.spawnNpcs();
 
@@ -325,29 +322,12 @@ export class Game {
     this.ui.setHost(this.net.isHost);
     this.onCharacterChange(this.character, this.local);
 
-    // Swap in skinned Meshy hero (walk/run) when GLBs load
-    this._loadHeroAvatar(character).catch((err) => console.warn("[hero]", err));
-
     setTimeout(() => {
       if (this.net.isHost && this.metins.size === 0) this.seedWorld();
     }, 500);
 
     this._last = performance.now();
     this._raf = requestAnimationFrame((t) => this.loop(t));
-  }
-
-  async _loadHeroAvatar(character) {
-    const ctrl = await loadHeroModel();
-    if (!this.running || !this.local) return;
-    attachPlayerNameplate(ctrl.root, character.classId, 2.05);
-    setNameplate(ctrl.root, character.name, this.local.hp / this.local.maxHp, character.level, character.classId);
-    ctrl.root.position.copy(this.localMesh.position);
-    ctrl.root.rotation.y = this.local.rot;
-    this.scene.remove(this.localMesh);
-    this.localMesh = ctrl.root;
-    this.heroCtrl = ctrl;
-    this.scene.add(this.localMesh);
-    this.ui.toast("Hero model ready — walk / run anims");
   }
 
   syncDerived() {
@@ -2059,22 +2039,12 @@ export class Game {
     this.aimMarker.position.y = gy + 0.06;
     this.localMesh.visible = !stealth || Math.sin(this.time * 20) > -0.2;
     setNameplate(this.localMesh, p.name, p.hp / p.maxHp, p.level, p.classId);
-    if (this.heroCtrl) {
-      const run = p.moving && (p.buffMul > 1.2 || p.speed >= 9);
-      this.heroCtrl.update(dt, {
-        moving: p.moving,
-        run,
-        attacking: p.attacking,
-        attackDur: p.attackDur,
-      });
-    } else {
-      animateCharacter(this.localMesh, dt, {
-        moving: p.moving,
-        attacking: p.attacking,
-        attackDur: p.attackDur,
-        speed: p.buffMul,
-      });
-    }
+    animateCharacter(this.localMesh, dt, {
+      moving: p.moving,
+      attacking: p.attacking,
+      attackDur: p.attackDur,
+      speed: p.buffMul,
+    });
 
     // Day / night (field maps) — road torches glow after dusk
     applyDayNight(this.scene, this.sun, this.hemi, this.worldTime, this._collectTorchLights());
