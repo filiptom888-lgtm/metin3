@@ -205,16 +205,17 @@ export const MONSTERS = {
 };
 
 /** Overworld / valley spawn rings (distance from map origin). Orc Isles use island tiers. */
+/** Rings match current MAP_SIZE (252 → half 126). Orc Isles stay on their island scale. */
 export const SPAWN_ZONES = {
   overworld: {
-    near: { minR: 24, maxR: 55 },
-    mid: { minR: 55, maxR: 110 },
-    edge: { minR: 110, maxR: 174 },
+    near: { minR: 24, maxR: 48 },
+    mid: { minR: 48, maxR: 88 },
+    edge: { minR: 88, maxR: 120 },
   },
   valley: {
-    near: { minR: 24, maxR: 55 },
-    mid: { minR: 55, maxR: 110 },
-    edge: { minR: 110, maxR: 174 },
+    near: { minR: 24, maxR: 48 },
+    mid: { minR: 48, maxR: 88 },
+    edge: { minR: 88, maxR: 120 },
   },
   orc_valley: {
     near: { minR: 12, maxR: 28 },

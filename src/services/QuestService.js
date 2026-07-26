@@ -231,6 +231,8 @@ export const QuestService = {
           count: q.count,
           state: st.state,
           giver: q.giver || "quest_elder",
+          type: q.type,
+          target: q.target,
         });
       }
     }

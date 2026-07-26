@@ -21,6 +21,14 @@ import { WORLD_WARPS, SPECS, hasSkillPath } from "./data/meta.js";
 import { derivedStats, xpForLevel } from "./game/character.js";
 import { EQUIP_SLOTS as SLOTS, RARITY_COLOR, ITEM_TEMPLATES } from "./data/items.js";
 import { SHOP_CATALOG, SHOP_TABS } from "./data/npcs.js";
+import { QUESTS } from "./data/quests.js";
+import {
+  MINIBOSS_AREAS,
+  questHuntFor,
+  zoneRing,
+  metinSpawnRing,
+  npcsOnMap,
+} from "./data/mapMarkers.js";
 import { getUpgradeRecipe } from "./data/upgrades.js";
 import { DEMON_TOWER, floorConfig } from "./data/demonTower.js";
 import { MapService } from "./services/MapService.js";
@@ -32,6 +40,9 @@ const $ = (s) => document.querySelector(s);
 
 const DOLL_SLOTS = ["helmet", "weapon", "shield", "armor", "bracelet", "necklace", "earring", "shoes"];
 const BAG_SIZE = 40;
+
+let _mapViewId = "overworld";
+let _mapRefreshAt = 0;
 
 let selectedClass = "warrior";
 let selectedGender = "m";
@@ -137,6 +148,14 @@ const ui = {
     $("#stat-metins").textContent = String(p.metins);
     $("#stat-kills").textContent = String(p.kills);
     $("#stat-gold").textContent = String(p.gold || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    // Refresh world map markers (quests / live metins) while open
+    if (!$("#panel-map")?.hidden) {
+      const now = performance.now();
+      if (!_mapRefreshAt || now - _mapRefreshAt > 700) {
+        _mapRefreshAt = now;
+        drawWorldMap(_mapViewId);
+      }
+    }
     if (ch) {
       const xpNext = ch.xpNext || xpForLevel(ch.level);
       const xpR = Math.max(0, Math.min(1, ch.xp / xpNext));
@@ -1719,7 +1738,34 @@ const net = new WorldNet();
 await NatureKit.preload().catch((err) => console.warn("[nature]", err));
 const game = new Game($("#c"), ui, net);
 
-let _mapViewId = "overworld";
+function drawMapRing(ctx, toX, toY, minR, maxR, color, { fill = true, dash = null } = {}) {
+  const cx = toX(0);
+  const cy = toY(0);
+  const scale = toX(1) - toX(0);
+  const r0 = Math.max(0, minR) * scale;
+  const r1 = Math.max(r0 + 1, maxR * scale);
+  ctx.save();
+  if (dash) ctx.setLineDash(dash);
+  if (fill) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r1, 0, Math.PI * 2);
+    ctx.arc(cx, cy, r0, 0, Math.PI * 2, true);
+    ctx.fillStyle = color;
+    ctx.fill("evenodd");
+  }
+  ctx.beginPath();
+  ctx.arc(cx, cy, r1, 0, Math.PI * 2);
+  ctx.strokeStyle = color.replace(/[\d.]+\)$/, "0.95)").replace(/^rgba/, "rgba");
+  if (!color.startsWith("rgba")) ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  if (r0 > 2) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
 
 function drawWorldMap(viewId = _mapViewId) {
   const canvas = $("#world-map-canvas");
@@ -1728,14 +1774,14 @@ function drawWorldMap(viewId = _mapViewId) {
   const ctx = canvas.getContext("2d");
   const w = canvas.width;
   const h = canvas.height;
-  const pad = 18;
+  const pad = 20;
   const mid = _mapViewId;
   const half = mid === "orc_valley" ? 80 : mid === "demon_tower" ? 18 : MAP_HALF;
   const size = half * 2;
   const toX = (x) => pad + ((x + half) / size) * (w - pad * 2);
   const toY = (z) => pad + ((z + half) / size) * (h - pad * 2);
 
-  // Parchment ground
+  // Ground
   const g = ctx.createLinearGradient(0, 0, w, h);
   if (mid === "valley") {
     g.addColorStop(0, "#5a4830");
@@ -1753,10 +1799,56 @@ function drawWorldMap(viewId = _mapViewId) {
   ctx.lineWidth = 4;
   ctx.strokeRect(2, 2, w - 4, h - 4);
 
+  // Metin possible spawn (mid→edge wilderness)
+  const metRing = metinSpawnRing(mid);
+  if (metRing) {
+    drawMapRing(ctx, toX, toY, metRing.minR, metRing.maxR, "rgba(196, 60, 46, 0.14)", { dash: [4, 3] });
+  }
+
+  // Miniboss / elite areas
+  for (const area of MINIBOSS_AREAS) {
+    if (area.mapId !== mid) continue;
+    if (area.point) {
+      const r = (area.r || 12) * ((toX(1) - toX(0)));
+      ctx.beginPath();
+      ctx.arc(toX(area.x), toY(area.z), r, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255, 90, 58, 0.18)";
+      ctx.fill();
+      ctx.strokeStyle = area.color || "#ff5a3a";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = area.color || "#ff5a3a";
+      ctx.beginPath();
+      ctx.moveTo(toX(area.x), toY(area.z) - 7);
+      ctx.lineTo(toX(area.x) + 6, toY(area.z) + 5);
+      ctx.lineTo(toX(area.x) - 6, toY(area.z) + 5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#ffe9a8";
+      ctx.font = "bold 10px Cinzel, serif";
+      ctx.textAlign = "center";
+      ctx.fillText(area.name, toX(area.x), toY(area.z) - 12);
+    } else {
+      const ring = zoneRing(mid, area.zone);
+      if (!ring) continue;
+      const col = area.color || "#ff5a3a";
+      drawMapRing(ctx, toX, toY, ring.minR, ring.maxR, hexToRgba(col, 0.12), { dash: [6, 4] });
+      // Label on ring
+      const midR = (ring.minR + ring.maxR) / 2;
+      ctx.fillStyle = col;
+      ctx.font = "bold 10px Cinzel, serif";
+      ctx.textAlign = "center";
+      ctx.fillText(area.name, toX(midR * 0.7), toY(-midR * 0.7));
+    }
+  }
+
   // Beaten roads
   ctx.strokeStyle = "rgba(180, 150, 90, 0.75)";
   ctx.lineWidth = 3;
   ctx.lineCap = "round";
+  ctx.setLineDash([]);
   for (const r of fieldRoads(mid)) {
     ctx.beginPath();
     ctx.moveTo(toX(r.x0), toY(r.z0));
@@ -1779,19 +1871,12 @@ function drawWorldMap(viewId = _mapViewId) {
     ctx.fillText(mid === "valley" ? "Seungryong" : "Shinsoo", toX(0), toY(0) - 6);
   }
 
-  // Camps
+  // Tent camps
   for (const c of campsOnMap(mid)) {
     ctx.fillStyle = "#c45a2a";
     ctx.beginPath();
-    ctx.arc(toX(c.x), toY(c.z), 5, 0, Math.PI * 2);
+    ctx.arc(toX(c.x), toY(c.z), 4, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = "#ffe0a0";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
-  if (mid === "valley") {
-    ctx.fillStyle = "#a03020";
-    ctx.fillRect(toX(BANDIT_CAMP.x) - 6, toY(BANDIT_CAMP.z) - 6, 12, 12);
   }
   if (mid === "overworld") {
     ctx.fillStyle = "#8b1e1e";
@@ -1801,6 +1886,95 @@ function drawWorldMap(viewId = _mapViewId) {
     ctx.lineTo(toX(TOWER_CORNER.x) - 6, toY(TOWER_CORNER.z) + 5);
     ctx.closePath();
     ctx.fill();
+    ctx.fillStyle = "#ffb0a0";
+    ctx.font = "9px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Demon Tower", toX(TOWER_CORNER.x), toY(TOWER_CORNER.z) + 16);
+  }
+
+  // Active quest hunt zones (+ biologist)
+  const ch = game.character;
+  const active = ch ? QuestService.activeList(ch) : [];
+  const questLines = [];
+  let labelN = 0;
+  for (const aq of active) {
+    const full = QUESTS.find((q) => q.id === aq.id) || aq;
+    const hunt = questHuntFor(full);
+    if (!hunt) continue;
+    const onThis =
+      hunt.allField || hunt.mapId === mid || (hunt.mapId == null && ["overworld", "valley", "orc_valley"].includes(mid));
+    const isBio = (aq.giver || full.giver) === "biologist";
+    const color = isBio ? "#7dff9a" : hunt.color || "#4db0ff";
+    const ring = zoneRing(hunt.mapId || mid, hunt.zone || "mid");
+    if (onThis && ring && (hunt.mapId === mid || hunt.allField)) {
+      drawMapRing(ctx, toX, toY, ring.minR, ring.maxR, hexToRgba(color, 0.2), { dash: isBio ? [2, 2] : [5, 3] });
+      const midR = (ring.minR + ring.maxR) / 2;
+      const ang = (labelN * 0.9) % (Math.PI * 2);
+      labelN++;
+      const lx = Math.cos(ang) * midR;
+      const lz = Math.sin(ang) * midR;
+      ctx.fillStyle = color;
+      ctx.font = "bold 10px Cinzel, serif";
+      ctx.textAlign = "center";
+      const tag = isBio ? "Bio" : "Quest";
+      ctx.fillText(`${tag}: ${hunt.label}`, toX(lx), toY(lz));
+    }
+    const mapName =
+      hunt.mapId === "valley" ? "Seungryong" : hunt.mapId === "orc_valley" ? "Orc Isles" : hunt.allField ? "any field" : "Shinsoo";
+    const done = aq.state === "completed" ? " — turn in!" : ` ${aq.progress}/${aq.count}`;
+    questLines.push(
+      `<span style="color:${isBio ? "#7dff9a" : "#4db0ff"}">${isBio ? "Biologist" : "Elder"}:</span> ${aq.name} · ${hunt.label} (${mapName})${done}`
+    );
+  }
+
+  // Quest NPCs on this map
+  for (const npc of npcsOnMap(mid)) {
+    if (npc.role !== "quest" && npc.role !== "biologist") continue;
+    const bio = npc.role === "biologist";
+    ctx.fillStyle = bio ? "#7dff9a" : "#4db0ff";
+    ctx.strokeStyle = "#1a1408";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(toX(npc.x), toY(npc.z), 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // Pulse if ready to turn in
+    const ready = active.some(
+      (a) => a.state === "completed" && (a.giver || "") === (bio ? "biologist" : "quest_elder")
+    );
+    if (ready) {
+      ctx.strokeStyle = bio ? "#7dff9a" : "#4db0ff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(toX(npc.x), toY(npc.z), 10, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#ffe9a8";
+    ctx.font = "bold 10px Cinzel, serif";
+    ctx.textAlign = "center";
+    ctx.fillText(bio ? "Biologist" : "Elder", toX(npc.x), toY(npc.z) - 11);
+  }
+
+  // Live metins / minibosses on this map
+  if (game.metins) {
+    for (const [, m] of game.metins) {
+      if ((m.mapId || "overworld") !== mid) continue;
+      ctx.fillStyle = "#c43c2e";
+      ctx.beginPath();
+      ctx.arc(toX(m.x), toY(m.z), 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#ffe0a0";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+  if (game.mobs) {
+    for (const [, m] of game.mobs) {
+      if ((m.mapId || "overworld") !== mid) continue;
+      if (!m.boss && m.templateId !== "rogue_chief" && m.templateId !== "orc_chief" && m.templateId !== "elite_ork") continue;
+      ctx.fillStyle = "#ff5a3a";
+      ctx.fillRect(toX(m.x) - 4, toY(m.z) - 4, 8, 8);
+    }
   }
 
   // Portals
@@ -1822,6 +1996,7 @@ function drawWorldMap(viewId = _mapViewId) {
     ctx.fill();
     ctx.fillStyle = "#fff";
     ctx.font = "bold 10px sans-serif";
+    ctx.textAlign = "center";
     ctx.fillText(p.label, toX(p.x), toY(p.z) + 3);
   }
 
@@ -1841,25 +2016,33 @@ function drawWorldMap(viewId = _mapViewId) {
     ctx.stroke();
     ctx.fillStyle = "#ffe9a8";
     ctx.font = "bold 11px Cinzel, serif";
+    ctx.textAlign = "center";
     ctx.fillText("You", px, pz - 12);
   } else if (MapService.currentId !== mid) {
     ctx.fillStyle = "rgba(255,233,168,0.7)";
     ctx.font = "11px sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("(not on this map)", w / 2, h - 10);
+    ctx.fillText("(not on this map)", w / 2, h - 12);
   }
 
-  const legend = $("#map-legend");
-  if (legend) {
-    const name = MapService.current?.name || mid;
-    legend.textContent =
-      MapService.currentId === mid
-        ? `Viewing ${name} — yellow marker is you`
-        : `Viewing ${mid === "valley" ? "Seungryong" : mid === "orc_valley" ? "Orc Isles" : "Shinsoo"}`;
+  const qList = $("#map-quest-list");
+  if (qList) {
+    qList.innerHTML = questLines.length
+      ? questLines.join("<br>")
+      : `<span style="color:#a09070">No active quests — talk to the Elder or Biologist.</span>`;
   }
   document.querySelectorAll(".map-tab").forEach((b) => {
     b.classList.toggle("selected", b.getAttribute("data-map-view") === mid);
   });
+}
+
+function hexToRgba(hex, a = 0.2) {
+  const h = String(hex || "#ffffff").replace("#", "");
+  if (h.length < 6) return `rgba(255,255,255,${a})`;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
 }
 
 document.getElementById("map-tabs")?.addEventListener("click", (e) => {
@@ -1874,6 +2057,7 @@ game.onCharacterChange = (ch) => {
   if (!$("#panel-inv").hidden) renderInventory(ch);
   if (!$("#panel-skills").hidden) renderSkillsPanel(ch);
   if (!$("#panel-quests").hidden) renderQuests(ch, questPanelGiver);
+  if (!$("#panel-map")?.hidden) drawWorldMap(_mapViewId);
   renderQuestTracker(ch);
 };
 

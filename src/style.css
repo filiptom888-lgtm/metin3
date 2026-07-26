@@ -1338,7 +1338,7 @@ button, input { font: inherit; color: inherit; }
   background: linear-gradient(180deg, #6a5018, #2a1c08);
 }
 #world-map-canvas {
-  width: min(420px, 86vw);
+  width: min(480px, 90vw);
   height: auto;
   aspect-ratio: 1;
   border: 3px solid #c9a227;
@@ -1347,10 +1347,44 @@ button, input { font: inherit; color: inherit; }
   background: #1a2410;
 }
 .map-legend {
-  font-size: 0.78rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  justify-content: center;
+  font-size: 0.74rem;
   color: #ffe9a8;
   text-shadow: var(--text-outline);
+}
+.map-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.map-legend .lg {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 233, 168, 0.5);
+}
+.map-legend .lg.you { background: #ffe14a; }
+.map-legend .lg.quest { background: #4db0ff; }
+.map-legend .lg.bio { background: #7dff9a; }
+.map-legend .lg.boss { background: #ff5a3a; border-radius: 2px; }
+.map-legend .lg.metin { background: #c43c2e; }
+.map-legend .lg.portal { background: #6ec8ff; }
+.map-quest-list {
   margin: 0;
+  max-width: 100%;
+  font-size: 0.78rem;
+  color: #d8c898;
+  text-shadow: 0 1px 2px #000;
+  line-height: 1.45;
+  text-align: left;
+  align-self: stretch;
 }
 .menu-hint {
   margin: 0 0 0.85rem;
