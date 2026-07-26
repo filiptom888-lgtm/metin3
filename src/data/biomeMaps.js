@@ -13,10 +13,10 @@ export const BIOME_DEFS = {
     id: "fire_plains",
     name: "Plains of Fire",
     half: BIOME_HALF,
-    background: "#2a1410",
-    fog: "#4a2214",
-    fogNear: 38,
-    fogFar: 135,
+    background: "#3a1810",
+    fog: "#5a2a18",
+    fogNear: 52,
+    fogFar: 155,
     ground: "#3a2214",
     groundTint: "#5a3020",
     accent: "#c43c2e",
@@ -119,4 +119,11 @@ export const SNOW_CITY = { x: 50, z: -48, r: 15 };
 
 export function inSnowCity(x, z, pad = 0) {
   return Math.hypot(x - SNOW_CITY.x, z - SNOW_CITY.z) < SNOW_CITY.r + pad;
+}
+
+/** Obsidian citadel in Plains of Fire NW corner (away from west return portal). */
+export const FIRE_CITY = { x: -48, z: 50, r: 15 };
+
+export function inFireCity(x, z, pad = 0) {
+  return Math.hypot(x - FIRE_CITY.x, z - FIRE_CITY.z) < FIRE_CITY.r + pad;
 }

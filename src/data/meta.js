@@ -28,6 +28,7 @@ export const WORLD_WARPS = [
   { id: "orc_desert", name: "Orc Isles · Desert Gate", mapId: "orc_valley", x: 56, z: -40 },
   { id: "orc_snow", name: "Orc Isles · Snow Gate", mapId: "orc_valley", x: 70, z: 6 },
   { id: "fire_portal", name: "Plains of Fire · Portal", mapId: "fire_plains", x: -82, z: 0 },
+  { id: "fire_citadel", name: "Plains of Fire · Obsidian Citadel", mapId: "fire_plains", x: -48, z: 50 },
   { id: "desert_portal", name: "Yongbi Desert · Portal", mapId: "desert", x: -82, z: 0 },
   { id: "desert_oasis", name: "Yongbi Desert · Oasis Town", mapId: "desert", x: 48, z: 52 },
   { id: "snow_portal", name: "Mount Sohan · Portal", mapId: "snow", x: -82, z: 0 },

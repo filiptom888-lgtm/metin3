@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { CLASSES, MAP_HALF, MAP_SIZE, CITY_RADIUS, CITY_GATE, EDGE_PORTAL, TOWER_CORNER } from "./data.js";
 import { ORC_BRIDGES, ORC_ISLANDS, ORC_MAP_HALF, ORC_MAP_SIZE } from "../data/orcMap.js";
-import { BIOME_DEFS, BIOME_EDGE, BIOME_SIZE, ORC_BIOME_GATES, biomeIds, DESERT_CITY, inDesertCity, SNOW_CITY, inSnowCity } from "../data/biomeMaps.js";
+import { BIOME_DEFS, BIOME_EDGE, BIOME_SIZE, ORC_BIOME_GATES, biomeIds, DESERT_CITY, inDesertCity, SNOW_CITY, inSnowCity, FIRE_CITY, inFireCity } from "../data/biomeMaps.js";
 import { BANDIT_CAMP } from "../data/banditCamp.js";
 import { campsOnMap } from "../data/wildCamps.js";
 import { outpostsOnMap } from "../data/outposts.js";
@@ -308,6 +308,26 @@ function makeSnowTexture() {
       ctx.fillStyle = "rgba(160, 180, 200, 0.25)";
       ctx.beginPath();
       ctx.ellipse(Math.random() * s, Math.random() * s, 8 + Math.random() * 20, 4 + Math.random() * 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }, 128, 3, 3);
+}
+
+function makeAshTexture() {
+  return canvasTex((ctx, s) => {
+    ctx.fillStyle = "#2a1810";
+    ctx.fillRect(0, 0, s, s);
+    for (let i = 0; i < 4500; i++) {
+      const r = 40 + ((Math.random() * 50) | 0);
+      const g = 22 + ((Math.random() * 30) | 0);
+      const b = 14 + ((Math.random() * 20) | 0);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(Math.random() * s, Math.random() * s, 2, 2);
+    }
+    for (let i = 0; i < 50; i++) {
+      ctx.fillStyle = "rgba(180, 60, 30, 0.18)";
+      ctx.beginPath();
+      ctx.ellipse(Math.random() * s, Math.random() * s, 6 + Math.random() * 16, 3 + Math.random() * 8, 0, 0, Math.PI * 2);
       ctx.fill();
     }
   }, 128, 3, 3);
@@ -1330,18 +1350,18 @@ function nearPortalGap(x, z, gaps) {
 }
 
 /** Soft circular apron + cliffs + layered peaks so the square tile edge disappears. */
-export function addMapHorizon(root, { half = MAP_HALF, arid = false, snow = false, portalGaps = [] } = {}) {
+export function addMapHorizon(root, { half = MAP_HALF, arid = false, snow = false, lava = false, portalGaps = [] } = {}) {
   const g = new THREE.Group();
   g.name = "map_horizon";
 
-  const grassCol = snow ? "#d8e4f0" : arid ? "#9a8860" : "#4f7a3e";
-  const midCol = snow ? "#9aa0b0" : arid ? "#6a5840" : "#3d5234";
-  const rockCol = snow ? "#6a7080" : arid ? "#6a5848" : "#5a554c";
-  const deepCol = snow ? "#3a4458" : arid ? "#3a3020" : "#243028";
-  const hazeCol = snow ? "#b8c8d8" : arid ? "#b8a888" : "#9ab0a0";
-  const skyCol = snow ? "#a8b8c8" : arid ? "#c4b090" : "#8eacc4";
-  const tipCol = snow ? "#f0f4f8" : arid ? "#c8b898" : "#d0d8cc";
-  const footCol = snow ? "#8a9aaa" : arid ? "#4a5a30" : "#2f4a2a";
+  const grassCol = snow ? "#d8e4f0" : lava ? "#4a2818" : arid ? "#9a8860" : "#4f7a3e";
+  const midCol = snow ? "#9aa0b0" : lava ? "#3a1a10" : arid ? "#6a5840" : "#3d5234";
+  const rockCol = snow ? "#6a7080" : lava ? "#2a1814" : arid ? "#6a5848" : "#5a554c";
+  const deepCol = snow ? "#3a4458" : lava ? "#140808" : arid ? "#3a3020" : "#243028";
+  const hazeCol = snow ? "#b8c8d8" : lava ? "#5a2a18" : arid ? "#b8a888" : "#9ab0a0";
+  const skyCol = snow ? "#a8b8c8" : lava ? "#4a2010" : arid ? "#c4b090" : "#8eacc4";
+  const tipCol = snow ? "#f0f4f8" : lava ? "#c43c2e" : arid ? "#c8b898" : "#d0d8cc";
+  const footCol = snow ? "#8a9aaa" : lava ? "#3a2018" : arid ? "#4a5a30" : "#2f4a2a";
 
   // 1) Grass apron ONLY outside the square playfield.
   // Old half*0.82 ring overlapped the map and drew as a bright green wedge over river/terrain.
@@ -2513,6 +2533,236 @@ function dressSnowVillage(root) {
   return g;
 }
 
+/** Lava pools, ash cones, scorched path — skips fire citadel */
+function dressFireField(root, half) {
+  const dress = new THREE.Group();
+  dress.name = "fire_field";
+  const lavaMat = new THREE.MeshStandardMaterial({
+    color: "#c43c2e",
+    emissive: "#8b1e1e",
+    emissiveIntensity: 0.9,
+    roughness: 0.4,
+  });
+  const rockMat = mat("#2a1a14", { roughness: 0.92 });
+  const ashMat = mat("#3a2818", { roughness: 0.96 });
+
+  // Scorched road: west portal → citadel
+  const roadMat = mat("#2a1810", { roughness: 0.95 });
+  const x0 = -BIOME_EDGE + 4;
+  const z0 = 0;
+  const x1 = FIRE_CITY.x + FIRE_CITY.r * 0.55;
+  const z1 = FIRE_CITY.z - FIRE_CITY.r * 0.3;
+  const dx = x1 - x0;
+  const dz = z1 - z0;
+  const len = Math.hypot(dx, dz) || 1;
+  const segs = 14;
+  for (let i = 0; i < segs; i++) {
+    const t0 = i / segs;
+    const t1 = (i + 1) / segs;
+    const mx = x0 + dx * ((t0 + t1) * 0.5);
+    const mz = z0 + dz * ((t0 + t1) * 0.5);
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(len / segs + 0.4, 0.06, 4.0), roadMat);
+    strip.position.set(mx, 0.04, mz);
+    strip.rotation.y = Math.atan2(dx, dz);
+    strip.receiveShadow = true;
+    dress.add(strip);
+    // Ember glow along road every few segments
+    if (i % 3 === 1) {
+      const glow = new THREE.PointLight(0xff6020, 0, 14, 1.4);
+      glow.position.set(mx, 1.2, mz);
+      glow.name = "torch_light";
+      dress.add(glow);
+      const lights = root.userData.torchLights || (root.userData.torchLights = []);
+      lights.push(glow);
+    }
+  }
+
+  // Lava pools (skip city + portal)
+  for (let i = 0; i < 18; i++) {
+    const ang = (i / 18) * Math.PI * 2 + 0.2;
+    const r = 16 + (i % 5) * 11;
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (inFireCity(x, z, 8)) continue;
+    if (Math.hypot(x + BIOME_EDGE, z) < 16) continue;
+    const pool = new THREE.Mesh(new THREE.CircleGeometry(2.0 + (i % 3) * 0.9, 16), lavaMat);
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(x, 0.06, z);
+    dress.add(pool);
+    if (i % 4 === 0) {
+      const pl = new THREE.PointLight(0xff4010, 0, 18, 1.5);
+      pl.position.set(x, 1.5, z);
+      pl.name = "torch_light";
+      dress.add(pl);
+      (root.userData.torchLights || (root.userData.torchLights = [])).push(pl);
+    }
+  }
+
+  // Volcanic cones / rocks
+  for (let i = 0; i < 28; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = 12 + Math.random() * (half - 20);
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (inFireCity(x, z, 6)) continue;
+    if (Math.hypot(x + BIOME_EDGE, z) < 14) continue;
+    const peak = new THREE.Mesh(
+      new THREE.ConeGeometry(1.2 + Math.random() * 2.0, 2.5 + Math.random() * 5, 5),
+      i % 4 === 0 ? ashMat : rockMat
+    );
+    peak.position.set(x, 1.2, z);
+    peak.castShadow = true;
+    dress.add(peak);
+  }
+
+  // Ash mounds
+  for (let i = 0; i < 16; i++) {
+    const ang = (i / 16) * Math.PI * 2;
+    const r = 20 + (i % 4) * 12;
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (inFireCity(x, z, 6)) continue;
+    const mound = new THREE.Mesh(
+      new THREE.SphereGeometry(2.5 + (i % 3), 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.45),
+      ashMat
+    );
+    mound.position.set(x, 0.15, z);
+    mound.scale.set(1.4, 0.4, 1.1);
+    dress.add(mound);
+  }
+
+  root.add(dress);
+}
+
+/** Obsidian citadel — NW corner hub */
+function dressFireCitadel(root) {
+  const { x: cx, z: cz, r } = FIRE_CITY;
+  const g = new THREE.Group();
+  g.name = "fire_obsidian_citadel";
+  g.position.set(cx, 0, cz);
+
+  const stone = ["#3a2a22", "#2a1e18", "#4a3028"];
+  const roofs = ["#5a1810", "#3a1008", "#6a2010"];
+  const wallMat = mat("#2a1c18", { roughness: 0.9 });
+  const plazaTex = makeCobbleTexture(false);
+  plazaTex.repeat.set(7, 7);
+
+  const plaza = new THREE.Mesh(
+    new THREE.CircleGeometry(r - 0.5, 40),
+    new THREE.MeshStandardMaterial({ map: plazaTex, color: "#4a3020", roughness: 0.9, flatShading: false })
+  );
+  plaza.rotation.x = -Math.PI / 2;
+  plaza.position.y = 0.05;
+  plaza.receiveShadow = true;
+  g.add(plaza);
+
+  // Central lava font
+  const lava = new THREE.Mesh(
+    new THREE.CircleGeometry(2.8, 20),
+    new THREE.MeshStandardMaterial({
+      color: "#c43c2e",
+      emissive: "#ff4010",
+      emissiveIntensity: 1.1,
+      roughness: 0.35,
+    })
+  );
+  lava.rotation.x = -Math.PI / 2;
+  lava.position.y = 0.1;
+  g.add(lava);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(3.0, 0.28, 8, 24), mat("#3a2a20", { roughness: 0.88 }));
+  rim.rotation.x = -Math.PI / 2;
+  rim.position.y = 0.14;
+  g.add(rim);
+  const fontLight = new THREE.PointLight(0xff5020, 0, 22, 1.3);
+  fontLight.position.set(0, 2.2, 0);
+  fontLight.name = "torch_light";
+  g.add(fontLight);
+  (root.userData.torchLights || (root.userData.torchLights = [])).push(fontLight);
+
+  // Obsidian wall + gate toward portal
+  const wallSegs = 26;
+  const gateAng = Math.atan2(-cz, -BIOME_EDGE - cx);
+  for (let i = 0; i < wallSegs; i++) {
+    const am = (i / wallSegs) * Math.PI * 2 + Math.PI / wallSegs;
+    let da = am - gateAng;
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    if (Math.abs(da) < 0.3) continue;
+    const seg = new THREE.Mesh(new THREE.BoxGeometry(2.1, 3.6, 0.95), wallMat);
+    seg.position.set(Math.cos(am) * r, 1.8, Math.sin(am) * r);
+    seg.rotation.y = am + Math.PI / 2;
+    seg.castShadow = true;
+    g.add(seg);
+  }
+  for (const side of [-1, 1]) {
+    const ga = gateAng + side * 0.34;
+    const post = new THREE.Mesh(new THREE.BoxGeometry(1.2, 4.4, 1.2), wallMat);
+    post.position.set(Math.cos(ga) * r, 2.2, Math.sin(ga) * r);
+    g.add(post);
+    const flame = new THREE.Mesh(
+      new THREE.SphereGeometry(0.28, 8, 6),
+      mat("#ff6020", { emissive: "#ff3010", emissiveIntensity: 1.4, roughness: 0.35 })
+    );
+    flame.position.set(Math.cos(ga) * r, 4.6, Math.sin(ga) * r);
+    g.add(flame);
+  }
+
+  // Dark stone houses
+  const layouts = [
+    [7, -6],
+    [-8, -5],
+    [9, 7],
+    [-9, 6],
+    [5, 11],
+    [-6, -10],
+    [11, 1],
+    [-11, 2],
+  ];
+  layouts.forEach(([bx, bz], i) => {
+    if (Math.hypot(bx, bz) < 5.5) return;
+    if (Math.hypot(bx, bz) > r - 3.5) return;
+    const b = makeBuilding(
+      3.5 + (i % 2) * 0.5,
+      3.0 + (i % 3) * 0.3,
+      3.3,
+      stone[i % stone.length],
+      { roofColor: roofs[i % roofs.length], smoke: true }
+    );
+    b.position.set(bx, 0, bz);
+    b.rotation.y = (i * 0.85) % Math.PI;
+    g.add(b);
+  });
+
+  // Ember braziers
+  for (const [bx, bz] of [
+    [4, 4],
+    [-4, 4],
+    [4, -4],
+    [-4, -4],
+  ]) {
+    const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 0.35, 8), mat("#3a2a20"));
+    bowl.position.set(bx, 0.9, bz);
+    g.add(bowl);
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 0.9, 6), mat("#2a1a14"));
+    post.position.set(bx, 0.45, bz);
+    g.add(post);
+    const ember = new THREE.Mesh(
+      new THREE.SphereGeometry(0.22, 8, 6),
+      mat("#ff6020", { emissive: "#ff3010", emissiveIntensity: 1.5, roughness: 0.3 })
+    );
+    ember.position.set(bx, 1.15, bz);
+    g.add(ember);
+    const light = new THREE.PointLight(0xff5020, 0, 16, 1.4);
+    light.position.set(bx, 1.3, bz);
+    light.name = "torch_light";
+    g.add(light);
+    (root.userData.torchLights || (root.userData.torchLights = [])).push(light);
+  }
+
+  root.add(g);
+  return g;
+}
+
 /** Open biome field (fire / desert / snow) — flat hunting ground + return portal west. */
 export function makeBiomeMapRoot(biomeId) {
   const def = BIOME_DEFS[biomeId];
@@ -2525,11 +2775,13 @@ export function makeBiomeMapRoot(biomeId) {
   const size = half * 2;
   const sandMap = def.props === "sand" ? makeSandTexture() : null;
   const snowMap = def.props === "snow" ? makeSnowTexture() : null;
+  const ashMap = def.props === "lava" ? makeAshTexture() : null;
   if (sandMap) sandMap.repeat.set(size / 10, size / 10);
   if (snowMap) snowMap.repeat.set(size / 10, size / 10);
-  const groundTex = sandMap || snowMap;
+  if (ashMap) ashMap.repeat.set(size / 10, size / 10);
+  const groundTex = sandMap || snowMap || ashMap;
   const groundMat = new THREE.MeshStandardMaterial({
-    color: sandMap ? "#e8d4a8" : snowMap ? "#f4f8fc" : def.groundTint || def.ground,
+    color: sandMap ? "#e8d4a8" : snowMap ? "#f4f8fc" : ashMap ? "#5a3828" : def.groundTint || def.ground,
     map: groundTex || null,
     roughness: def.props === "lava" ? 0.88 : 0.96,
     metalness: def.props === "lava" ? 0.12 : 0.02,
@@ -2548,7 +2800,8 @@ export function makeBiomeMapRoot(biomeId) {
     const d = Math.hypot(lx, ly);
     let h = 0;
     if (def.props === "lava") {
-      h = Math.sin(lx * 0.08) * Math.cos(ly * 0.07) * 0.55 + (d > half * 0.7 ? 0.8 : 0);
+      if (inFireCity(wx, wz, 4)) h = 0;
+      else h = Math.sin(lx * 0.08) * Math.cos(ly * 0.07) * 0.5 + (d > half * 0.7 ? 0.7 : 0);
     } else if (def.props === "sand") {
       if (inDesertCity(wx, wz, 4)) h = 0;
       else h = Math.sin(lx * 0.05 + 1.2) * Math.cos(ly * 0.045) * 0.55 + Math.sin(lx * 0.11) * 0.18;
@@ -2570,31 +2823,8 @@ export function makeBiomeMapRoot(biomeId) {
 
   // Biome props
   if (def.props === "lava") {
-    const lavaMat = new THREE.MeshStandardMaterial({
-      color: "#c43c2e",
-      emissive: "#8b1e1e",
-      emissiveIntensity: 0.85,
-      roughness: 0.45,
-    });
-    for (let i = 0; i < 14; i++) {
-      const ang = (i / 14) * Math.PI * 2;
-      const r = 18 + (i % 4) * 12;
-      const pool = new THREE.Mesh(new THREE.CircleGeometry(2.2 + (i % 3) * 0.8, 16), lavaMat);
-      pool.rotation.x = -Math.PI / 2;
-      pool.position.set(Math.cos(ang) * r, 0.06, Math.sin(ang) * r);
-      root.add(pool);
-    }
-    const rock = new THREE.MeshBasicMaterial({ color: "#3a2a22" });
-    for (let i = 0; i < 22; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const r = 12 + Math.random() * (half - 22);
-      const peak = new THREE.Mesh(
-        new THREE.ConeGeometry(1.4 + Math.random() * 2.2, 3 + Math.random() * 5, 5),
-        rock
-      );
-      peak.position.set(Math.cos(ang) * r, 1.5, Math.sin(ang) * r);
-      root.add(peak);
-    }
+    dressFireField(root, half);
+    dressFireCitadel(root);
   } else if (def.props === "sand") {
     dressDesertField(root, half);
     dressDesertOasisCity(root);
@@ -2610,10 +2840,14 @@ export function makeBiomeMapRoot(biomeId) {
   if (biomeId === "snow") {
     portalGaps.push({ x: SNOW_CITY.x, z: SNOW_CITY.z, w: SNOW_CITY.r + 10 });
   }
+  if (biomeId === "fire_plains") {
+    portalGaps.push({ x: FIRE_CITY.x, z: FIRE_CITY.z, w: FIRE_CITY.r + 10 });
+  }
   addMapHorizon(root, {
     half,
-    arid: def.props === "sand" || def.props === "lava",
+    arid: def.props === "sand",
     snow: def.props === "snow",
+    lava: def.props === "lava",
     portalGaps,
   });
 
@@ -2625,6 +2859,7 @@ export function makeBiomeMapRoot(biomeId) {
   root.userData = { mapId: biomeId, edgePortal: ret };
   if (biomeId === "desert") root.userData.desertCity = DESERT_CITY;
   if (biomeId === "snow") root.userData.snowCity = SNOW_CITY;
+  if (biomeId === "fire_plains") root.userData.fireCity = FIRE_CITY;
   return root;
 }
 

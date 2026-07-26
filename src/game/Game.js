@@ -35,7 +35,7 @@ import { FxSystem } from "./fx.js";
 import { derivedStats, applyLevelUps } from "./character.js";
 import { getItem, RARITY_COLOR } from "./items.js";
 import { clampToOrcLand } from "../data/orcMap.js";
-import { isBiomeMap, inDesertCity, inSnowCity } from "../data/biomeMaps.js";
+import { isBiomeMap, inDesertCity, inSnowCity, inFireCity } from "../data/biomeMaps.js";
 import {
   equipFromInventory,
   unequipSlot,
@@ -2551,7 +2551,8 @@ export class Game {
         const blockedCity =
           (mid !== "orc_valley" && inCity(m.x, m.z)) ||
           (mid === "desert" && inDesertCity(m.x, m.z)) ||
-          (mid === "snow" && inSnowCity(m.x, m.z));
+          (mid === "snow" && inSnowCity(m.x, m.z)) ||
+          (mid === "fire_plains" && inFireCity(m.x, m.z));
         if (count < 38 && !blockedCity) {
           const a = rand(0, Math.PI * 2);
           let sx = m.x + Math.cos(a) * 4;
@@ -2586,7 +2587,8 @@ export class Game {
           mid !== "orc_valley" &&
           ((inCity(pl.x, pl.z) && dist2(pl.x, pl.z, 0, 0) < CITY_RADIUS - 3) ||
             (mid === "desert" && inDesertCity(pl.x, pl.z, -2)) ||
-            (mid === "snow" && inSnowCity(pl.x, pl.z, -2)))
+            (mid === "snow" && inSnowCity(pl.x, pl.z, -2)) ||
+            (mid === "fire_plains" && inFireCity(pl.x, pl.z, -2)))
         ) {
           continue;
         }

@@ -59,6 +59,25 @@ export const NPCS = [
     x: 50,
     z: -42,
   },
+  // Plains of Fire citadel — shop + teleporter in NW town
+  {
+    id: "fire_shop",
+    name: "Ember Trader",
+    role: "shop",
+    kingdom: 0,
+    mapId: "fire_plains",
+    x: -52,
+    z: 48,
+  },
+  {
+    id: "fire_tele",
+    name: "Ash Gatekeeper",
+    role: "teleport",
+    kingdom: 0,
+    mapId: "fire_plains",
+    x: -48,
+    z: 56,
+  },
 ];
 
 /** Shop stock grouped for UI tabs */
