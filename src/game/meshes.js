@@ -2,6 +2,16 @@ import * as THREE from "three";
 import { CLASSES, MAP_HALF, MAP_SIZE, CITY_RADIUS, CITY_GATE, EDGE_PORTAL, TOWER_CORNER } from "./data.js";
 import { ORC_BRIDGES, ORC_ISLANDS, ORC_MAP_HALF, ORC_MAP_SIZE } from "../data/orcMap.js";
 import { BANDIT_CAMP } from "../data/banditCamp.js";
+import { campsOnMap } from "../data/wildCamps.js";
+import { NatureKit } from "./NatureKit.js";
+import {
+  addBeatenRoadMeshes,
+  displaceFieldGround,
+  fieldHeightAt,
+  onBeatenRoad,
+} from "./terrain.js";
+
+export { fieldHeightAt };
 
 function hexRgb(hex) {
   const h = String(hex || "#888888").replace("#", "");
@@ -690,10 +700,179 @@ function addCityCozyProps(scene, { warm = true } = {}) {
   }
 }
 
+/** Procedural fallback tree when Kenney GLBs aren't loaded yet */
+function makeFallbackTree(arid = false) {
+  const g = new THREE.Group();
+  const trunk = mat(arid ? "#4a3820" : "#3a2818");
+  const leaf = mat(arid ? "#6a5a28" : "#2d5a28");
+  const t = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.28, 1.7, 6), trunk);
+  t.position.y = 0.85;
+  t.castShadow = true;
+  g.add(t);
+  const c1 = new THREE.Mesh(new THREE.SphereGeometry(arid ? 0.9 : 1.2, 7, 6), leaf);
+  c1.position.y = 2.3;
+  c1.castShadow = true;
+  g.add(c1);
+  if (!arid) {
+    const c2 = new THREE.Mesh(new THREE.SphereGeometry(0.75, 6, 5), leaf);
+    c2.position.set(0.5, 2.9, -0.2);
+    g.add(c2);
+  }
+  return g;
+}
+
+function skipWildernessSpot(mapId, x, z) {
+  if (Math.hypot(x, z) < CITY_RADIUS + 5) return true;
+  if (onBeatenRoad(x, z, mapId, 2.2)) return true;
+  if (mapId === "overworld") {
+    if (Math.hypot(x - EDGE_PORTAL, z) < 14) return true;
+    if (Math.hypot(x - TOWER_CORNER.x, z - TOWER_CORNER.z) < 20) return true;
+  }
+  if (mapId === "valley") {
+    if (Math.hypot(x + EDGE_PORTAL, z) < 14) return true;
+    if (Math.hypot(x - EDGE_PORTAL, z) < 14) return true;
+    if (Math.hypot(x - BANDIT_CAMP.x, z - BANDIT_CAMP.z) < BANDIT_CAMP.r + 3) return true;
+  }
+  for (const c of campsOnMap(mapId)) {
+    if (Math.hypot(x - c.x, z - c.z) < c.r + 2) return true;
+  }
+  return false;
+}
+
+function placeAtHeight(obj, x, z, mapId, yOff = 0) {
+  const h = fieldHeightAt(x, z, mapId);
+  obj.position.set(x, h + yOff, z);
+}
+
+/** Dense wilderness: Kenney trees/rocks/bushes, tent camps, hills already on ground */
+export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 280, rockCount = 160, bushCount = 120 } = {}) {
+  const group = new THREE.Group();
+  group.name = "wilderness_dressing";
+
+  for (let i = 0; i < treeCount; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = CITY_RADIUS + 7 + Math.random() * (MAP_HALF - CITY_RADIUS - 10);
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (skipWildernessSpot(mapId, x, z)) continue;
+    const scale = (arid ? 0.85 : 1) * (0.75 + Math.random() * 0.7);
+    let tree = NatureKit.randomTree(arid, scale);
+    if (!tree) {
+      tree = makeFallbackTree(arid);
+      tree.scale.setScalar(scale);
+    }
+    tree.rotation.y = Math.random() * Math.PI * 2;
+    placeAtHeight(tree, x, z, mapId);
+    group.add(tree);
+  }
+
+  for (let i = 0; i < rockCount; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = CITY_RADIUS + 6 + Math.random() * (MAP_HALF - CITY_RADIUS - 10);
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (skipWildernessSpot(mapId, x, z)) continue;
+    const scale = 0.55 + Math.random() * 1.35;
+    let rock = NatureKit.randomRock(scale);
+    if (!rock) {
+      rock = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(0.55 + Math.random() * 1.2, 0),
+        mat(arid ? "#6a5848" : "#5c564c")
+      );
+      rock.castShadow = true;
+      rock.position.y = 0.4;
+    }
+    rock.rotation.y = Math.random() * Math.PI * 2;
+    placeAtHeight(rock, x, z, mapId);
+    group.add(rock);
+  }
+
+  for (let i = 0; i < bushCount; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = CITY_RADIUS + 5 + Math.random() * (MAP_HALF - CITY_RADIUS - 8);
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (skipWildernessSpot(mapId, x, z)) continue;
+    const bush = NatureKit.randomBush(0.7 + Math.random() * 0.8);
+    if (!bush) continue;
+    bush.rotation.y = Math.random() * Math.PI * 2;
+    placeAtHeight(bush, x, z, mapId);
+    group.add(bush);
+  }
+
+  // Extra logs / fences near camps & roads
+  for (let i = 0; i < 40; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = CITY_RADIUS + 10 + Math.random() * (MAP_HALF - CITY_RADIUS - 16);
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (skipWildernessSpot(mapId, x, z) && Math.random() > 0.35) continue;
+    const key = Math.random() < 0.55 ? "log" : "log_large";
+    const log = NatureKit.clone(key, 0.8 + Math.random() * 0.6);
+    if (!log) continue;
+    log.rotation.y = Math.random() * Math.PI;
+    placeAtHeight(log, x, z, mapId);
+    group.add(log);
+  }
+
+  // Tent camps
+  for (const camp of campsOnMap(mapId)) {
+    const campG = new THREE.Group();
+    campG.name = `camp_${camp.id}`;
+    // Packed dirt yard
+    const yard = new THREE.Mesh(
+      new THREE.CircleGeometry(camp.r * 0.75, 20),
+      mat("#5a4a30", { roughness: 0.95 })
+    );
+    yard.rotation.x = -Math.PI / 2;
+    yard.position.set(camp.x, fieldHeightAt(camp.x, camp.z, mapId) + 0.04, camp.z);
+    yard.receiveShadow = true;
+    campG.add(yard);
+
+    for (let t = 0; t < camp.tents; t++) {
+      const ang = (t / camp.tents) * Math.PI * 2 + 0.4;
+      const rr = 3.2 + (t % 2) * 1.4;
+      const tx = camp.x + Math.cos(ang) * rr;
+      const tz = camp.z + Math.sin(ang) * rr;
+      const tentKey = t % 2 === 0 ? "tent_open" : "tent_closed";
+      let tent = NatureKit.clone(tentKey, 1.15);
+      if (!tent) tent = NatureKit.clone(t % 2 ? "tent_small_closed" : "tent_small_open", 1.3);
+      if (!tent) tent = makeBiologistTent();
+      tent.rotation.y = ang + Math.PI;
+      placeAtHeight(tent, tx, tz, mapId);
+      campG.add(tent);
+    }
+
+    const fire = NatureKit.clone(Math.random() < 0.5 ? "campfire" : "campfire_logs", 1.2);
+    if (fire) {
+      placeAtHeight(fire, camp.x, camp.z, mapId);
+      campG.add(fire);
+    } else {
+      const pit = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.85, 0.25, 8), mat("#2a2218"));
+      placeAtHeight(pit, camp.x, camp.z, mapId, 0.12);
+      campG.add(pit);
+    }
+
+    for (let f = 0; f < 3; f++) {
+      const fence = NatureKit.clone("fence", 1.1);
+      if (!fence) break;
+      const ang = f * 2.1;
+      placeAtHeight(fence, camp.x + Math.cos(ang) * (camp.r - 2), camp.z + Math.sin(ang) * (camp.r - 2), mapId);
+      fence.rotation.y = ang + Math.PI / 2;
+      campG.add(fence);
+    }
+
+    group.add(campG);
+  }
+
+  root.add(group);
+  return group;
+}
+
 export function createScene() {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color("#8aab72");
-  scene.fog = new THREE.Fog("#9aba80", 48, 118);
+  scene.fog = new THREE.Fog("#9aba80", 55, 195);
 
   scene.add(new THREE.HemisphereLight(0xfff2e0, 0x5a4a28, 0.95));
 
@@ -714,12 +893,13 @@ export function createScene() {
   overworld.name = "overworld";
 
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 64, 64),
+    new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 96, 96),
     new THREE.MeshStandardMaterial({ map: makeGrassTexture(), roughness: 0.95, flatShading: false })
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   ground.name = "world_ground";
+  displaceFieldGround(ground, "overworld");
   overworld.add(ground);
 
   const cobble = makeCobbleTexture(true);
@@ -819,53 +999,28 @@ export function createScene() {
     overworld.add(w);
   }
 
-  const leaf = mat("#2d5a28");
-  const trunk = mat("#3a2818");
-  for (let i = 0; i < 220; i++) {
-    const ang = Math.random() * Math.PI * 2;
-    const r = CITY_RADIUS + 6 + Math.random() * (MAP_HALF - CITY_RADIUS - 8);
-    const x = Math.cos(ang) * r;
-    const z = Math.sin(ang) * r;
-    if (Math.hypot(x - TOWER_CORNER.x, z - TOWER_CORNER.z) < 20) continue;
-    if (Math.hypot(x - EDGE_PORTAL, z) < 12) continue;
-    const g = new THREE.Group();
-    const t = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, 1.5, 5), trunk);
-    t.position.y = 0.75;
-    t.castShadow = true;
-    g.add(t);
-    const c1 = new THREE.Mesh(new THREE.SphereGeometry(1.15, 6, 5), leaf);
-    c1.position.y = 2.2;
-    c1.castShadow = true;
-    g.add(c1);
-    const c2 = new THREE.Mesh(new THREE.SphereGeometry(0.8, 6, 5), leaf);
-    c2.position.set(0.45, 2.75, -0.25);
-    g.add(c2);
-    g.position.set(x, 0, z);
-    g.scale.setScalar(0.8 + Math.random() * 0.55);
-    overworld.add(g);
-  }
-
-  const rockMat = mat("#5c564c");
-  for (let i = 0; i < 140; i++) {
-    const ang = Math.random() * Math.PI * 2;
-    const r = CITY_RADIUS + 5 + Math.random() * (MAP_HALF - CITY_RADIUS - 10);
-    const x = Math.cos(ang) * r;
-    const z = Math.sin(ang) * r;
-    if (Math.hypot(x - TOWER_CORNER.x, z - TOWER_CORNER.z) < 18) continue;
-    if (Math.hypot(x - EDGE_PORTAL, z) < 10) continue;
-    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.55 + Math.random() * 1.3, 0), rockMat);
-    rock.position.set(x, 0.45, z);
-    rock.rotation.set(Math.random(), Math.random(), Math.random());
-    rock.castShadow = true;
-    overworld.add(rock);
-  }
+  // Beaten roads out of the city + Kenney wilderness dressing
+  const dirtRoad = new THREE.MeshStandardMaterial({
+    map: makeDirtTexture(),
+    roughness: 0.96,
+    color: "#c4b089",
+  });
+  addBeatenRoadMeshes(overworld, "overworld", dirtRoad);
+  dressFieldWilderness(overworld, {
+    mapId: "overworld",
+    arid: false,
+    treeCount: 320,
+    rockCount: 180,
+    bushCount: 140,
+  });
 
   // East-edge portal to Seungryong
   const eastPortal = makeMapPortalMesh("#6ec8ff", "Seungryong");
-  eastPortal.position.set(EDGE_PORTAL, 0, 0);
+  eastPortal.position.set(EDGE_PORTAL, fieldHeightAt(EDGE_PORTAL, 0, "overworld"), 0);
   eastPortal.rotation.y = -Math.PI / 2;
   overworld.add(eastPortal);
   overworld.userData.edgePortal = eastPortal;
+  overworld.userData.mapId = "overworld";
   finalizeMapSmoke(overworld);
 
   scene.add(overworld);
@@ -879,11 +1034,12 @@ export function makeValleyMapRoot() {
   root.visible = false;
 
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 64, 64),
+    new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 96, 96),
     new THREE.MeshStandardMaterial({ map: makeDirtTexture(), roughness: 0.96, flatShading: false })
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
+  displaceFieldGround(ground, "valley");
   root.add(ground);
 
   const cobble = makeCobbleTexture(false);
@@ -965,57 +1121,30 @@ export function makeValleyMapRoot() {
     root.add(w);
   }
 
-  // Dry shrubs / dead trees across the expanded wilderness
-  const leaf = mat("#6a5a28");
-  const trunk = mat("#3a2818");
-  for (let i = 0; i < 200; i++) {
-    const ang = Math.random() * Math.PI * 2;
-    const r = CITY_RADIUS + 6 + Math.random() * (MAP_HALF - CITY_RADIUS - 8);
-    const x = Math.cos(ang) * r;
-    const z = Math.sin(ang) * r;
-    if (Math.hypot(x + EDGE_PORTAL, z) < 12) continue;
-    if (Math.hypot(x - EDGE_PORTAL, z) < 12) continue;
-    if (Math.hypot(x - BANDIT_CAMP.x, z - BANDIT_CAMP.z) < BANDIT_CAMP.r + 2) continue;
-    const g = new THREE.Group();
-    const t = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.22, 1.2, 5), trunk);
-    t.position.y = 0.6;
-    t.castShadow = true;
-    g.add(t);
-    const c1 = new THREE.Mesh(new THREE.SphereGeometry(0.85, 5, 4), leaf);
-    c1.position.y = 1.7;
-    c1.castShadow = true;
-    g.add(c1);
-    g.position.set(x, 0, z);
-    g.scale.setScalar(0.7 + Math.random() * 0.5);
-    root.add(g);
-  }
-
-  const rockMat = mat("#6a5848");
-  for (let i = 0; i < 130; i++) {
-    const ang = Math.random() * Math.PI * 2;
-    const r = CITY_RADIUS + 5 + Math.random() * (MAP_HALF - CITY_RADIUS - 10);
-    const x = Math.cos(ang) * r;
-    const z = Math.sin(ang) * r;
-    if (Math.hypot(x + EDGE_PORTAL, z) < 10) continue;
-    if (Math.hypot(x - EDGE_PORTAL, z) < 10) continue;
-    if (Math.hypot(x - BANDIT_CAMP.x, z - BANDIT_CAMP.z) < BANDIT_CAMP.r) continue;
-    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5 + Math.random() * 1.4, 0), rockMat);
-    rock.position.set(x, 0.4, z);
-    rock.rotation.set(Math.random(), Math.random(), Math.random());
-    rock.castShadow = true;
-    root.add(rock);
-  }
+  const valleyDirt = new THREE.MeshStandardMaterial({
+    map: makeDirtTexture(),
+    roughness: 0.96,
+    color: "#b8a070",
+  });
+  addBeatenRoadMeshes(root, "valley", valleyDirt);
+  dressFieldWilderness(root, {
+    mapId: "valley",
+    arid: true,
+    treeCount: 380,
+    rockCount: 220,
+    bushCount: 160,
+  });
 
   // NW rogue hamlet — 2–3 detailed houses
   root.add(makeBanditCampMesh());
 
   const westPortal = makeMapPortalMesh("#e8b84a", "Shinsoo");
-  westPortal.position.set(-EDGE_PORTAL, 0, 0);
+  westPortal.position.set(-EDGE_PORTAL, fieldHeightAt(-EDGE_PORTAL, 0, "valley"), 0);
   westPortal.rotation.y = Math.PI / 2;
   root.add(westPortal);
 
   const eastPortal = makeMapPortalMesh("#5a8a3a", "Orc Isles");
-  eastPortal.position.set(EDGE_PORTAL, 0, 0);
+  eastPortal.position.set(EDGE_PORTAL, fieldHeightAt(EDGE_PORTAL, 0, "valley"), 0);
   eastPortal.rotation.y = -Math.PI / 2;
   root.add(eastPortal);
 
@@ -1029,7 +1158,7 @@ export function makeValleyMapRoot() {
 function makeBanditCampMesh() {
   const g = new THREE.Group();
   g.name = "bandit_camp";
-  g.position.set(BANDIT_CAMP.x, 0, BANDIT_CAMP.z);
+  g.position.set(BANDIT_CAMP.x, fieldHeightAt(BANDIT_CAMP.x, BANDIT_CAMP.z, "valley"), BANDIT_CAMP.z);
 
   // Packed dirt yard
   const yard = new THREE.Mesh(

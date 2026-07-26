@@ -1288,6 +1288,28 @@ button, input { font: inherit; color: inherit; }
 
 .menu-actions .btn { margin-top: 0.5rem; }
 .panel-menu { width: min(380px, 92vw); text-align: left; }
+.panel-map { width: min(480px, 94vw); text-align: center; }
+.map-panel-body { display: flex; flex-direction: column; gap: 0.55rem; align-items: center; }
+.map-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: center; }
+.map-tab.selected {
+  border-color: #ffe9a0;
+  background: linear-gradient(180deg, #6a5018, #2a1c08);
+}
+#world-map-canvas {
+  width: min(420px, 86vw);
+  height: auto;
+  aspect-ratio: 1;
+  border: 3px solid #c9a227;
+  border-radius: 4px;
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.45), 0 8px 20px rgba(0, 0, 0, 0.4);
+  background: #1a2410;
+}
+.map-legend {
+  font-size: 0.78rem;
+  color: #ffe9a8;
+  text-shadow: var(--text-outline);
+  margin: 0;
+}
 .menu-hint {
   margin: 0 0 0.85rem;
   padding: 0.55rem 0.7rem;

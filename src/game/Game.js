@@ -3,6 +3,7 @@ import {
   createRenderer,
   createScene,
   createCamera,
+  fieldHeightAt,
   makePlayerMesh,
   makeMetinMesh,
   makeMobMesh,
@@ -227,6 +228,12 @@ export class Game {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+  }
+
+  /** Surface height for current field map (hills). Dungeons / orc stay flat. */
+  groundY(x, z, mapId = MapService.currentId) {
+    if (mapId !== "overworld" && mapId !== "valley") return 0;
+    return fieldHeightAt(x, z, mapId);
   }
 
   start(profile, character) {
@@ -1503,7 +1510,7 @@ export class Game {
     }
     const id = uid("met");
     const mesh = makeMetinMesh(tmpl.tier, tmpl.color);
-    mesh.position.set(x, 0, z);
+    mesh.position.set(x, this.groundY(x, z, mapId), z);
     const dungeon = !!opts.dungeon || mapId === "demon_tower";
     mesh.visible = dungeon ? MapService.isDungeon() : mapId === MapService.currentId && !MapService.isDungeon();
     this.scene.add(mesh);
@@ -1572,7 +1579,7 @@ export class Game {
     const tmpl = MONSTERS[kind] || MONSTERS.wolf;
     const id = uid("mob");
     const mesh = makeMobMesh(tmpl.id || tmpl.kind || kind);
-    mesh.position.set(x, 0, z);
+    mesh.position.set(x, this.groundY(x, z, mapId), z);
     mesh.visible = !MapService.isDungeon() && mapId === MapService.currentId;
     this.scene.add(mesh);
     this.mobs.set(id, {
@@ -1975,8 +1982,10 @@ export class Game {
     }
 
     // Mesh + animation
-    this.localMesh.position.set(p.x, 0, p.z);
+    const gy = this.groundY(p.x, p.z);
+    this.localMesh.position.set(p.x, gy, p.z);
     this.localMesh.rotation.y = p.rot;
+    this.aimMarker.position.y = gy + 0.06;
     this.localMesh.visible = !stealth || Math.sin(this.time * 20) > -0.2;
     setNameplate(this.localMesh, p.name, p.hp / p.maxHp, p.level, p.classId);
     if (this.heroCtrl) {
@@ -2006,9 +2015,9 @@ export class Game {
       height,
       Math.cos(this.camYaw) * flat
     );
-    const desired = new THREE.Vector3(p.x, 0, p.z).add(this.camOffset);
+    const desired = new THREE.Vector3(p.x, gy, p.z).add(this.camOffset);
     this.camera.position.lerp(desired, 1 - Math.pow(0.0015, dt));
-    this.camera.lookAt(p.x, 1.1, p.z);
+    this.camera.lookAt(p.x, gy + 1.1, p.z);
     // FOV breathes slightly when zoomed in for a closer feel
     const wantFov = THREE.MathUtils.lerp(48, 36, clamp((62 - dist) / 50, 0, 1));
     this.camera.fov += (wantFov - this.camera.fov) * Math.min(1, 6 * dt);
@@ -2023,7 +2032,8 @@ export class Game {
       r.state.rot = dampAngle(r.state.rot ?? t.rot, t.rot, 12, dt);
       r.state.hp = t.hp;
       r.state.maxHp = t.maxHp || r.state.maxHp || 100;
-      r.mesh.position.set(r.state.x, 0, r.state.z);
+      const mid = r.target?.mapId || r.state?.mapId || "overworld";
+      r.mesh.position.set(r.state.x, this.groundY(r.state.x, r.state.z, mid), r.state.z);
       r.mesh.rotation.y = r.state.rot;
       const sameMap = (t.mapId || "overworld") === MapService.currentId;
       r.mesh.visible = sameMap && !t.stealth;
@@ -2062,7 +2072,7 @@ export class Game {
         if (m.tx != null) {
           m.x += (m.tx - m.x) * Math.min(1, 12 * dt);
           m.z += (m.tz - m.z) * Math.min(1, 12 * dt);
-          m.mesh.position.set(m.x, 0, m.z);
+          m.mesh.position.set(m.x, this.groundY(m.x, m.z, m.mapId), m.z);
         }
         this._animateMetin(m, dt);
       }
@@ -2076,7 +2086,7 @@ export class Game {
           const dz = mob.z - pz;
           const moving = Math.hypot(dx, dz) > 0.0008;
           if (moving) mob.mesh.rotation.y = dampAngle(mob.mesh.rotation.y, Math.atan2(dx, dz), 10, dt);
-          mob.mesh.position.set(mob.x, 0, mob.z);
+          mob.mesh.position.set(mob.x, this.groundY(mob.x, mob.z, mob.mapId), mob.z);
           animateMob(mob.mesh, dt, moving);
         } else {
           animateMob(mob.mesh, dt, true);
@@ -2387,7 +2397,7 @@ export class Game {
         mob.x = land.x;
         mob.z = land.z;
       }
-      mob.mesh.position.set(mob.x, 0, mob.z);
+      mob.mesh.position.set(mob.x, this.groundY(mob.x, mob.z, mid), mob.z);
       if (this._entityOnCurrentMap(mob)) animateMob(mob.mesh, dt, moving);
     }
 
@@ -3597,7 +3607,8 @@ export class Game {
       if (mob.x == null || Math.hypot(mob.x - m.x, mob.z - m.z) > 8) {
         mob.x = m.x;
         mob.z = m.z;
-        mob.mesh.position.set(m.x, 0, m.z);
+        const mid = m.mapId || "overworld";
+        mob.mesh.position.set(m.x, this.groundY(m.x, m.z, mid), m.z);
       }
       mob.tx = m.x;
       mob.tz = m.z;
@@ -3628,7 +3639,8 @@ export class Game {
       if (met.x == null || Math.hypot(met.x - m.x, met.z - m.z) > 8) {
         met.x = m.x;
         met.z = m.z;
-        met.mesh.position.set(m.x, 0, m.z);
+        const mid = m.mapId || "overworld";
+        met.mesh.position.set(m.x, this.groundY(m.x, m.z, mid), m.z);
       }
       met.tx = m.x;
       met.tz = m.z;

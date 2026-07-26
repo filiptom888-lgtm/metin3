@@ -290,6 +290,19 @@
           </div>
         </div>
 
+        <div id="panel-map" class="panel m2-panel panel-map" hidden>
+          <header><h3>World Map</h3><button type="button" data-close="map">✕</button></header>
+          <div class="panel-body map-panel-body">
+            <div class="map-tabs" id="map-tabs">
+              <button type="button" class="btn-mini map-tab selected" data-map-view="overworld">Shinsoo</button>
+              <button type="button" class="btn-mini map-tab" data-map-view="valley">Seungryong</button>
+              <button type="button" class="btn-mini map-tab" data-map-view="orc_valley">Orc Isles</button>
+            </div>
+            <canvas id="world-map-canvas" width="420" height="420"></canvas>
+            <p class="map-legend" id="map-legend">You · City · Portal · Camp · Tower</p>
+          </div>
+        </div>
+
         <div id="panel-menu" class="panel m2-panel panel-menu" hidden>
           <header><h3>System Menu</h3><button type="button" data-close="menu">✕</button></header>
           <div class="panel-body">
@@ -309,6 +322,9 @@
               </button>
               <button type="button" class="menu-nav-btn" data-menu-panel="party">
                 <b>Party</b><span>Invite & members · P</span>
+              </button>
+              <button type="button" class="menu-nav-btn" data-menu-panel="map">
+                <b>Map</b><span>World overview · M</span>
               </button>
             </div>
             <div class="menu-actions menu-actions-foot">

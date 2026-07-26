@@ -4,6 +4,7 @@ import { inDemonTowerZone } from "../data/demonTower.js";
 import { orcSpawnPoint } from "../data/orcMap.js";
 import { EDGE_PORTAL } from "../game/data.js";
 import { BANDIT_CAMP, banditCampPoint, inBanditCamp } from "../data/banditCamp.js";
+import { campsOnMap, inWildCamp, wildCampPoint } from "../data/wildCamps.js";
 
 function wildPoint(mapId, minR, maxR) {
   if (mapId === "orc_valley") {
@@ -20,8 +21,9 @@ function wildPoint(mapId, minR, maxR) {
     if (mapId === "overworld" && Math.hypot(p.x - edge, p.z) < 10) continue;
     if (mapId === "valley" && Math.hypot(p.x + edge, p.z) < 10) continue;
     if (mapId === "valley" && Math.hypot(p.x - edge, p.z) < 10) continue;
-    // Keep rogue hamlet for camp pack only
+    // Keep rogue hamlet / tent camps for their own packs
     if (mapId === BANDIT_CAMP.mapId && inBanditCamp(p.x, p.z, 4)) continue;
+    if (inWildCamp(mapId, p.x, p.z, 3)) continue;
     return p;
   }
   const mid = (minR + maxR) / 2;
@@ -210,6 +212,27 @@ export const SpawnService = {
     return mobs;
   },
 
+  /** Tent camps scattered around Shinsoo / Seungryong */
+  seedWildCamps(mapId) {
+    const mobs = [];
+    for (const camp of campsOnMap(mapId)) {
+      for (const pack of camp.mobs || []) {
+        for (let i = 0; i < (pack.n || 1); i++) {
+          const p = wildCampPoint(camp, 2.5, camp.r - 1.5);
+          mobs.push({
+            ...p,
+            templateId: pack.id,
+            mapId,
+            zone: "camp",
+            camp: true,
+            campId: camp.id,
+          });
+        }
+      }
+    }
+    return mobs;
+  },
+
   seedWild(mapId = "overworld", level = 1) {
     const mobs = [];
     const metins = [];
@@ -243,6 +266,9 @@ export const SpawnService = {
 
     if (mapId === BANDIT_CAMP.mapId) {
       mobs.push(...this.seedBanditCamp());
+    }
+    if (mapId === "overworld" || mapId === "valley") {
+      mobs.push(...this.seedWildCamps(mapId));
     }
 
     const metinCount = this.seedMetinCount(mapId);

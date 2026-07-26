@@ -1,6 +1,9 @@
 import "./style.css";
-import { CLASSES, MAP_SIZE, CITY_RADIUS, EDGE_PORTAL } from "./game/data.js";
+import { CLASSES, MAP_SIZE, CITY_RADIUS, EDGE_PORTAL, MAP_HALF, TOWER_CORNER } from "./game/data.js";
 import { BANDIT_CAMP } from "./data/banditCamp.js";
+import { campsOnMap } from "./data/wildCamps.js";
+import { fieldRoads } from "./game/terrain.js";
+import { NatureKit } from "./game/NatureKit.js";
 import { Game } from "./game/Game.js";
 import { WorldNet } from "./net/world.js";
 import { hasSupabase, configHint } from "./net/supabase.js";
@@ -299,7 +302,34 @@ const ui = {
         ctx.arc(tpx, tpy, 3, 0, Math.PI * 2);
         ctx.fill();
       } else {
+        // Beaten roads (city → portals + trails)
+        const roads = valley
+          ? [
+              [[-CITY_RADIUS, 0], [-EDGE_PORTAL, 0]],
+              [[CITY_RADIUS, 0], [EDGE_PORTAL, 0]],
+              [[0, -CITY_RADIUS], [0, -MAP_HALF * 0.72]],
+              [[0, CITY_RADIUS], [BANDIT_CAMP.x * 0.55, BANDIT_CAMP.z * 0.55], [BANDIT_CAMP.x, BANDIT_CAMP.z]],
+            ]
+          : [
+              [[CITY_RADIUS, 0], [EDGE_PORTAL, 0]],
+              [[-CITY_RADIUS, 0], [-MAP_HALF * 0.78, 0]],
+              [[0, -CITY_RADIUS], [0, -MAP_HALF * 0.75]],
+              [[0, CITY_RADIUS], [DEMON_TOWER.entrance.x * 0.4, DEMON_TOWER.entrance.z * 0.55], [DEMON_TOWER.entrance.x, DEMON_TOWER.entrance.z]],
+            ];
+        ctx.strokeStyle = "rgba(120, 90, 45, 0.55)";
+        ctx.lineWidth = 1.4;
+        ctx.lineCap = "round";
+        for (const path of roads) {
+          ctx.beginPath();
+          path.forEach(([rx, rz], i) => {
+            const [mx, my] = to(rx, rz);
+            if (i === 0) ctx.moveTo(mx, my);
+            else ctx.lineTo(mx, my);
+          });
+          ctx.stroke();
+        }
         ctx.strokeStyle = valley ? "rgba(180,140,70,0.5)" : "rgba(201,162,39,0.45)";
+        ctx.lineWidth = 1;
         ctx.beginPath();
         const cr = (CITY_RADIUS / MAP_SIZE) * w;
         ctx.arc(w / 2, h / 2, cr, 0, Math.PI * 2);
@@ -1227,6 +1257,7 @@ const PANEL_MAP = {
   inv: "#panel-inv",
   skills: "#panel-skills",
   menu: "#panel-menu",
+  map: "#panel-map",
   npc: "#panel-npc",
   quests: "#panel-quests",
   party: "#panel-party",
@@ -1474,6 +1505,7 @@ function showPanel(name) {
   if (name === "tower") renderTowerPanel();
   if (name === "dungeon") renderDungeonPanel();
   if (name === "trade") renderTradePanel();
+  if (name === "map") drawWorldMap(MapService.currentId || "overworld");
 }
 
 function togglePanel(name) {
@@ -1680,7 +1712,159 @@ $("#inp-name").value = `Hero${Math.floor(Math.random() * 90 + 10)}`;
 $("#config-hint").textContent = configHint();
 
 const net = new WorldNet();
+// Kenney Nature Kit (CC0) — trees / tents / rocks for field maps
+await NatureKit.preload().catch((err) => console.warn("[nature]", err));
 const game = new Game($("#c"), ui, net);
+
+let _mapViewId = "overworld";
+
+function drawWorldMap(viewId = _mapViewId) {
+  const canvas = $("#world-map-canvas");
+  if (!canvas) return;
+  _mapViewId = viewId || MapService.currentId || "overworld";
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+  const pad = 18;
+  const mid = _mapViewId;
+  const half = mid === "orc_valley" ? 80 : mid === "demon_tower" ? 18 : MAP_HALF;
+  const size = half * 2;
+  const toX = (x) => pad + ((x + half) / size) * (w - pad * 2);
+  const toY = (z) => pad + ((z + half) / size) * (h - pad * 2);
+
+  // Parchment ground
+  const g = ctx.createLinearGradient(0, 0, w, h);
+  if (mid === "valley") {
+    g.addColorStop(0, "#5a4830");
+    g.addColorStop(1, "#3a2a18");
+  } else if (mid === "orc_valley") {
+    g.addColorStop(0, "#2a3a28");
+    g.addColorStop(1, "#1a2418");
+  } else {
+    g.addColorStop(0, "#3a5a32");
+    g.addColorStop(1, "#243820");
+  }
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "#c9a227";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, w - 4, h - 4);
+
+  // Beaten roads
+  ctx.strokeStyle = "rgba(180, 150, 90, 0.75)";
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  for (const r of fieldRoads(mid)) {
+    ctx.beginPath();
+    ctx.moveTo(toX(r.x0), toY(r.z0));
+    ctx.lineTo(toX(r.x1), toY(r.z1));
+    ctx.stroke();
+  }
+
+  // City ring
+  if (mid === "overworld" || mid === "valley") {
+    ctx.beginPath();
+    ctx.arc(toX(0), toY(0), (CITY_RADIUS / size) * (w - pad * 2), 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(200, 170, 90, 0.35)";
+    ctx.fill();
+    ctx.strokeStyle = "#e8d48b";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "#ffe9a8";
+    ctx.font = "bold 12px Cinzel, serif";
+    ctx.textAlign = "center";
+    ctx.fillText(mid === "valley" ? "Seungryong" : "Shinsoo", toX(0), toY(0) - 6);
+  }
+
+  // Camps
+  for (const c of campsOnMap(mid)) {
+    ctx.fillStyle = "#c45a2a";
+    ctx.beginPath();
+    ctx.arc(toX(c.x), toY(c.z), 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#ffe0a0";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  if (mid === "valley") {
+    ctx.fillStyle = "#a03020";
+    ctx.fillRect(toX(BANDIT_CAMP.x) - 6, toY(BANDIT_CAMP.z) - 6, 12, 12);
+  }
+  if (mid === "overworld") {
+    ctx.fillStyle = "#8b1e1e";
+    ctx.beginPath();
+    ctx.moveTo(toX(TOWER_CORNER.x), toY(TOWER_CORNER.z) - 7);
+    ctx.lineTo(toX(TOWER_CORNER.x) + 6, toY(TOWER_CORNER.z) + 5);
+    ctx.lineTo(toX(TOWER_CORNER.x) - 6, toY(TOWER_CORNER.z) + 5);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Portals
+  const portalDots =
+    mid === "overworld"
+      ? [{ x: EDGE_PORTAL, z: 0, label: "E" }]
+      : mid === "valley"
+        ? [
+            { x: -EDGE_PORTAL, z: 0, label: "W" },
+            { x: EDGE_PORTAL, z: 0, label: "E" },
+          ]
+        : mid === "orc_valley"
+          ? [{ x: -68.5, z: 0, label: "W" }]
+          : [];
+  for (const p of portalDots) {
+    ctx.fillStyle = "#6ec8ff";
+    ctx.beginPath();
+    ctx.arc(toX(p.x), toY(p.z), 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 10px sans-serif";
+    ctx.fillText(p.label, toX(p.x), toY(p.z) + 3);
+  }
+
+  // You are here
+  if (game.local && MapService.currentId === mid) {
+    const px = toX(game.local.x);
+    const pz = toY(game.local.z);
+    ctx.fillStyle = "#ffe14a";
+    ctx.strokeStyle = "#1a1408";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(px, pz - 9);
+    ctx.lineTo(px + 7, pz + 6);
+    ctx.lineTo(px - 7, pz + 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#ffe9a8";
+    ctx.font = "bold 11px Cinzel, serif";
+    ctx.fillText("You", px, pz - 12);
+  } else if (MapService.currentId !== mid) {
+    ctx.fillStyle = "rgba(255,233,168,0.7)";
+    ctx.font = "11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("(not on this map)", w / 2, h - 10);
+  }
+
+  const legend = $("#map-legend");
+  if (legend) {
+    const name = MapService.current?.name || mid;
+    legend.textContent =
+      MapService.currentId === mid
+        ? `Viewing ${name} — yellow marker is you`
+        : `Viewing ${mid === "valley" ? "Seungryong" : mid === "orc_valley" ? "Orc Isles" : "Shinsoo"}`;
+  }
+  document.querySelectorAll(".map-tab").forEach((b) => {
+    b.classList.toggle("selected", b.getAttribute("data-map-view") === mid);
+  });
+}
+
+document.getElementById("map-tabs")?.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-map-view]");
+  if (!btn) return;
+  audio.sfx("ui");
+  drawWorldMap(btn.getAttribute("data-map-view"));
+});
 
 game.onCharacterChange = (ch) => {
   if (!$("#panel-char").hidden) renderCharacterPanel(ch);
@@ -1776,6 +1960,7 @@ window.addEventListener("keydown", (e) => {
   if (k === "k") togglePanel("skills");
   if (k === "q") togglePanel("quests");
   if (k === "p") togglePanel("party");
+  if (k === "m") togglePanel("map");
   if (k === "escape") {
     e.preventDefault();
     // Dismiss overlays first so Esc always recovers a stuck invite / context menu
