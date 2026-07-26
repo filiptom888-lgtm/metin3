@@ -116,7 +116,7 @@ export function onBeatenRoad(x, z, mapId, pad = 0.4) {
 }
 
 /**
- * Ground height for field maps. City + roads + bridge decks stay walkable.
+ * Ground height for field maps. City basin stays nearly flat; soft rolls farther out.
  */
 export function fieldHeightAt(x, z, mapId = "overworld") {
   if (mapId !== "overworld" && mapId !== "valley") return 0;
@@ -130,24 +130,35 @@ export function fieldHeightAt(x, z, mapId = "overworld") {
   if (onBeatenRoad(x, z, mapId, 1.1)) {
     // Roads follow gentle terrain but never dive into the river
     if (inRiver(mapId, x, z, -2)) return 0.05;
-    const fade = Math.min(1, (dCity - CITY_RADIUS - 2.5) / 16);
-    const n = fbm(x * 0.035 + 10, z * 0.035 + 4) * 1.2 - 0.5;
-    return Math.max(0, n) * fade * 0.35;
+    const fade = Math.min(1, (dCity - CITY_RADIUS - 2.5) / 28);
+    const n = fbm(x * 0.028 + 10, z * 0.028 + 4) * 0.9 - 0.4;
+    return Math.max(0, n) * fade * 0.22;
   }
   if (mapId === "overworld" && Math.hypot(x - EDGE_PORTAL, z) < 10) return 0;
-  if (mapId === "valley" && (Math.hypot(x - EDGE_PORTAL, z) < 10 || Math.hypot(x + EDGE_PORTAL, z) < 10)) return 0;
+  if (mapId === "valley" && (Math.hypot(x - EDGE_PORTAL, z) < 10 || Math.hypot(x + EDGE_PORTAL, z) < 10))
+    return 0;
   if (mapId === "overworld" && Math.hypot(x - TOWER_CORNER.x, z - TOWER_CORNER.z) < 16) return 0;
 
-  const fade = Math.min(1, (dCity - CITY_RADIUS - 2.5) / 16);
+  // Wide flat hunting basin around the city — hills only ramp in past ~55–60m
+  const basinEnd = 58;
+  const mid = Math.min(1, Math.max(0, (dCity - CITY_RADIUS - 2.5) / (basinEnd - CITY_RADIUS - 2.5)));
+  const t = mid * mid * (3 - 2 * mid); // smoothstep 0→1
+
+  // Low-frequency rolls only (high-freq noise looked like square mesas)
   const n =
-    fbm(x * 0.035 + 10, z * 0.035 + 4) * 2.4 +
-    fbm(x * 0.09 - 3, z * 0.09 + 7) * 0.95 -
-    1.25;
-  let hill = Math.max(0, n) * (mapId === "valley" ? 2.2 : 1.85);
+    fbm(x * 0.018 + 10, z * 0.018 + 4) * 1.05 +
+    fbm(x * 0.042 - 3, z * 0.042 + 7) * 0.28 -
+    0.52;
+  const baseAmp = mapId === "valley" ? 0.38 : 0.32;
+  const outerAmp = mapId === "valley" ? 1.05 : 0.9;
+  let hill = Math.max(0, n) * (baseAmp + t * (outerAmp - baseAmp));
+  // Keep the inner half of the basin almost pancake-flat
+  hill *= 0.08 + 0.92 * t;
+
   const edgeDist = MAP_HALF - Math.max(Math.abs(x), Math.abs(z));
-  // Rise into foothills so the playable tile blends into the mountain rim
-  const rim = edgeDist < 28 ? Math.pow(1 - edgeDist / 28, 1.35) * 5.5 : 0;
-  let h = (hill + rim) * fade;
+  // Soft rise into the mountain rim (outer ring only)
+  const rim = edgeDist < 32 ? Math.pow(1 - edgeDist / 32, 1.5) * 3.8 : 0;
+  let h = hill + rim * Math.min(1, t + 0.35);
 
   // Carve river channel
   const dig = riverCarve(mapId, x, z);

@@ -1148,18 +1148,20 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 22
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
     if (skipWildernessSpot(mapId, x, z)) continue;
-    const targetH = 1.4 + Math.random() * 3.6 + (Math.random() < 0.12 ? 3.5 : 0);
+    // Keep rocks small in the basin; slightly larger toward the rim
+    const edgeBias = Math.min(1, Math.max(0, (r - 50) / 40));
+    const targetH = 0.55 + Math.random() * 0.85 + edgeBias * (0.6 + Math.random() * 1.1);
     let rock = NatureKit.randomRock(targetH);
     if (!rock) {
       rock = new THREE.Mesh(
-        new THREE.DodecahedronGeometry(0.9 + Math.random() * 1.8, 0),
+        new THREE.DodecahedronGeometry(0.35 + Math.random() * 0.55, 0),
         mat(arid ? "#6a5848" : "#5c564c")
       );
       rock.castShadow = true;
-      rock.position.y = 0.55;
+      rock.position.y = 0.28;
     }
     rock.rotation.y = Math.random() * Math.PI * 2;
-    rock.rotation.z = (Math.random() - 0.5) * 0.25;
+    rock.rotation.z = (Math.random() - 0.5) * 0.2;
     placeAtHeight(rock, x, z, mapId);
     group.add(rock);
   }
@@ -1193,19 +1195,17 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 22
     group.add(log);
   }
 
-  // Landmark cliff chunks for scale
-  for (let i = 0; i < 18; i++) {
-    const ang = Math.random() * Math.PI * 2;
-    const r = CITY_RADIUS + 22 + Math.random() * (MAP_HALF - CITY_RADIUS - 30);
+  // No random cliff_block / cliff_half in the playable basin (they read as giant square slabs).
+  // A few small rock shelves only near the mountain rim for silhouette.
+  for (let i = 0; i < 5; i++) {
+    const ang = (i / 5) * Math.PI * 2 + 0.35;
+    const r = MAP_HALF - 18 - (i % 2) * 3;
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
-    if (skipWildernessSpot(mapId, x, z, { clearRoad: 5 })) continue;
-    const cliff = NatureKit.cloneToHeight(
-      Math.random() < 0.5 ? "cliff_half" : "cliff_block",
-      4.5 + Math.random() * 5.5
-    );
+    if (skipWildernessSpot(mapId, x, z, { clearRoad: 8 })) continue;
+    const cliff = NatureKit.cloneToHeight("cliff_half", 2.2 + (i % 3) * 0.45);
     if (!cliff) continue;
-    cliff.rotation.y = Math.random() * Math.PI * 2;
+    cliff.rotation.y = ang + Math.PI;
     placeAtHeight(cliff, x, z, mapId);
     group.add(cliff);
   }
@@ -1507,7 +1507,7 @@ export function createScene() {
   overworld.name = "overworld";
 
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 128, 128),
+    new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 160, 160),
     new THREE.MeshStandardMaterial({ map: makeGrassTexture(), roughness: 0.95, flatShading: false })
   );
   ground.rotation.x = -Math.PI / 2;
@@ -1620,7 +1620,7 @@ export function makeValleyMapRoot() {
   root.visible = false;
 
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 128, 128),
+    new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 160, 160),
     new THREE.MeshStandardMaterial({ map: makeDirtTexture(), roughness: 0.96, flatShading: false })
   );
   ground.rotation.x = -Math.PI / 2;
