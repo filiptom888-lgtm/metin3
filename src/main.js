@@ -149,6 +149,7 @@ const ui = {
     $("#stat-metins").textContent = String(p.metins);
     $("#stat-kills").textContent = String(p.kills);
     $("#stat-gold").textContent = String(p.gold || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    this.updateCastBar(game?.casts);
     // Refresh world map markers (quests / live metins) while open
     if (!$("#panel-map")?.hidden) {
       const now = performance.now();
@@ -212,6 +213,55 @@ const ui = {
           cdEl.textContent = cd.toFixed(1);
         } else cdEl.hidden = true;
       });
+    }
+  },
+  updateCastBar(casts) {
+    const bar = $("#cast-bar");
+    const fill = $("#cast-bar-fill");
+    const nameEl = $("#cast-bar-name");
+    const timeEl = $("#cast-bar-time");
+    if (!bar || !fill) return;
+
+    // Prefer skill casts; skip tiny auto-attack windups
+    const list = Array.isArray(casts) ? casts : [];
+    const skill = list.find((c) => c.kind === "skill" && (c.duration || 0) > 0.05);
+    const basic = list.find((c) => c.kind === "basic" && (c.duration || 0) >= 0.28);
+    const c = skill || basic;
+
+    const slots = document.querySelectorAll("#skill-bar .skill-slot:not(.potion-slot)");
+    slots.forEach((el) => {
+      el.classList.remove("casting");
+      const cf = el.querySelector(".cast-fill");
+      if (cf) cf.style.height = "0%";
+    });
+
+    if (!c) {
+      bar.hidden = true;
+      fill.style.transform = "scaleX(0)";
+      return;
+    }
+
+    const total = Math.max(0.05, c.duration || c.time || 0.05);
+    const left = Math.max(0, c.time);
+    const progress = Math.max(0, Math.min(1, 1 - left / total));
+    bar.hidden = false;
+    bar.classList.toggle("basic", c.kind === "basic");
+    if (nameEl) nameEl.textContent = c.skName || (c.kind === "basic" ? "Attack" : "Casting");
+    if (timeEl) timeEl.textContent = `${left.toFixed(1)}s`;
+    fill.style.transform = `scaleX(${progress})`;
+
+    if (c.kind === "skill" && c.skillIndex != null) {
+      const slot = slots[c.skillIndex];
+      if (slot) {
+        slot.classList.add("casting");
+        let cf = slot.querySelector(".cast-fill");
+        if (!cf) {
+          cf = document.createElement("div");
+          cf.className = "cast-fill";
+          slot.appendChild(cf);
+        }
+        cf.style.height = `${Math.round(progress * 100)}%`;
+      }
     }
   },
   chat(msg, kind = "msg") {

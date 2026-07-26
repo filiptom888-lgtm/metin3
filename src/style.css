@@ -686,6 +686,78 @@ button, input { font: inherit; color: inherit; }
 }
 
 .m2-hotbar-wrap { justify-self: center; text-align: center; }
+
+/* Cast / channel progress — above hotbar for non-instant skills */
+.cast-bar {
+  width: min(280px, 72vw);
+  margin: 0 auto 0.45rem;
+  padding: 0.35rem 0.5rem 0.4rem;
+  pointer-events: none;
+  background: rgba(10, 9, 8, 0.78);
+  border: 1px solid #5a564c;
+  border-radius: 1px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+.cast-bar-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.28rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+#cast-bar-name {
+  font-family: var(--font-d);
+  color: var(--gold-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.78rem;
+}
+#cast-bar-time {
+  color: var(--mist);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.7rem;
+}
+.cast-bar-track {
+  position: relative;
+  height: 10px;
+  background: #0a0908;
+  border: 1px solid #3a3630;
+  border-radius: 1px;
+  overflow: hidden;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.55);
+}
+#cast-bar-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: linear-gradient(90deg, #8a6820 0%, #e8d48b 55%, #ffe9a8 100%);
+  box-shadow: 0 0 8px rgba(232, 212, 139, 0.35);
+  will-change: transform;
+}
+.cast-bar.basic #cast-bar-fill {
+  background: linear-gradient(90deg, #5a5040 0%, #c8b898 100%);
+}
+.skill-slot.casting {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px rgba(201, 168, 106, 0.35), inset 0 0 12px rgba(201, 168, 106, 0.15);
+}
+.skill-slot .cast-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0%;
+  background: linear-gradient(180deg, transparent, rgba(232, 212, 139, 0.55));
+  pointer-events: none;
+  border-radius: 0 0 9px 9px;
+}
+.skill-slot { position: relative; overflow: hidden; }
+
 .m2-hotbar {
   display: flex;
   gap: 6px;

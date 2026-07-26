@@ -2731,6 +2731,7 @@ export class Game {
     this.casts.push({
       kind: "basic",
       time: windup,
+      duration: windup,
       recover,
       faceAim: true,
       ranged,
@@ -2862,6 +2863,7 @@ export class Game {
     this.casts.push({
       kind: "skill",
       time: castTime,
+      duration: castTime,
       recover,
       faceAim: sk.type === "cone" || sk.type === "bolt" || sk.type === "dash",
       skType: sk.type,
