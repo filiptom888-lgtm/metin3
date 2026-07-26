@@ -1,5 +1,5 @@
-/** Field maps (Shinsoo / Seungryong) — city stays ~22r; wilderness ~4× deeper */
-export const MAP_SIZE = 360;
+/** Field maps (Shinsoo / Seungryong) — city stays ~22r; wilderness scaled down */
+export const MAP_SIZE = 252;
 export const MAP_HALF = MAP_SIZE / 2;
 /** Safe zone — no wild mobs / metins inside */
 export const CITY_RADIUS = 22;
