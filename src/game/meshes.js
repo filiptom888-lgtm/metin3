@@ -11,7 +11,10 @@ import {
   fieldHeightAt,
   fieldRoads,
   onBeatenRoad,
+  inRiver,
+  bridgeCenter,
 } from "./terrain.js";
+import { riverDef, riverWaterY } from "./rivers.js";
 
 export { fieldHeightAt };
 
@@ -726,6 +729,7 @@ function makeFallbackTree(arid = false) {
 function skipWildernessSpot(mapId, x, z) {
   if (Math.hypot(x, z) < CITY_RADIUS + 5) return true;
   if (onBeatenRoad(x, z, mapId, 2.2)) return true;
+  if (inRiver(mapId, x, z, 3)) return true;
   if (mapId === "overworld") {
     if (Math.hypot(x - EDGE_PORTAL, z) < 14) return true;
     if (Math.hypot(x - TOWER_CORNER.x, z - TOWER_CORNER.z) < 20) return true;
@@ -742,6 +746,105 @@ function skipWildernessSpot(mapId, x, z) {
     if (Math.hypot(x - o.x, z - o.z) < o.r + 2) return true;
   }
   return false;
+}
+
+/** Deep river water + large plank bridge spanning the channel */
+function addFieldRiver(root, mapId) {
+  const r = riverDef(mapId);
+  const b = bridgeCenter(mapId);
+  if (!r || !b) return;
+
+  const dx = r.bx - r.ax;
+  const dz = r.bz - r.az;
+  const len = Math.hypot(dx, dz);
+  const waterY = riverWaterY(mapId);
+
+  const water = new THREE.Mesh(
+    new THREE.PlaneGeometry(r.halfW * 2.05, len + 8, 1, 1),
+    new THREE.MeshStandardMaterial({
+      color: mapId === "valley" ? "#3a6a78" : "#2a6a7a",
+      roughness: 0.18,
+      metalness: 0.35,
+      transparent: true,
+      opacity: 0.82,
+    })
+  );
+  water.rotation.x = -Math.PI / 2;
+  water.rotation.z = Math.atan2(dx, dz);
+  water.position.set((r.ax + r.bx) / 2, waterY, (r.az + r.bz) / 2);
+  water.receiveShadow = true;
+  water.name = "field_river";
+  root.add(water);
+
+  // Soft bank tint strips
+  for (const side of [-1, 1]) {
+    const bank = new THREE.Mesh(
+      new THREE.PlaneGeometry(3.2, len + 4, 1, 1),
+      mat(mapId === "valley" ? "#6a5438" : "#4a6a3a", { roughness: 0.95 })
+    );
+    bank.rotation.x = -Math.PI / 2;
+    bank.rotation.z = Math.atan2(dx, dz);
+    const nx = -dz / len;
+    const nz = dx / len;
+    bank.position.set(
+      (r.ax + r.bx) / 2 + nx * (r.halfW + 1.2) * side,
+      -0.15,
+      (r.az + r.bz) / 2 + nz * (r.halfW + 1.2) * side
+    );
+    bank.receiveShadow = true;
+    root.add(bank);
+  }
+
+  // Big bridge — deck + rails + posts
+  const bridge = new THREE.Group();
+  bridge.name = "field_bridge";
+  bridge.position.set(b.x, 0, b.z);
+  bridge.rotation.y = b.yaw;
+
+  const plankMat = mat("#6a4a28", { roughness: 0.9 });
+  const railMat = mat("#4a3218", { roughness: 0.92 });
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(b.across, 0.45, b.along), plankMat);
+  deck.position.y = b.deckY;
+  deck.castShadow = true;
+  deck.receiveShadow = true;
+  bridge.add(deck);
+
+  // Plank grooves (visual)
+  for (let i = -4; i <= 4; i++) {
+    const groove = new THREE.Mesh(
+      new THREE.BoxGeometry(b.across * 0.98, 0.06, 0.35),
+      mat("#5a3a1e", { roughness: 0.95 })
+    );
+    groove.position.set(0, b.deckY + 0.22, (i / 4) * (b.along * 0.42));
+    bridge.add(groove);
+  }
+
+  for (const side of [-1, 1]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(b.across * 0.96, 0.22, 0.28), railMat);
+    rail.position.set(0, b.deckY + 1.05, side * (b.along * 0.48));
+    rail.castShadow = true;
+    bridge.add(rail);
+    for (let p = -3; p <= 3; p++) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.35, 1.35, 0.35), railMat);
+      post.position.set((p / 3) * (b.across * 0.42), b.deckY + 0.7, side * (b.along * 0.48));
+      post.castShadow = true;
+      bridge.add(post);
+    }
+  }
+
+  // Stone abutments
+  for (const side of [-1, 1]) {
+    const abut = new THREE.Mesh(
+      new THREE.BoxGeometry(3.2, b.deckY + 1.2, b.along + 1.5),
+      mat("#5a564c", { roughness: 0.96 })
+    );
+    abut.position.set(side * (b.across * 0.5 - 0.6), (b.deckY + 1.2) * 0.5 - 0.4, 0);
+    abut.castShadow = true;
+    abut.receiveShadow = true;
+    bridge.add(abut);
+  }
+
+  root.add(bridge);
 }
 
 function makeRoadTorch() {
@@ -888,25 +991,24 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 28
     group.add(log);
   }
 
-  // Tent camps
+  // Tent camps — small dirt pads under tents only (no giant mud “puddle” rings)
   for (const camp of campsOnMap(mapId)) {
     const campG = new THREE.Group();
     campG.name = `camp_${camp.id}`;
-    // Packed dirt yard
-    const yard = new THREE.Mesh(
-      new THREE.CircleGeometry(camp.r * 0.75, 20),
-      mat("#5a4a30", { roughness: 0.95 })
-    );
-    yard.rotation.x = -Math.PI / 2;
-    yard.position.set(camp.x, fieldHeightAt(camp.x, camp.z, mapId) + 0.04, camp.z);
-    yard.receiveShadow = true;
-    campG.add(yard);
 
     for (let t = 0; t < camp.tents; t++) {
       const ang = (t / camp.tents) * Math.PI * 2 + 0.4;
       const rr = 3.2 + (t % 2) * 1.4;
       const tx = camp.x + Math.cos(ang) * rr;
       const tz = camp.z + Math.sin(ang) * rr;
+      const pad = new THREE.Mesh(
+        new THREE.CircleGeometry(1.55, 10),
+        mat("#5a4a30", { roughness: 0.96 })
+      );
+      pad.rotation.x = -Math.PI / 2;
+      pad.position.set(tx, fieldHeightAt(tx, tz, mapId) + 0.03, tz);
+      pad.receiveShadow = true;
+      campG.add(pad);
       const tentKey = t % 2 === 0 ? "tent_open" : "tent_closed";
       let tent = NatureKit.clone(tentKey, 1.15);
       if (!tent) tent = NatureKit.clone(t % 2 ? "tent_small_closed" : "tent_small_open", 1.3);
@@ -943,20 +1045,20 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 28
   for (const op of outpostsOnMap(mapId)) {
     const og = new THREE.Group();
     og.name = `outpost_${op.id}`;
-    const yard = new THREE.Mesh(
-      new THREE.CircleGeometry(op.r * 0.7, 16),
-      mat("#4a3a28", { roughness: 0.97 })
-    );
-    yard.rotation.x = -Math.PI / 2;
-    yard.position.set(op.x, fieldHeightAt(op.x, op.z, mapId) + 0.03, op.z);
-    yard.receiveShadow = true;
-    og.add(yard);
 
     for (let t = 0; t < (op.tents || 1); t++) {
       const ang = t * 2.2 + 0.5;
       const rr = 2.8 + t;
       const tx = op.x + Math.cos(ang) * rr;
       const tz = op.z + Math.sin(ang) * rr;
+      const pad = new THREE.Mesh(
+        new THREE.CircleGeometry(1.4, 8),
+        mat("#4a3a28", { roughness: 0.97 })
+      );
+      pad.rotation.x = -Math.PI / 2;
+      pad.position.set(tx, fieldHeightAt(tx, tz, mapId) + 0.03, tz);
+      pad.receiveShadow = true;
+      og.add(pad);
       let tent = NatureKit.clone(op.ruined ? "tent_small_open" : "tent_open", 1.05);
       if (!tent) tent = makeBiologistTent();
       tent.rotation.y = ang + Math.PI;
@@ -1063,7 +1165,7 @@ export function createScene() {
   overworld.name = "overworld";
 
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 96, 96),
+    new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 128, 128),
     new THREE.MeshStandardMaterial({ map: makeGrassTexture(), roughness: 0.95, flatShading: false })
   );
   ground.rotation.x = -Math.PI / 2;
@@ -1169,7 +1271,8 @@ export function createScene() {
     overworld.add(w);
   }
 
-  // Beaten roads out of the city + Kenney wilderness dressing
+  // River + big bridge (east road crossing), then roads / wilderness
+  addFieldRiver(overworld, "overworld");
   const dirtRoad = new THREE.MeshStandardMaterial({
     map: makeDirtTexture(),
     roughness: 0.96,
@@ -1204,7 +1307,7 @@ export function makeValleyMapRoot() {
   root.visible = false;
 
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 96, 96),
+    new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 128, 128),
     new THREE.MeshStandardMaterial({ map: makeDirtTexture(), roughness: 0.96, flatShading: false })
   );
   ground.rotation.x = -Math.PI / 2;
@@ -1291,6 +1394,7 @@ export function makeValleyMapRoot() {
     root.add(w);
   }
 
+  addFieldRiver(root, "valley");
   const valleyDirt = new THREE.MeshStandardMaterial({
     map: makeDirtTexture(),
     roughness: 0.96,
@@ -1330,26 +1434,21 @@ function makeBanditCampMesh() {
   g.name = "bandit_camp";
   g.position.set(BANDIT_CAMP.x, fieldHeightAt(BANDIT_CAMP.x, BANDIT_CAMP.z, "valley"), BANDIT_CAMP.z);
 
-  // Packed dirt yard
-  const yard = new THREE.Mesh(
-    new THREE.CircleGeometry(10, 24),
-    new THREE.MeshStandardMaterial({
-      map: makeCobbleTexture(false),
-      roughness: 0.94,
-      flatShading: false,
-    })
-  );
-  yard.rotation.x = -Math.PI / 2;
-  yard.position.y = 0.05;
-  yard.receiveShadow = true;
-  g.add(yard);
-
   const houses = [
     { x: -3.2, z: -2.4, w: 4.2, h: 3.2, d: 3.6, rot: 0.25, color: "#b8956a", roof: "#3a2418" },
     { x: 3.4, z: -1.8, w: 3.6, h: 2.9, d: 3.4, rot: -0.4, color: "#a88860", roof: "#4a2018" },
     { x: 0.6, z: 3.6, w: 3.8, h: 3.0, d: 3.2, rot: 0.1, color: "#c4a070", roof: "#2a1810" },
   ];
   for (const h of houses) {
+    // Small pad under each house only (no giant mud “puddle” ring)
+    const pad = new THREE.Mesh(
+      new THREE.CircleGeometry(Math.max(h.w, h.d) * 0.55, 12),
+      mat("#5a4a30", { roughness: 0.96 })
+    );
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.set(h.x, 0.04, h.z);
+    pad.receiveShadow = true;
+    g.add(pad);
     const b = makeBuilding(h.w, h.h, h.d, h.color, { roofColor: h.roof, smoke: true });
     b.position.set(h.x, 0, h.z);
     b.rotation.y = h.rot;
