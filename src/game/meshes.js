@@ -8,6 +8,7 @@ import { NatureKit } from "./NatureKit.js";
 import {
   addBeatenRoadMeshes,
   displaceFieldGround,
+  distToRoad,
   fieldHeightAt,
   fieldRoads,
   onBeatenRoad,
@@ -705,30 +706,40 @@ function addCityCozyProps(scene, { warm = true } = {}) {
   }
 }
 
-/** Procedural fallback tree when Kenney GLBs aren't loaded yet */
+/** Procedural fallback tree when Kenney GLBs aren't loaded yet — full canopy, not a stick */
 function makeFallbackTree(arid = false) {
   const g = new THREE.Group();
   const trunk = mat(arid ? "#4a3820" : "#3a2818");
-  const leaf = mat(arid ? "#6a5a28" : "#2d5a28");
-  const t = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.28, 1.7, 6), trunk);
-  t.position.y = 0.85;
+  const leaf = mat(arid ? "#6a5a28" : "#1e4a22", { roughness: 0.92 });
+  const t = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.38, 2.2, 7), trunk);
+  t.position.y = 1.1;
   t.castShadow = true;
   g.add(t);
-  const c1 = new THREE.Mesh(new THREE.SphereGeometry(arid ? 0.9 : 1.2, 7, 6), leaf);
-  c1.position.y = 2.3;
-  c1.castShadow = true;
-  g.add(c1);
-  if (!arid) {
-    const c2 = new THREE.Mesh(new THREE.SphereGeometry(0.75, 6, 5), leaf);
-    c2.position.set(0.5, 2.9, -0.2);
-    g.add(c2);
+  // Layered pine / oak canopy so it reads at night
+  const layers = arid
+    ? [
+        [1.4, 1.1, 2.4],
+        [1.05, 0.95, 3.2],
+        [0.7, 0.8, 3.9],
+      ]
+    : [
+        [1.7, 1.2, 2.5],
+        [1.35, 1.1, 3.35],
+        [1.0, 0.95, 4.1],
+        [0.65, 0.75, 4.7],
+      ];
+  for (const [r, h, y] of layers) {
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(r, h, 8), leaf);
+    cone.position.y = y;
+    cone.castShadow = true;
+    g.add(cone);
   }
   return g;
 }
 
-function skipWildernessSpot(mapId, x, z) {
+function skipWildernessSpot(mapId, x, z, { clearRoad = 2.6 } = {}) {
   if (Math.hypot(x, z) < CITY_RADIUS + 5) return true;
-  if (onBeatenRoad(x, z, mapId, 2.2)) return true;
+  if (onBeatenRoad(x, z, mapId, clearRoad)) return true;
   if (inRiver(mapId, x, z, 3)) return true;
   if (mapId === "overworld") {
     if (Math.hypot(x - EDGE_PORTAL, z) < 14) return true;
@@ -746,6 +757,82 @@ function skipWildernessSpot(mapId, x, z) {
     if (Math.hypot(x - o.x, z - o.z) < o.r + 2) return true;
   }
   return false;
+}
+
+function plantTreeAt(group, x, z, mapId, arid, scaleMul = 1) {
+  if (skipWildernessSpot(mapId, x, z, { clearRoad: 2.8 })) return false;
+  const scale = (arid ? 0.95 : 1.05) * (0.85 + Math.random() * 0.65) * scaleMul;
+  let tree = NatureKit.randomForestTree(arid, scale);
+  if (!tree) {
+    tree = makeFallbackTree(arid);
+    tree.scale.setScalar(scale);
+  }
+  tree.rotation.y = Math.random() * Math.PI * 2;
+  placeAtHeight(tree, x, z, mapId);
+  group.add(tree);
+  if (Math.random() < 0.45) {
+    const bush = NatureKit.randomBush(0.65 + Math.random() * 0.7);
+    if (bush) {
+      const bx = x + (Math.random() - 0.5) * 1.8;
+      const bz = z + (Math.random() - 0.5) * 1.8;
+      if (!skipWildernessSpot(mapId, bx, bz, { clearRoad: 2.4 })) {
+        bush.rotation.y = Math.random() * Math.PI * 2;
+        placeAtHeight(bush, bx, bz, mapId);
+        group.add(bush);
+      }
+    }
+  }
+  return true;
+}
+
+/** Dense tree belts lining both sides of every beaten road */
+function plantRoadForests(group, mapId, arid) {
+  for (const r of fieldRoads(mapId)) {
+    const dx = r.x1 - r.x0;
+    const dz = r.z1 - r.z0;
+    const len = Math.hypot(dx, dz);
+    if (len < 3) continue;
+    const ux = dx / len;
+    const uz = dz / len;
+    const px = -uz;
+    const pz = ux;
+    const steps = Math.max(8, Math.ceil(len / 1.85));
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const cx = r.x0 + dx * t;
+      const cz = r.z0 + dz * t;
+      for (const side of [-1, 1]) {
+        const rows = 2 + ((Math.random() * 2.5) | 0);
+        for (let row = 0; row < rows; row++) {
+          const offset = r.w * 0.5 + 3.2 + row * 2.4 + Math.random() * 2.2;
+          const along = (Math.random() - 0.5) * 2.1;
+          const x = cx + px * side * offset + ux * along;
+          const z = cz + pz * side * offset + uz * along;
+          plantTreeAt(group, x, z, mapId, arid, 1.05 + row * 0.05);
+        }
+      }
+    }
+  }
+}
+
+/** Compact forest patches (clusters) so the field isn’t sparse sticks */
+function plantForestPatches(group, mapId, arid, patchCount = 14) {
+  for (let p = 0; p < patchCount; p++) {
+    const ang = (p / patchCount) * Math.PI * 2 + Math.random() * 0.4;
+    const dist = CITY_RADIUS + 18 + Math.random() * (MAP_HALF - CITY_RADIUS - 28);
+    const cx = Math.cos(ang) * dist;
+    const cz = Math.sin(ang) * dist;
+    if (skipWildernessSpot(mapId, cx, cz, { clearRoad: 8 })) continue;
+    // Prefer patches near roads for “forest along the route”
+    const nearRoad = distToRoad(cx, cz, mapId);
+    const radius = nearRoad < 28 ? 16 + Math.random() * 10 : 10 + Math.random() * 8;
+    const trees = nearRoad < 28 ? 55 + ((Math.random() * 35) | 0) : 28 + ((Math.random() * 22) | 0);
+    for (let i = 0; i < trees; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.pow(Math.random(), 0.55) * radius;
+      plantTreeAt(group, cx + Math.cos(a) * rr, cz + Math.sin(a) * rr, mapId, arid);
+    }
+  }
 }
 
 /** Deep river water + large plank bridge spanning the channel */
@@ -920,26 +1007,24 @@ function placeAtHeight(obj, x, z, mapId, yOff = 0) {
   obj.position.set(x, h + yOff, z);
 }
 
-/** Dense wilderness: Kenney trees/rocks/bushes, tent camps, hills already on ground */
-export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 280, rockCount = 160, bushCount = 120 } = {}) {
+/** Dense wilderness: road-lined forests, patches, rocks — not sparse lonely sticks */
+export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 120, rockCount = 160, bushCount = 100 } = {}) {
   const group = new THREE.Group();
   group.name = "wilderness_dressing";
 
+  // Primary look: thick forest belts along roads + clustered patches
+  plantRoadForests(group, mapId, arid);
+  plantForestPatches(group, mapId, arid, arid ? 16 : 18);
+
+  // Light scatter only (fill gaps) — keep count low so it doesn’t look random
   for (let i = 0; i < treeCount; i++) {
     const ang = Math.random() * Math.PI * 2;
-    const r = CITY_RADIUS + 7 + Math.random() * (MAP_HALF - CITY_RADIUS - 10);
+    const r = CITY_RADIUS + 10 + Math.random() * (MAP_HALF - CITY_RADIUS - 14);
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
-    if (skipWildernessSpot(mapId, x, z)) continue;
-    const scale = (arid ? 0.85 : 1) * (0.75 + Math.random() * 0.7);
-    let tree = NatureKit.randomTree(arid, scale);
-    if (!tree) {
-      tree = makeFallbackTree(arid);
-      tree.scale.setScalar(scale);
-    }
-    tree.rotation.y = Math.random() * Math.PI * 2;
-    placeAtHeight(tree, x, z, mapId);
-    group.add(tree);
+    // Prefer near roads; skip empty mid-field scatter
+    if (distToRoad(x, z, mapId) > 22 && Math.random() > 0.25) continue;
+    plantTreeAt(group, x, z, mapId, arid, 0.9);
   }
 
   for (let i = 0; i < rockCount; i++) {
@@ -969,6 +1054,7 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 28
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
     if (skipWildernessSpot(mapId, x, z)) continue;
+    if (distToRoad(x, z, mapId) > 18 && Math.random() > 0.4) continue;
     const bush = NatureKit.randomBush(0.7 + Math.random() * 0.8);
     if (!bush) continue;
     bush.rotation.y = Math.random() * Math.PI * 2;
@@ -1275,16 +1361,16 @@ export function createScene() {
   addFieldRiver(overworld, "overworld");
   const dirtRoad = new THREE.MeshStandardMaterial({
     map: makeDirtTexture(),
-    roughness: 0.96,
-    color: "#c4b089",
+    roughness: 0.94,
+    color: "#d2b896",
   });
   addBeatenRoadMeshes(overworld, "overworld", dirtRoad);
   dressFieldWilderness(overworld, {
     mapId: "overworld",
     arid: false,
-    treeCount: 320,
-    rockCount: 180,
-    bushCount: 140,
+    treeCount: 140,
+    rockCount: 160,
+    bushCount: 120,
   });
 
   // East-edge portal to Seungryong
@@ -1397,16 +1483,16 @@ export function makeValleyMapRoot() {
   addFieldRiver(root, "valley");
   const valleyDirt = new THREE.MeshStandardMaterial({
     map: makeDirtTexture(),
-    roughness: 0.96,
-    color: "#b8a070",
+    roughness: 0.94,
+    color: "#c9a878",
   });
   addBeatenRoadMeshes(root, "valley", valleyDirt);
   dressFieldWilderness(root, {
     mapId: "valley",
     arid: true,
-    treeCount: 380,
-    rockCount: 220,
-    bushCount: 160,
+    treeCount: 160,
+    rockCount: 200,
+    bushCount: 140,
   });
 
   // NW rogue hamlet — 2–3 detailed houses

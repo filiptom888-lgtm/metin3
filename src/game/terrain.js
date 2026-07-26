@@ -50,41 +50,41 @@ export function fieldRoads(mapId) {
     const westX = b ? b.x - b.across * 0.5 - 1 : 70;
     const eastX = b ? b.x + b.across * 0.5 + 1 : 85;
     // East gate → bridge west abutment
-    roads.push({ x0: CITY_RADIUS - 1, z0: 0, x1: westX, z1: 0, w: 3.6 });
+    roads.push({ x0: CITY_RADIUS - 1, z0: 0, x1: westX, z1: 0, w: 5.2 });
     // Bridge east abutment → Seungryong portal
-    roads.push({ x0: eastX, z0: 0, x1: EDGE_PORTAL, z1: 0, w: 3.6 });
-    roads.push({ x0: 0, z0: CITY_RADIUS - 1, x1: 0, z1: CITY_RADIUS + 28, w: 2.8 });
-    roads.push({ x0: 0, z0: -(CITY_RADIUS - 1), x1: 0, z1: -(CITY_RADIUS + 34), w: 2.8 });
+    roads.push({ x0: eastX, z0: 0, x1: EDGE_PORTAL, z1: 0, w: 5.2 });
+    roads.push({ x0: 0, z0: CITY_RADIUS - 1, x1: 0, z1: CITY_RADIUS + 36, w: 4.2 });
+    roads.push({ x0: 0, z0: -(CITY_RADIUS - 1), x1: 0, z1: -(CITY_RADIUS + 40), w: 4.2 });
     roads.push({
       x0: CITY_RADIUS * 0.7,
       z0: -CITY_RADIUS * 0.7,
       x1: TOWER_CORNER.x - 14,
       z1: TOWER_CORNER.z + 14,
-      w: 2.4,
+      w: 3.6,
     });
-    roads.push({ x0: 40, z0: 35, x1: 90, z1: -20, w: 2.2 });
+    roads.push({ x0: 40, z0: 35, x1: 90, z1: -20, w: 3.4 });
   } else if (mapId === "valley") {
     const b = bridgeCenter("valley");
     // Main E–W roads; bridge covers the river cut near SE
-    roads.push({ x0: -(CITY_RADIUS - 1), z0: 0, x1: -EDGE_PORTAL, z1: 0, w: 3.6 });
+    roads.push({ x0: -(CITY_RADIUS - 1), z0: 0, x1: -EDGE_PORTAL, z1: 0, w: 5.2 });
     if (b) {
       const approachZ = b.z;
-      roads.push({ x0: CITY_RADIUS - 1, z0: 0, x1: b.x - 8, z1: approachZ * 0.15, w: 3.2 });
-      roads.push({ x0: b.x + 8, z0: approachZ * 0.15, x1: EDGE_PORTAL, z1: 0, w: 3.2 });
+      roads.push({ x0: CITY_RADIUS - 1, z0: 0, x1: b.x - 8, z1: approachZ * 0.15, w: 4.6 });
+      roads.push({ x0: b.x + 8, z0: approachZ * 0.15, x1: EDGE_PORTAL, z1: 0, w: 4.6 });
     } else {
-      roads.push({ x0: CITY_RADIUS - 1, z0: 0, x1: EDGE_PORTAL, z1: 0, w: 3.6 });
+      roads.push({ x0: CITY_RADIUS - 1, z0: 0, x1: EDGE_PORTAL, z1: 0, w: 5.2 });
     }
-    roads.push({ x0: 0, z0: CITY_RADIUS - 1, x1: 0, z1: CITY_RADIUS + 32, w: 2.8 });
-    roads.push({ x0: 0, z0: -(CITY_RADIUS - 1), x1: 0, z1: -(CITY_RADIUS + 38), w: 2.8 });
+    roads.push({ x0: 0, z0: CITY_RADIUS - 1, x1: 0, z1: CITY_RADIUS + 36, w: 4.2 });
+    roads.push({ x0: 0, z0: -(CITY_RADIUS - 1), x1: 0, z1: -(CITY_RADIUS + 42), w: 4.2 });
     roads.push({
       x0: -(CITY_RADIUS * 0.65),
       z0: -(CITY_RADIUS * 0.65),
       x1: -(MAP_HALF - 40),
       z1: -(MAP_HALF - 40),
-      w: 2.5,
+      w: 3.8,
     });
-    roads.push({ x0: -50, z0: 40, x1: 55, z1: 70, w: 2.2 });
-    roads.push({ x0: 30, z0: -45, x1: 85, z1: -15, w: 2.1 });
+    roads.push({ x0: -50, z0: 40, x1: 55, z1: 70, w: 3.4 });
+    roads.push({ x0: 30, z0: -45, x1: 85, z1: -15, w: 3.2 });
   }
   return roads;
 }
@@ -165,16 +165,34 @@ export function displaceFieldGround(groundMesh, mapId) {
   groundMesh.userData.heightFn = true;
 }
 
-/** Place dirt road meshes that follow terrain height (segmented). */
-export function addBeatenRoadMeshes(root, mapId, dirtMat) {
+/**
+ * Layered dirt roads that follow terrain — bed + worn center + soft shoulders.
+ * `dirtMat` is the main packed earth; shoulder/edge mats are derived if omitted.
+ */
+export function addBeatenRoadMeshes(root, mapId, dirtMat, edgeMat = null) {
   const group = new THREE.Group();
   group.name = "beaten_roads";
+  const shoulder =
+    edgeMat ||
+    new THREE.MeshStandardMaterial({
+      color: "#5a6a38",
+      roughness: 0.98,
+      transparent: true,
+      opacity: 0.78,
+    });
+  const ruts = new THREE.MeshStandardMaterial({
+    color: "#6a4a28",
+    roughness: 0.97,
+    map: dirtMat?.map || null,
+  });
+
   for (const r of fieldRoads(mapId)) {
     const dx = r.x1 - r.x0;
     const dz = r.z1 - r.z0;
     const len = Math.hypot(dx, dz);
     if (len < 2) continue;
-    const segs = Math.max(4, Math.ceil(len / 6));
+    const yaw = Math.atan2(dx, dz);
+    const segs = Math.max(6, Math.ceil(len / 4.5));
     for (let i = 0; i < segs; i++) {
       const t0 = i / segs;
       const t1 = (i + 1) / segs;
@@ -184,20 +202,43 @@ export function addBeatenRoadMeshes(root, mapId, dirtMat) {
       const z1 = r.z0 + dz * t1;
       const mx = (x0 + x1) / 2;
       const mz = (z0 + z1) / 2;
-      // Don't lay road deck into the river — bridge handles that
       if (inRiver(mapId, mx, mz, -1) && !onRiverBridge(mapId, mx, mz)) continue;
       const h0 = fieldHeightAt(x0, z0, mapId);
       const h1 = fieldHeightAt(x1, z1, mapId);
       const h = (h0 + h1) / 2;
-      const segLen = Math.hypot(x1 - x0, z1 - z0);
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(segLen + 0.15, 0.07, r.w), dirtMat);
-      mesh.position.set(mx, h + 0.04, mz);
-      mesh.rotation.y = Math.atan2(dx, dz);
-      // Pitch to follow slope
+      const segLen = Math.hypot(x1 - x0, z1 - z0) + 0.2;
       const slope = Math.atan2(h1 - h0, segLen || 1);
-      mesh.rotation.x = -slope * 0.15;
-      mesh.receiveShadow = true;
-      group.add(mesh);
+
+      // Soft grass/dirt shoulder under the road (wider)
+      const bed = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.05, r.w + 2.4), shoulder);
+      bed.position.set(mx, h + 0.02, mz);
+      bed.rotation.y = yaw;
+      bed.rotation.x = -slope * 0.12;
+      bed.receiveShadow = true;
+      group.add(bed);
+
+      // Main packed path
+      const path = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.08, r.w), dirtMat);
+      path.position.set(mx, h + 0.055, mz);
+      path.rotation.y = yaw;
+      path.rotation.x = -slope * 0.12;
+      path.receiveShadow = true;
+      group.add(path);
+
+      // Worn center ruts (two thin strips)
+      {
+        const plen = Math.hypot(dx, dz) || 1;
+        const px = -dz / plen;
+        const pz = dx / plen;
+        for (const side of [-1, 1]) {
+          const rut = new THREE.Mesh(new THREE.BoxGeometry(segLen * 0.98, 0.04, 0.42), ruts);
+          rut.position.set(mx + px * side * 0.6, h + 0.09, mz + pz * side * 0.6);
+          rut.rotation.y = yaw;
+          rut.rotation.x = -slope * 0.12;
+          rut.receiveShadow = true;
+          group.add(rut);
+        }
+      }
     }
   }
   root.add(group);

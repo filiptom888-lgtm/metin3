@@ -53,13 +53,30 @@ const GREEN_TREES = [
   "tree_simple",
   "tree_plateau",
 ];
+/** Fuller canopy set for dense forests (no stick-thin models) */
+const FOREST_TREES = [
+  "tree_oak",
+  "tree_detailed",
+  "tree_pine_tall",
+  "tree_pine_tall_b",
+  "tree_pine_round",
+  "tree_fat",
+  "tree_tall",
+  "tree_plateau",
+];
 const DRY_TREES = [
   "tree_oak_dark",
   "tree_detailed_dark",
   "tree_cone_dark",
-  "tree_thin",
   "tree_pine_small",
-  "tree_simple",
+  "tree_plateau",
+  "tree_detailed_dark",
+];
+const DRY_FOREST = [
+  "tree_oak_dark",
+  "tree_detailed_dark",
+  "tree_cone_dark",
+  "tree_pine_small",
   "tree_plateau",
 ];
 
@@ -149,6 +166,17 @@ export const NatureKit = {
       if (m) return m;
     }
     return null;
+  },
+
+  /** Dense forest canopy trees (prefer bulky models). */
+  randomForestTree(arid = false, scale = 1) {
+    const list = arid ? DRY_FOREST : FOREST_TREES;
+    for (let i = 0; i < 8; i++) {
+      const key = list[(Math.random() * list.length) | 0];
+      const m = this.clone(key, scale);
+      if (m) return m;
+    }
+    return this.randomTree(arid, scale);
   },
 
   randomRock(scale = 1) {
