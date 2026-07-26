@@ -21,7 +21,11 @@ import {
   animateWorldSmoke,
   updateHpBar,
   setQuestMarker,
+  makeHuntBeacon,
 } from "./meshes.js";
+import { applyDayNight, DAY_LENGTH } from "./DayNight.js";
+import { questHuntFor, zoneRing } from "../data/mapMarkers.js";
+import { NPCS } from "../data/npcs.js";
 import { FxSystem } from "./fx.js";
 import { derivedStats, applyLevelUps } from "./character.js";
 import { getItem, RARITY_COLOR } from "./items.js";
@@ -63,9 +67,15 @@ export class Game {
     this.profile = null;
 
     this.renderer = createRenderer(canvas);
-    const { scene, overworld } = createScene();
+    const { scene, overworld, sun, hemi } = createScene();
     this.scene = scene;
+    this.sun = sun || null;
+    this.hemi = hemi || null;
     this.overworld = overworld || null;
+    this.worldTime = DAY_LENGTH * 0.32; // late morning start
+    this.huntMarkerRoot = new THREE.Group();
+    this.huntMarkerRoot.name = "hunt_markers";
+    this.scene.add(this.huntMarkerRoot);
     this.dungeonRoot = null;
     this.towerSmithMesh = null;
     this.towerSmithNpc = null;
@@ -126,11 +136,11 @@ export class Game {
     this.towerMesh = null;
     this._dtFloorMobs = 0;
 
-    this.camDist = 38;
-    this.camDistTarget = 38;
+    this.camDist = 19;
+    this.camDistTarget = 19;
     this.camYaw = 0.0;
-    this.camPitch = 0.72; // radians-ish tilt factor
-    this.camOffset = new THREE.Vector3(0, 26, 26);
+    this.camPitch = 0.78; // slightly steeper when closer
+    this.camOffset = new THREE.Vector3(0, 14, 13);
     this.time = 0;
     this.sendAcc = 0;
     this.worldAcc = 0;
@@ -203,7 +213,7 @@ export class Game {
       if (!this.running) return;
       e.preventDefault();
       const dir = Math.sign(e.deltaY);
-      this.camDistTarget = clamp(this.camDistTarget + dir * 3.2, 12, 62);
+      this.camDistTarget = clamp(this.camDistTarget + dir * 2.2, 8, 32);
     };
     this._onResize = () => this.resize();
 
@@ -470,10 +480,69 @@ export class Game {
     }
     this.ui.setMap?.(map.name, mapId);
     this._syncEntityMapVisibility();
+    this.refreshHuntMarkers();
     // Hide remotes that are on another map
     for (const [, r] of this.remotes) {
       const mid = r.target?.mapId || r.state?.mapId || "overworld";
       if (r.mesh) r.mesh.visible = mid === mapId && !r.target?.stealth;
+    }
+  }
+
+  _collectTorchLights() {
+    const lights = [];
+    for (const root of [this.overworld, this.valleyRoot, this.orcRoot]) {
+      if (!root?.visible) continue;
+      const list = root.userData?.torchLights;
+      if (Array.isArray(list)) lights.push(...list);
+    }
+    return lights;
+  }
+
+  /** Field beacons for active quest hunt zones + turn-in NPCs */
+  refreshHuntMarkers() {
+    if (!this.huntMarkerRoot) return;
+    while (this.huntMarkerRoot.children.length) {
+      this.huntMarkerRoot.remove(this.huntMarkerRoot.children[0]);
+    }
+    const ch = this.character;
+    if (!ch) return;
+    QuestService.ensure(ch);
+    const mid = MapService.currentId;
+    const active = QuestService.activeList(ch);
+    for (const aq of active) {
+      const q = QUESTS.find((x) => x.id === aq.id) || aq;
+      const isBio = (q.giver || "quest_elder") === "biologist";
+      const color = aq.state === "completed" ? "#7dff9a" : isBio ? "#7dff9a" : "#4db0ff";
+
+      if (aq.state === "completed") {
+        const npc = NPCS.find((n) => n.id === (q.giver || "quest_elder"));
+        if (npc && (npc.mapId || "overworld") === mid) {
+          const beacon = makeHuntBeacon(color, "?");
+          beacon.position.set(npc.x, this.groundY(npc.x, npc.z, mid) + 0.1, npc.z);
+          this.huntMarkerRoot.add(beacon);
+        }
+        continue;
+      }
+
+      const hunt = questHuntFor(q);
+      if (!hunt) continue;
+      const huntMap = hunt.allField ? mid : hunt.mapId;
+      if (huntMap !== mid && !hunt.allField) continue;
+      if (hunt.allField && mid !== "overworld" && mid !== "valley" && mid !== "orc_valley") continue;
+      const ring = zoneRing(huntMap || mid, hunt.zone || "mid");
+      if (!ring) continue;
+      const midR = (ring.minR + ring.maxR) / 2;
+      // Two beacons on the hunt ring so the objective is easy to spot
+      for (const [ang, glyph] of [
+        [0.2, "!"],
+        [Math.PI * 0.85, "!"],
+      ]) {
+        const x = Math.cos(ang) * midR;
+        const z = Math.sin(ang) * midR;
+        const beacon = makeHuntBeacon(color, glyph);
+        beacon.position.set(x, this.groundY(x, z, mid) + 0.1, z);
+        this.huntMarkerRoot.add(beacon);
+      }
     }
   }
 
@@ -1620,6 +1689,7 @@ export class Game {
     const dt = Math.min(0.05, (now - this._last) / 1000);
     this._last = now;
     this.time += dt;
+    this.worldTime += dt;
     this.update(dt);
     this.renderer.render(this.scene, this.camera);
     this._raf = requestAnimationFrame((t) => this.loop(t));
@@ -2005,11 +2075,14 @@ export class Game {
       });
     }
 
-    // Camera follow — scroll zoom + RMB/MMB orbit
+    // Day / night (field maps) — road torches glow after dusk
+    applyDayNight(this.scene, this.sun, this.hemi, this.worldTime, this._collectTorchLights());
+
+    // Camera follow — ~50% closer default, scroll zoom + RMB/MMB orbit
     this.camDist += (this.camDistTarget - this.camDist) * Math.min(1, 8 * dt);
     const dist = this.camDist;
-    const height = dist * (0.35 + this.camPitch * 0.55);
-    const flat = dist * (0.55 + (1.2 - this.camPitch) * 0.25);
+    const height = dist * (0.38 + this.camPitch * 0.55);
+    const flat = dist * (0.52 + (1.2 - this.camPitch) * 0.25);
     this.camOffset.set(
       Math.sin(this.camYaw) * flat,
       height,
@@ -2017,11 +2090,16 @@ export class Game {
     );
     const desired = new THREE.Vector3(p.x, gy, p.z).add(this.camOffset);
     this.camera.position.lerp(desired, 1 - Math.pow(0.0015, dt));
-    this.camera.lookAt(p.x, gy + 1.1, p.z);
-    // FOV breathes slightly when zoomed in for a closer feel
-    const wantFov = THREE.MathUtils.lerp(48, 36, clamp((62 - dist) / 50, 0, 1));
+    this.camera.lookAt(p.x, gy + 1.15, p.z);
+    const wantFov = THREE.MathUtils.lerp(46, 34, clamp((32 - dist) / 24, 0, 1));
     this.camera.fov += (wantFov - this.camera.fov) * Math.min(1, 6 * dt);
     this.camera.updateProjectionMatrix();
+
+    // Soft spin on hunt beacons
+    for (const m of this.huntMarkerRoot?.children || []) {
+      if (m.userData?.spin) m.userData.spin.rotation.z += dt * 1.2;
+      m.position.y = this.groundY(m.position.x, m.position.z) + 0.1 + Math.sin(this.time * 2.2) * 0.12;
+    }
 
     // Remotes interpolate (pos + yaw)
     for (const [, r] of this.remotes) {

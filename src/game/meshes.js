@@ -3,11 +3,13 @@ import { CLASSES, MAP_HALF, MAP_SIZE, CITY_RADIUS, CITY_GATE, EDGE_PORTAL, TOWER
 import { ORC_BRIDGES, ORC_ISLANDS, ORC_MAP_HALF, ORC_MAP_SIZE } from "../data/orcMap.js";
 import { BANDIT_CAMP } from "../data/banditCamp.js";
 import { campsOnMap } from "../data/wildCamps.js";
+import { outpostsOnMap } from "../data/outposts.js";
 import { NatureKit } from "./NatureKit.js";
 import {
   addBeatenRoadMeshes,
   displaceFieldGround,
   fieldHeightAt,
+  fieldRoads,
   onBeatenRoad,
 } from "./terrain.js";
 
@@ -736,7 +738,78 @@ function skipWildernessSpot(mapId, x, z) {
   for (const c of campsOnMap(mapId)) {
     if (Math.hypot(x - c.x, z - c.z) < c.r + 2) return true;
   }
+  for (const o of outpostsOnMap(mapId)) {
+    if (Math.hypot(x - o.x, z - o.z) < o.r + 2) return true;
+  }
   return false;
+}
+
+function makeRoadTorch() {
+  const g = new THREE.Group();
+  const post = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.12, 1.6, 6),
+    mat("#3a2a18", { roughness: 0.95 })
+  );
+  post.position.y = 0.8;
+  post.castShadow = true;
+  g.add(post);
+  const bowl = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.22, 0.18, 0.16, 8),
+    mat("#4a3a28", { roughness: 0.85 })
+  );
+  bowl.position.y = 1.55;
+  g.add(bowl);
+  const flame = new THREE.Mesh(
+    new THREE.SphereGeometry(0.16, 8, 8),
+    new THREE.MeshStandardMaterial({
+      color: "#ffb040",
+      emissive: "#ff6a18",
+      emissiveIntensity: 1.4,
+      roughness: 0.4,
+    })
+  );
+  flame.position.y = 1.78;
+  flame.name = "torch_flame";
+  g.add(flame);
+  const light = new THREE.PointLight(0xff8a30, 0, 14, 2);
+  light.position.y = 1.85;
+  light.name = "torch_light";
+  g.add(light);
+  return g;
+}
+
+function makeAbandonedStone(mapId, arid) {
+  const g = new THREE.Group();
+  const rock = NatureKit.randomRock(1.1 + Math.random() * 0.6);
+  if (rock) {
+    g.add(rock);
+  } else {
+    const m = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.9 + Math.random() * 0.5, 0),
+      mat(arid ? "#5a4a38" : "#4a4840")
+    );
+    m.castShadow = true;
+    m.position.y = 0.45;
+    g.add(m);
+  }
+  // Cracked pillar stub
+  const stub = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.35, 0.45, 0.7 + Math.random() * 0.5, 6),
+    mat(arid ? "#6a5848" : "#5c564c", { roughness: 0.96 })
+  );
+  stub.position.set(0.7, 0.35, -0.3);
+  stub.rotation.z = 0.35;
+  stub.castShadow = true;
+  g.add(stub);
+  if (Math.random() < 0.55) {
+    const path = NatureKit.clone("path_stone", 0.9);
+    if (path) {
+      path.position.set(-0.6, 0.02, 0.4);
+      g.add(path);
+    }
+  }
+  void mapId;
+  return g;
 }
 
 function placeAtHeight(obj, x, z, mapId, yOff = 0) {
@@ -865,6 +938,102 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 28
     group.add(campG);
   }
 
+  // Half-empty enemy outposts
+  const torchLights = [];
+  for (const op of outpostsOnMap(mapId)) {
+    const og = new THREE.Group();
+    og.name = `outpost_${op.id}`;
+    const yard = new THREE.Mesh(
+      new THREE.CircleGeometry(op.r * 0.7, 16),
+      mat("#4a3a28", { roughness: 0.97 })
+    );
+    yard.rotation.x = -Math.PI / 2;
+    yard.position.set(op.x, fieldHeightAt(op.x, op.z, mapId) + 0.03, op.z);
+    yard.receiveShadow = true;
+    og.add(yard);
+
+    for (let t = 0; t < (op.tents || 1); t++) {
+      const ang = t * 2.2 + 0.5;
+      const rr = 2.8 + t;
+      const tx = op.x + Math.cos(ang) * rr;
+      const tz = op.z + Math.sin(ang) * rr;
+      let tent = NatureKit.clone(op.ruined ? "tent_small_open" : "tent_open", 1.05);
+      if (!tent) tent = makeBiologistTent();
+      tent.rotation.y = ang + Math.PI;
+      if (op.ruined) tent.rotation.z = (Math.random() - 0.5) * 0.25;
+      placeAtHeight(tent, tx, tz, mapId);
+      og.add(tent);
+    }
+
+    // Dead / sparse fire
+    const ash = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.7, 0.9, 0.18, 8),
+      mat("#2a2218", { roughness: 1 })
+    );
+    placeAtHeight(ash, op.x, op.z, mapId, 0.08);
+    og.add(ash);
+    const logs = NatureKit.clone("campfire_logs", 1);
+    if (logs) {
+      placeAtHeight(logs, op.x + 0.3, op.z - 0.2, mapId);
+      og.add(logs);
+    }
+
+    for (let f = 0; f < 4; f++) {
+      const fence = NatureKit.clone("fence", 1);
+      if (!fence) break;
+      const ang = f * 1.7 + 0.2;
+      const broken = op.ruined && f % 2 === 0;
+      placeAtHeight(
+        fence,
+        op.x + Math.cos(ang) * (op.r - 1.5),
+        op.z + Math.sin(ang) * (op.r - 1.5),
+        mapId
+      );
+      fence.rotation.y = ang + Math.PI / 2;
+      if (broken) {
+        fence.rotation.z = 0.55;
+        fence.position.y += 0.15;
+      }
+      og.add(fence);
+    }
+    group.add(og);
+  }
+
+  // Abandoned stones + road torches along beaten paths
+  for (const road of fieldRoads(mapId)) {
+    const dx = road.x1 - road.x0;
+    const dz = road.z1 - road.z0;
+    const len = Math.hypot(dx, dz) || 1;
+    const steps = Math.max(2, Math.floor(len / 11));
+    for (let i = 1; i < steps; i++) {
+      const u = i / steps;
+      const x = road.x0 + dx * u;
+      const z = road.z0 + dz * u;
+      const side = i % 2 === 0 ? 1 : -1;
+      const nx = (-dz / len) * side * (2.2 + (i % 3) * 0.4);
+      const nz = (dx / len) * side * (2.2 + (i % 3) * 0.4);
+
+      // Torches every other step
+      if (i % 2 === 1) {
+        const torch = makeRoadTorch();
+        placeAtHeight(torch, x + nx * 0.85, z + nz * 0.85, mapId);
+        group.add(torch);
+        const light = torch.getObjectByName("torch_light");
+        if (light) torchLights.push(light);
+      }
+
+      // Abandoned roadside stones
+      if (i % 3 === 0 || Math.random() < 0.35) {
+        const stone = makeAbandonedStone(mapId, arid);
+        stone.rotation.y = Math.random() * Math.PI;
+        placeAtHeight(stone, x + nx * 1.4, z + nz * 1.4, mapId);
+        group.add(stone);
+      }
+    }
+  }
+
+  root.userData.torchLights = torchLights;
+  group.userData.torchLights = torchLights;
   root.add(group);
   return group;
 }
@@ -874,7 +1043,8 @@ export function createScene() {
   scene.background = new THREE.Color("#8aab72");
   scene.fog = new THREE.Fog("#9aba80", 55, 195);
 
-  scene.add(new THREE.HemisphereLight(0xfff2e0, 0x5a4a28, 0.95));
+  const hemi = new THREE.HemisphereLight(0xfff2e0, 0x5a4a28, 0.95);
+  scene.add(hemi);
 
   const sun = new THREE.DirectionalLight(0xffe8c8, 1.25);
   sun.position.set(40, 55, 25);
@@ -1024,7 +1194,7 @@ export function createScene() {
   finalizeMapSmoke(overworld);
 
   scene.add(overworld);
-  return { scene, sun, overworld, ground };
+  return { scene, sun, hemi, overworld, ground };
 }
 
 /** Brown second field map — city + wilderness, west portal back to Shinsoo. */
@@ -1754,6 +1924,56 @@ export function attachQuestMarker(root, y = 2.55) {
   root.userData.questSprite = sprite;
   root.userData.questState = "";
   return sprite;
+}
+
+/** Floating hunt / objective beacon for active quests in the field */
+export function makeHuntBeacon(color = "#4db0ff", label = "!") {
+  const g = new THREE.Group();
+  g.name = "hunt_beacon";
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.12, 0.35, 4.5, 8),
+    new THREE.MeshStandardMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity: 0.85,
+      transparent: true,
+      opacity: 0.55,
+      roughness: 0.4,
+    })
+  );
+  beam.position.y = 2.4;
+  g.add(beam);
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.9, 0.08, 8, 20),
+    new THREE.MeshStandardMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity: 1.1,
+      roughness: 0.35,
+    })
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.15;
+  g.add(ring);
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, 128, 128);
+  ctx.fillStyle = color;
+  ctx.font = "bold 72px Cinzel, serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, 64, 64);
+  const tex = new THREE.CanvasTexture(canvas);
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false })
+  );
+  sprite.scale.set(2.2, 2.2, 1);
+  sprite.position.y = 5.2;
+  g.add(sprite);
+  g.userData.spin = ring;
+  return g;
 }
 
 export function setQuestMarker(mesh, state) {

@@ -24,6 +24,7 @@ import { SHOP_CATALOG, SHOP_TABS } from "./data/npcs.js";
 import { QUESTS } from "./data/quests.js";
 import {
   MINIBOSS_AREAS,
+  QUEST_HUNT,
   questHuntFor,
   zoneRing,
   metinSpawnRing,
@@ -691,18 +692,10 @@ function renderQuests(ch = game.character, giver = questPanelGiver) {
     btn.className = "btn-mini";
 
     if (state === "available") {
-      btn.textContent = "Accept";
+      btn.textContent = "Read scroll";
       btn.onclick = () => {
-        const target = game.character;
-        const err = QuestService.accept(target, q.id);
-        if (err) {
-          ui.toast(err);
-          return;
-        }
         audio.sfx("ui");
-        ui.toast(`Accepted: ${q.name}`);
-        refreshQuestUi();
-        ui.requestSave?.(false);
+        showQuestScrollOffer(q);
       };
     } else if (state === "completed") {
       btn.textContent = "Claim";
@@ -765,6 +758,57 @@ function refreshQuestUi() {
   if (!$("#panel-quests").hidden) renderQuests(ch, questPanelGiver);
   renderQuestTracker(ch);
   game.refreshQuestMarkers?.();
+  game.refreshHuntMarkers?.();
+}
+
+let _scrollQuestId = null;
+
+function hideQuestScroll() {
+  const el = $("#quest-scroll");
+  if (el) el.hidden = true;
+  _scrollQuestId = null;
+}
+
+function offerFirstAvailableScroll(ch, giverId) {
+  if (!ch) return;
+  QuestService.ensure(ch);
+  // canAccept returns null when OK, or an error string
+  const available = QuestService.forGiver(giverId).find((x) => !QuestService.canAccept(ch, x));
+  if (available) showQuestScrollOffer(available);
+}
+
+/** Metin2-style parchment offer — Begin accepts and spawns hunt markers */
+function showQuestScrollOffer(q) {
+  const el = $("#quest-scroll");
+  if (!el || !q) return;
+  _scrollQuestId = q.id;
+  const giver =
+    q.giver === "biologist" ? "Biologist" : q.giver === "quest_elder" ? "Village Elder" : "Quest";
+  $("#quest-scroll-title").textContent = q.name;
+  $("#quest-scroll-giver").textContent = `From the ${giver}`;
+  $("#quest-scroll-body").textContent = q.desc;
+  $("#quest-scroll-meta").textContent = `Objective · ${q.count}× ${q.target || "target"} · Lv.${q.levelReq}`;
+  $("#quest-scroll-reward").textContent = `Reward: ${QuestService.formatReward(q.reward)}`;
+  el.hidden = false;
+  // Keep NPC panel open underneath; scroll is the dialog
+}
+
+function beginQuestFromScroll() {
+  const ch = game.character;
+  if (!ch || !_scrollQuestId) return;
+  const q = QUESTS.find((x) => x.id === _scrollQuestId);
+  const err = QuestService.accept(ch, _scrollQuestId);
+  if (err) {
+    ui.toast(err);
+    return;
+  }
+  audio.sfx("level");
+  ui.toast(`Quest started: ${q?.name || "Quest"}`);
+  hideQuestScroll();
+  refreshQuestUi();
+  game.refreshQuestMarkers?.();
+  game.refreshHuntMarkers?.();
+  ui.requestSave?.(false);
 }
 
 function renderQuestTracker(ch = game.character) {
@@ -783,9 +827,19 @@ function renderQuestTracker(ch = game.character) {
     .slice(0, 5)
     .map((q) => {
       const ready = q.state === "completed";
+      const hunt = QUEST_HUNT[q.target];
+      const where = hunt
+        ? hunt.mapId === "valley"
+          ? "Seungryong"
+          : hunt.mapId === "orc_valley"
+            ? "Orc Isles"
+            : hunt.allField
+              ? "Field"
+              : "Shinsoo"
+        : "";
       return `<div class="quest-track-row${ready ? " ready" : ""}">
-        <b>${ready ? "✓ " : ""}${q.name}</b>
-        <span>${q.progress}/${q.count}</span>
+        <b>${ready ? "✓ " : ""}${q.name}${where && !ready ? ` · ${where}` : ""}</b>
+        <span>${ready ? "Turn in" : `${q.progress}/${q.count}`}</span>
       </div>`;
     })
     .join("");
@@ -897,11 +951,13 @@ function renderNpcPanel(npc) {
     $("#panel-quests").hidden = false;
     questPanelGiver = "quest_elder";
     renderQuests(ch, "quest_elder");
+    offerFirstAvailableScroll(ch, "quest_elder");
   } else if (npc.role === "biologist") {
     $("#panel-npc").hidden = true;
     $("#panel-quests").hidden = false;
     questPanelGiver = "biologist";
     renderQuests(ch, "biologist");
+    offerFirstAvailableScroll(ch, "biologist");
   } else if (npc.role === "skillmaster") {
     renderSkillMasterUi(body, ch);
   }
@@ -2150,6 +2206,10 @@ window.addEventListener("keydown", (e) => {
   if (k === "m") togglePanel("map");
   if (k === "escape") {
     e.preventDefault();
+    if ($("#quest-scroll") && !$("#quest-scroll").hidden) {
+      hideQuestScroll();
+      return;
+    }
     // Dismiss overlays first so Esc always recovers a stuck invite / context menu
     const invite = $("#social-invite-banner");
     if (invite && !invite.hidden) {
@@ -2183,6 +2243,14 @@ $("#btn-hud-char")?.addEventListener("click", () => {
   audio.sfx("ui");
   togglePanel("char");
 });
+$("#quest-scroll-begin")?.addEventListener("click", () => {
+  beginQuestFromScroll();
+});
+$("#quest-scroll-decline")?.addEventListener("click", () => {
+  audio.sfx("ui");
+  hideQuestScroll();
+});
+
 $("#btn-hud-quests")?.addEventListener("click", () => {
   audio.sfx("ui");
   togglePanel("quests");

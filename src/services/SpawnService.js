@@ -5,6 +5,7 @@ import { orcSpawnPoint } from "../data/orcMap.js";
 import { EDGE_PORTAL } from "../game/data.js";
 import { BANDIT_CAMP, banditCampPoint, inBanditCamp } from "../data/banditCamp.js";
 import { campsOnMap, inWildCamp, wildCampPoint } from "../data/wildCamps.js";
+import { outpostsOnMap, inOutpost } from "../data/outposts.js";
 
 function wildPoint(mapId, minR, maxR) {
   if (mapId === "orc_valley") {
@@ -24,6 +25,7 @@ function wildPoint(mapId, minR, maxR) {
     // Keep rogue hamlet / tent camps for their own packs
     if (mapId === BANDIT_CAMP.mapId && inBanditCamp(p.x, p.z, 4)) continue;
     if (inWildCamp(mapId, p.x, p.z, 3)) continue;
+    if (inOutpost(mapId, p.x, p.z, 2)) continue;
     return p;
   }
   const mid = (minR + maxR) / 2;
@@ -233,6 +235,29 @@ export const SpawnService = {
     return mobs;
   },
 
+  /** Sparse stragglers at half-empty outposts */
+  seedOutposts(mapId) {
+    const mobs = [];
+    for (const op of outpostsOnMap(mapId)) {
+      for (const pack of op.mobs || []) {
+        for (let i = 0; i < (pack.n || 1); i++) {
+          const ang = Math.random() * Math.PI * 2;
+          const r = 1.5 + Math.random() * Math.max(1, op.r - 2.5);
+          mobs.push({
+            x: op.x + Math.cos(ang) * r,
+            z: op.z + Math.sin(ang) * r,
+            templateId: pack.id,
+            mapId,
+            zone: "camp",
+            camp: true,
+            campId: op.id,
+          });
+        }
+      }
+    }
+    return mobs;
+  },
+
   seedWild(mapId = "overworld", level = 1) {
     const mobs = [];
     const metins = [];
@@ -269,6 +294,7 @@ export const SpawnService = {
     }
     if (mapId === "overworld" || mapId === "valley") {
       mobs.push(...this.seedWildCamps(mapId));
+      mobs.push(...this.seedOutposts(mapId));
     }
 
     const metinCount = this.seedMetinCount(mapId);
