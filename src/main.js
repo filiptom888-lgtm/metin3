@@ -26,6 +26,7 @@ import { DEMON_TOWER, floorConfig } from "./data/demonTower.js";
 import { MapService } from "./services/MapService.js";
 import { audio } from "./audio/Audio.js";
 import { itemIconHtml } from "./ui/itemIcon.js";
+import { skillIconHtml } from "./ui/skillIcon.js";
 
 const $ = (s) => document.querySelector(s);
 
@@ -59,7 +60,7 @@ const ui = {
         el.className = "skill-slot locked";
         el.dataset.slot = String(i);
         el.title = `Visit the Skill Master at Lv.${SkillService.unlockLevel}`;
-        el.innerHTML = `<span class="k">${i + 1}</span><span class="sk-name">—</span><div class="cd" hidden></div>`;
+        el.innerHTML = `<span class="k">${i + 1}</span><span class="sk-ico skill-ico-fallback">—</span><div class="cd" hidden></div>`;
         bar.appendChild(el);
       }
     } else {
@@ -70,7 +71,7 @@ const ui = {
         const timing = SkillService.timing(sk);
         const rank = sk.level || 1;
         el.title = `${sk.name} M${rank} · ${sk.sp} SP · cast ${timing.cast.toFixed(1)}s · CD ${sk.cd}s`;
-        el.innerHTML = `<span class="k">${i + 1}</span><span class="sk-name">${sk.name}</span><span class="sk-rank">M${rank}</span><div class="cd" hidden></div>`;
+        el.innerHTML = `<span class="k">${i + 1}</span>${skillIconHtml(sk)}<span class="sk-rank">M${rank}</span><div class="cd" hidden></div>`;
         bar.appendChild(el);
       });
     }
@@ -93,8 +94,8 @@ const ui = {
       el.title = def ? `${def.name} (key ${i + 5}) — click use · right-click clear` : `Empty potion slot ${i + 5}`;
       el.innerHTML = `
         <span class="k">${i + 5}</span>
-        ${def ? itemIconHtml(def, { cls: "sk-ico item-ico" }) : `<span class="sk-ico">·</span>`}
-        ${def ? `<span class="sk-qty">×${qty}</span>` : `<span class="sk-name">Pot</span>`}
+        ${def ? itemIconHtml(def, { cls: "sk-ico item-ico" }) : `<img class="sk-ico item-ico pot-empty" src="/icons/items/red_potion.svg" alt="Empty potion" draggable="false" />`}
+        ${def ? `<span class="sk-qty">×${qty}</span>` : ""}
         <div class="cd" hidden></div>
       `;
       el.addEventListener("click", () => {
@@ -159,14 +160,15 @@ const ui = {
           if (def) {
             const wrap = document.createElement("div");
             wrap.innerHTML = itemIconHtml(def, { cls: "sk-ico item-ico" });
-            ico.replaceWith(wrap.firstElementChild);
-          } else if (ico.tagName === "IMG") {
-            const span = document.createElement("span");
-            span.className = "sk-ico";
-            span.textContent = "·";
-            ico.replaceWith(span);
+            const next = wrap.querySelector("img,span");
+            if (next) ico.replaceWith(next);
           } else {
-            ico.textContent = "·";
+            const img = document.createElement("img");
+            img.className = "sk-ico item-ico pot-empty";
+            img.src = "/icons/items/red_potion.svg";
+            img.alt = "Empty potion";
+            img.draggable = false;
+            ico.replaceWith(img);
           }
         }
         if (qEl) qEl.textContent = def ? `×${qty}` : "";
@@ -899,7 +901,12 @@ function renderSkillMasterUi(body, ch) {
     const skills = SkillService.listFor(ch.classId, ch.spec);
     const list = document.createElement("div");
     list.className = "skill-path-skills";
-    list.innerHTML = skills.map((s, i) => `<div class="skill-chip"><b>${i + 1}. ${s.name}</b><span>${s.sp} SP · ${s.cd}s</span></div>`).join("");
+    list.innerHTML = skills
+      .map(
+        (s, i) =>
+          `<div class="skill-chip">${skillIconHtml(s)}<div class="skill-chip-txt"><b>${i + 1}. ${s.name}</b><span>${s.sp} SP · ${s.cd}s</span></div></div>`
+      )
+      .join("");
     body.appendChild(list);
     return;
   }
@@ -928,7 +935,7 @@ function renderSkillMasterUi(body, ch) {
     card.innerHTML = `
       <b>${path.name}</b>
       <span class="blurb">${path.blurb}</span>
-      <ul>${skills.map((s) => `<li>${s.name}</li>`).join("")}</ul>
+      <ul>${skills.map((s) => `<li>${skillIconHtml(s, { cls: "skill-ico skill-ico-sm" })}<span>${s.name}</span></li>`).join("")}</ul>
       <em>Choose ${path.name}</em>
     `;
     card.onclick = () => {
@@ -1331,6 +1338,7 @@ function renderSkillsPanel(ch = game.character) {
 
     const timing = SkillService.timing(sk);
     row.innerHTML = `
+      ${skillIconHtml(sk, { cls: "skill-ico skill-ico-lg" })}
       <div class="skill-row-main">
         <span class="skill-row-name">${sk.name}</span>
         <span class="skill-row-rank">Rank M${sk.level}${maxed ? " (max)" : needGrand ? " · grand books" : ""}</span>
