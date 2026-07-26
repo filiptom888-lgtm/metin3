@@ -15,13 +15,15 @@ const _tmp = new THREE.Color();
 export function dayPhase(worldTime) {
   const t = (((worldTime % DAY_LENGTH) + DAY_LENGTH) % DAY_LENGTH) / DAY_LENGTH;
   const sunH = Math.sin(t * Math.PI * 2 - Math.PI / 2);
-  const day = Math.max(0, Math.min(1, sunH * 0.92 + 0.08));
+  // Keep a readable floor — never pitch black
+  const day = Math.max(0.18, Math.min(1, sunH * 0.78 + 0.28));
   const night = 1 - day;
   return { t, day, night, sunH };
 }
 
 /**
  * Apply day/night to scene lights + fog. Dungeons stay fixed.
+ * Night is a cozy warm twilight, not a black void.
  * @returns {{ t:number, day:number, night:number }}
  */
 export function applyDayNight(scene, sun, hemi, worldTime, torchLights = []) {
@@ -41,38 +43,51 @@ export function applyDayNight(scene, sun, hemi, worldTime, torchLights = []) {
   const dayBg = map.background || "#7a9a68";
   const dayFog = map.fog || "#8aaa72";
 
-  // Night ↔ day blend with a purple dusk shoulder
-  const duskAmt = Math.max(0, 1 - Math.abs(day - 0.25) * 4) * 0.35;
-  _bg.set(dayBg).lerp(_tmp.set("#0a1020"), night * 0.92);
-  _bg.lerp(_tmp.set("#5a3048"), duskAmt);
-  _fog.set(dayFog).lerp(_tmp.set("#121828"), night * 0.9);
-  _fog.lerp(_tmp.set("#4a3040"), duskAmt);
+  // Soft dusk blush → cozy indigo/amber night (readable, not black)
+  const duskAmt = Math.max(0, 1 - Math.abs(day - 0.35) * 3.2) * 0.4;
+  _bg.set(dayBg).lerp(_tmp.set("#1a2438"), night * 0.72);
+  _bg.lerp(_tmp.set("#6a3a28"), duskAmt * 0.55);
+  _bg.lerp(_tmp.set("#243044"), night * 0.25); // lift midnight a bit
+  _fog.set(dayFog).lerp(_tmp.set("#1c2838"), night * 0.65);
+  _fog.lerp(_tmp.set("#4a3428"), duskAmt * 0.45);
 
   scene.background.copy(_bg);
   if (scene.fog) {
     scene.fog.color.copy(_fog);
-    scene.fog.near = (map.fogNear || 50) * (0.9 + night * 0.2);
-    scene.fog.far = (map.fogFar || 200) * (0.72 + day * 0.28);
+    // Softer fog at night so the world stays visible
+    scene.fog.near = (map.fogNear || 50) * (0.85 + night * 0.15);
+    scene.fog.far = (map.fogFar || 200) * (0.85 + day * 0.2);
   }
 
   const ang = t * Math.PI * 2;
-  const elev = Math.max(0.06, sunH * 0.95 + 0.12);
+  // Keep a gentle moon arc even at "night"
+  const elev = Math.max(0.22, sunH * 0.85 + 0.28);
   sun.position.set(Math.cos(ang) * 85, elev * 72, Math.sin(ang) * 50);
-  sun.intensity = 0.1 + day * 1.25;
-  _sun.set("#6a7ab0").lerp(_tmp.set("#ffe8c8"), day);
+  // Dim warm moonlight instead of near-off sun
+  sun.intensity = 0.35 + day * 1.05;
+  _sun.set("#c8d4f0").lerp(_tmp.set("#ffe8c8"), day);
+  _sun.lerp(_tmp.set("#ffd0a0"), night * 0.55); // warm moon tint
   sun.color.copy(_sun);
 
-  hemi.intensity = 0.2 + day * 0.9;
-  _sky.set("#1a2440").lerp(_tmp.set("#fff2e0"), day);
-  _ground.set("#0a0810").lerp(_tmp.set("#5a4a28"), day);
+  // Cozy hemisphere fill — warm amber ground bounce at night
+  hemi.intensity = 0.55 + day * 0.55;
+  _sky.set("#2a3448").lerp(_tmp.set("#fff2e0"), day);
+  _sky.lerp(_tmp.set("#3a3048"), night * 0.35);
+  _ground.set("#2a2218").lerp(_tmp.set("#5a4a28"), day);
+  _ground.lerp(_tmp.set("#3a2818"), night * 0.4);
   hemi.color.copy(_sky);
   hemi.groundColor.copy(_ground);
 
-  const torchI = night > 0.08 ? 0.2 + night * 1.4 : 0;
+  // Torches: soft warm pools (stronger + longer at night)
+  const torchI = night > 0.05 ? 0.55 + night * 1.65 : 0;
   for (const l of torchLights) {
     if (!l) continue;
     l.intensity = torchI;
-    l.visible = torchI > 0.05;
+    l.visible = torchI > 0.08;
+    // Widen cozy glow without harsh falloff
+    if (l.distance != null) l.distance = 26;
+    if (l.decay != null) l.decay = 1.35;
+    if (l.color) l.color.setHex(0xffb060);
   }
 
   return { t, day, night };

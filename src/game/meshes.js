@@ -639,12 +639,14 @@ function addCityWalls(scene) {
 function addCityCozyProps(scene, { warm = true } = {}) {
   const wood = mat("#5a3a22", { roughness: 0.9 });
   const iron = mat("#3a3830", { roughness: 0.7, metalness: 0.35 });
-  const lampGlass = mat("#f0d070", { emissive: "#c9a040", emissiveIntensity: 0.65, roughness: 0.4 });
+  const lampGlass = mat("#f0d070", { emissive: "#ffb050", emissiveIntensity: 1.1, roughness: 0.4 });
+  const cityLights = [];
 
   const lanternSpots = [
     [6, 6], [-6, 6], [6, -6], [-6, -6],
     [10, 0], [-10, 0], [0, 10], [0, -10],
     [14, 8], [-14, -8], [8, -14], [-8, 14],
+    [12, 12], [-12, 12], [12, -12], [-12, -12],
   ];
   for (const [lx, lz] of lanternSpots) {
     if (Math.hypot(lx, lz) > CITY_RADIUS - 3) continue;
@@ -658,7 +660,15 @@ function addCityCozyProps(scene, { warm = true } = {}) {
     const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), lampGlass);
     lamp.position.set(lx + 0.45, 2.05, lz);
     scene.add(lamp);
+    // Soft warm plaza glow — collected with road torches for day/night
+    const light = new THREE.PointLight(0xffc070, 0, 22, 1.4);
+    light.position.set(lx + 0.45, 2.15, lz);
+    light.name = "torch_light";
+    scene.add(light);
+    cityLights.push(light);
   }
+  if (!scene.userData.torchLights) scene.userData.torchLights = [];
+  scene.userData.torchLights.push(...cityLights);
 
   // barrels + crates near plaza edge
   for (let i = 0; i < 10; i++) {
@@ -961,7 +971,7 @@ function makeRoadTorch() {
   flame.position.y = 1.78;
   flame.name = "torch_flame";
   g.add(flame);
-  const light = new THREE.PointLight(0xff8a30, 0, 14, 2);
+  const light = new THREE.PointLight(0xffb060, 0, 28, 1.35);
   light.position.y = 1.85;
   light.name = "torch_light";
   g.add(light);
@@ -1220,7 +1230,8 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 12
     }
   }
 
-  root.userData.torchLights = torchLights;
+  const prev = Array.isArray(root.userData.torchLights) ? root.userData.torchLights : [];
+  root.userData.torchLights = [...prev, ...torchLights];
   group.userData.torchLights = torchLights;
   root.add(group);
   return group;
