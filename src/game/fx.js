@@ -520,6 +520,90 @@ export class FxSystem {
     this.fx.push({ mesh: flash, life: 0.2, max: 0.2, type: "fade" });
   }
 
+  /**
+   * Enemy hurt feedback — blood spray + floating damage.
+   * @param {number} [dmg] shown as floating number when > 0
+   */
+  bleed(x, z, y = 0, dmg = 0) {
+    const gy = y || 0;
+    const chest = gy + 1.05;
+
+    // Impact flash
+    const flash = new THREE.Mesh(new THREE.SphereGeometry(0.42, 10, 10), this._mat("#ff3a3a", 0.75));
+    flash.position.set(x, chest, z);
+    this.scene.add(flash);
+    this.fx.push({ mesh: flash, life: 0.18, max: 0.18, type: "fade" });
+
+    // Blood droplets / mist
+    const count = 14;
+    for (let i = 0; i < count; i++) {
+      const drop = new THREE.Mesh(
+        new THREE.SphereGeometry(0.05 + Math.random() * 0.07, 5, 5),
+        this._mat(i % 3 === 0 ? "#8a1010" : "#c41818", 0.95)
+      );
+      const ang = Math.random() * Math.PI * 2;
+      const sp = 1.4 + Math.random() * 2.4;
+      drop.position.set(
+        x + Math.cos(ang) * 0.15,
+        chest + (Math.random() - 0.3) * 0.45,
+        z + Math.sin(ang) * 0.15
+      );
+      this.scene.add(drop);
+      this.fx.push({
+        mesh: drop,
+        life: 0.55 + Math.random() * 0.35,
+        max: 0.75,
+        type: "spark",
+        vx: Math.cos(ang) * sp,
+        vy: 1.2 + Math.random() * 2.8,
+        vz: Math.sin(ang) * sp,
+      });
+    }
+
+    // Small ground blood splat that fades
+    const splat = new THREE.Mesh(
+      new THREE.CircleGeometry(0.35 + Math.random() * 0.25, 10),
+      this._mat("#6a1010", 0.55)
+    );
+    splat.rotation.x = -Math.PI / 2;
+    splat.position.set(x + (Math.random() - 0.5) * 0.3, gy + 0.06, z + (Math.random() - 0.5) * 0.3);
+    this.scene.add(splat);
+    this.fx.push({ mesh: splat, life: 0.7, max: 0.7, type: "fade" });
+
+    if (dmg > 0) this._dmgNumber(x, z, gy, Math.floor(dmg));
+  }
+
+  _dmgNumber(x, z, y, amount) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 128;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, 128, 64);
+    ctx.font = "bold 42px Cinzel, Georgia, serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "rgba(0,0,0,0.85)";
+    ctx.strokeText(String(amount), 64, 34);
+    ctx.fillStyle = "#ff6a5a";
+    ctx.fillText(String(amount), 64, 34);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.needsUpdate = true;
+    const mat = new THREE.SpriteMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+      opacity: 1,
+    });
+    const spr = new THREE.Sprite(mat);
+    spr.scale.set(1.6, 0.8, 1);
+    spr.position.set(x + (Math.random() - 0.5) * 0.35, (y || 0) + 1.7, z);
+    this.scene.add(spr);
+    this.fx.push({ mesh: spr, life: 0.85, max: 0.85, type: "floatUp", vy: 1.6 });
+  }
+
   lootBeam(x, z, color = "#e8d48b", y = 0) {
     const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.18, 3.2, 8), this._mat(color, 0.6));
     mesh.position.set(x, (y || 0) + 1.6, z);
@@ -654,6 +738,12 @@ export class FxSystem {
         for (const mat of mats) mat.opacity = 0.85 * t;
         root.scale.setScalar(0.6 + t * 0.8);
       }
+      if (f.type === "floatUp") {
+        root.position.y += (f.vy || 1.5) * dt;
+        if (root.material?.opacity != null) root.material.opacity = Math.max(0, t);
+        const s = 0.85 + t * 0.25;
+        root.scale.set(1.6 * s, 0.8 * s, 1);
+      }
     }
     this.fx = this.fx.filter((f) => {
       if (f.life > 0) return true;
@@ -664,13 +754,17 @@ export class FxSystem {
 
   _dispose(mesh) {
     this.scene.remove(mesh);
+    const killMat = (m) => {
+      m?.map?.dispose?.();
+      m?.dispose?.();
+    };
     mesh.traverse?.((o) => {
       o.geometry?.dispose?.();
-      if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose?.());
-      else o.material?.dispose?.();
+      if (Array.isArray(o.material)) o.material.forEach(killMat);
+      else killMat(o.material);
     });
     mesh.geometry?.dispose?.();
-    mesh.material?.dispose?.();
+    killMat(mesh.material);
   }
 
   clear() {

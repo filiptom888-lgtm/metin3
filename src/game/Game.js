@@ -2752,7 +2752,7 @@ export class Game {
     // Sword swing FX in front of the player (follows facing / cursor + terrain)
     this.fx?.slash(p.x, p.z, p.rot, roll.kind === "crit" ? "#ffe08a" : "#e8d48b", gy);
     this.meleeHitAimed(p, dmg, target);
-    if (target) this.fx?.hitSparks(target.x, target.z, "#fff4c8", this.groundY(target.x, target.z));
+    // Bleed / dmg numbers come from damageMob / damageMetin
     this.net.sendEvent({
       type: "melee",
       from: p.id,
@@ -3205,7 +3205,11 @@ export class Game {
     // Damage is already rolled at attack time — do not re-roll miss here (felt random)
     const applied = Math.max(1, Math.floor(dmg - (mob.def || 0) * 0.35));
     mob.hp -= applied;
-    this.net.sendEvent({ type: "fx", kind: "hit", x: mob.x, z: mob.z, dmg: Math.floor(applied), from: fromId });
+    this.fx?.bleed(mob.x, mob.z, this.groundY(mob.x, mob.z, mob.mapId), applied);
+    // Only the attacker broadcasts hit FX (avoids host+client double spray)
+    if (fromId === this.local?.id) {
+      this.net.sendEvent({ type: "fx", kind: "hit", x: mob.x, z: mob.z, dmg: Math.floor(applied), from: fromId });
+    }
     if (mob.hp <= 0) {
       const tmpl = MONSTERS[mob.templateId] || null;
       const gold = DropService.yangFor(tmpl || mob.templateId || mob.kind);
@@ -3232,7 +3236,10 @@ export class Game {
   damageMetin(met, dmg, fromId) {
     const applied = Math.max(1, Math.floor(dmg));
     met.hp -= applied;
-    this.net.sendEvent({ type: "fx", kind: "hit", x: met.x, z: met.z, dmg: Math.floor(applied), from: fromId });
+    this.fx?.bleed(met.x, met.z, this.groundY(met.x, met.z, met.mapId), applied);
+    if (fromId === this.local?.id) {
+      this.net.sendEvent({ type: "fx", kind: "hit", x: met.x, z: met.z, dmg: Math.floor(applied), from: fromId });
+    }
     if (met.hp <= 0) {
       const gold = DropService.yangFor("metin", met.tier);
       const xp = DropService.xpFor("metin", met.tier);
@@ -3928,7 +3935,7 @@ export class Game {
       if (e.kind === "aoe") this.fx?.skill("aoe", e.x, e.z, 0, e.color || "#c43c2e", e.r || 3, null, egy);
       if (e.kind === "heal") this.fx?.heal(e.x, e.z, egy);
       if (e.kind === "buff") this.fx?.buff(e.x, e.z, "#e8d48b", egy);
-      if (e.kind === "hit") this.fx?.hitSparks(e.x, e.z, "#fff", egy);
+      if (e.kind === "hit") this.fx?.bleed(e.x, e.z, egy, e.dmg || 0);
     }
 
     // Party
