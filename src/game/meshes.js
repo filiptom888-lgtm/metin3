@@ -664,23 +664,31 @@ function addCityCozyProps(scene, { warm = true } = {}) {
     [14, 8], [-14, -8], [8, -14], [-8, 14],
     [12, 12], [-12, 12], [12, -12], [-12, -12],
   ];
+  let lampBudget = AssetKit.hasProp("lampposts") ? 6 : 0;
   for (const [lx, lz] of lanternSpots) {
     if (Math.hypot(lx, lz) > CITY_RADIUS - 3) continue;
-    const lamp = AssetKit.clonePropToHeight("lampposts", 4.8 + Math.random() * 0.6);
-    if (lamp) {
-      lamp.position.set(lx, 0, lz);
-      lamp.rotation.y = Math.atan2(-lx, -lz);
-      lamp.traverse((o) => {
-        if (o.isMesh) {
-          o.castShadow = false;
-          o.receiveShadow = true;
-        }
-      });
-      scene.add(lamp);
+    if (lampBudget > 0) {
+      const lamp = AssetKit.clonePropToHeight("lampposts", 4.6);
+      if (lamp) {
+        lamp.position.set(lx, 0, lz);
+        lamp.rotation.y = Math.atan2(-lx, -lz);
+        lamp.traverse((o) => {
+          if (o.isMesh) {
+            o.castShadow = false;
+            o.receiveShadow = true;
+          }
+        });
+        scene.add(lamp);
+        lampBudget -= 1;
+      }
     } else {
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 2.4, 6), iron);
       pole.position.set(lx, 1.2, lz);
       scene.add(pole);
+      const lampGlass = mat("#f0d070", { emissive: "#ffb050", emissiveIntensity: 1.1, roughness: 0.4 });
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), lampGlass);
+      bulb.position.set(lx, 2.35, lz);
+      scene.add(bulb);
     }
     const light = new THREE.PointLight(warm ? 0xffc070 : 0xc0d8ff, 0, 22, 1.4);
     light.position.set(lx, 3.2, lz);
@@ -794,27 +802,25 @@ function skipWildernessSpot(mapId, x, z, { clearRoad = 2.6 } = {}) {
 
 function plantTreeAt(group, x, z, mapId, arid, scaleMul = 1) {
   if (skipWildernessSpot(mapId, x, z, { clearRoad: 3.2 })) return false;
-  // Player ~1.8 — forests should read clearly taller
-  let targetH = (arid ? 8.5 : 10.5) * (0.72 + Math.random() * 0.85) * scaleMul;
-  if (Math.random() < 0.14) targetH *= 1.35;
-  let tree = AssetKit.randomForestTree(targetH);
-  if (!tree) {
-    tree = NatureKit.randomForestTree(arid, targetH);
-  }
+  // Player ~1.8 — Kenney bulk trees (cheap); custom GLBs are landmarks only
+  let targetH = (arid ? 6.5 : 7.8) * (0.72 + Math.random() * 0.85) * scaleMul;
+  if (Math.random() < 0.12) targetH *= 1.35;
+  let tree = NatureKit.randomForestTree(arid, targetH);
   if (!tree) {
     tree = makeFallbackTree(arid);
     const approx = arid ? 6.5 : 8.2;
     tree.scale.setScalar(targetH / approx);
   }
   tree.rotation.y = Math.random() * Math.PI * 2;
-  if (Math.random() < 0.1) {
+  tagFadeTree(tree);
+  if (Math.random() < 0.08) {
     tree.traverse((o) => {
       if (o.isMesh) o.castShadow = true;
     });
   }
   placeAtHeight(tree, x, z, mapId);
   group.add(tree);
-  if (Math.random() < 0.35) {
+  if (Math.random() < 0.3) {
     const bushH = 1.35 + Math.random() * 1.4;
     const bush = NatureKit.randomBush(bushH);
     if (bush) {
@@ -841,15 +847,15 @@ function plantRoadForests(group, mapId, arid) {
     const uz = dz / len;
     const px = -uz;
     const pz = ux;
-    const steps = Math.max(8, Math.ceil(len / 2.4));
+    const steps = Math.max(6, Math.ceil(len / 3.2));
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
       const cx = r.x0 + dx * t;
       const cz = r.z0 + dz * t;
       for (const side of [-1, 1]) {
-        const rows = 2 + ((Math.random() * 2) | 0);
+        const rows = 1 + ((Math.random() * 2) | 0);
         for (let row = 0; row < rows; row++) {
-          const offset = r.w * 0.5 + 4.2 + row * 3.6 + Math.random() * 2.6;
+          const offset = r.w * 0.5 + 4.5 + row * 4.0 + Math.random() * 2.6;
           const along = (Math.random() - 0.5) * 2.4;
           const x = cx + px * side * offset + ux * along;
           const z = cz + pz * side * offset + uz * along;
@@ -1053,76 +1059,64 @@ function placeAtHeight(obj, x, z, mapId, yOff = 0) {
   obj.position.set(x, h + yOff, z);
 }
 
-/** Custom building / tree landmarks — all taller than the ~1.8 player */
+/** Mark canopy for near-camera fade; clone mats so instances don't share opacity */
+function tagFadeTree(tree) {
+  if (!tree) return tree;
+  tree.userData.fadeTree = true;
+  tree.traverse((o) => {
+    if (!o.isMesh || !o.material) return;
+    o.material = Array.isArray(o.material)
+      ? o.material.map((m) => m.clone())
+      : o.material.clone();
+  });
+  return tree;
+}
+
+/** Sparse custom landmarks — never dense skinned trees near the city */
 function dressMapLandmarks(group, mapId, arid = false) {
-  const hutSpots =
-    mapId === "overworld"
-      ? [
-          [-52, 48],
-          [58, -42],
-          [-38, -62],
-        ]
-      : [
-          [-55, -48],
-          [48, 52],
-          [-42, 58],
-        ];
-  for (const [x, z] of hutSpots) {
-    if (skipWildernessSpot(mapId, x, z, { clearRoad: 4 })) continue;
-    const hut = AssetKit.clonePropToHeight("viking_hut", 6.4 + Math.random() * 1.4);
-    if (!hut) continue;
-    hut.rotation.y = Math.random() * Math.PI * 2;
-    hut.traverse((o) => {
-      if (o.isMesh) {
-        o.castShadow = false;
-        o.receiveShadow = true;
+  // One viking hut homestead far from walls
+  const hutSpot = mapId === "overworld" ? [-52, 48] : [-55, -48];
+  const [hx, hz] = hutSpot;
+  if (!skipWildernessSpot(mapId, hx, hz, { clearRoad: 4 }) && AssetKit.hasProp("viking_hut")) {
+    const hut = AssetKit.clonePropToHeight("viking_hut", 6.2);
+    if (hut) {
+      hut.rotation.y = Math.random() * Math.PI * 2;
+      hut.traverse((o) => {
+        if (o.isMesh) {
+          o.castShadow = false;
+          o.receiveShadow = true;
+        }
+      });
+      placeAtHeight(hut, hx, hz, mapId);
+      group.add(hut);
+      for (let i = 0; i < 2; i++) {
+        const ang = (i / 2) * Math.PI * 2 + 0.4;
+        plantTreeAt(group, hx + Math.cos(ang) * 9, hz + Math.sin(ang) * 9, mapId, arid, 1.05);
       }
-    });
-    placeAtHeight(hut, x, z, mapId);
-    group.add(hut);
-    // A couple companion trees so the hut reads as a homestead
-    for (let i = 0; i < 3; i++) {
-      const ang = (i / 3) * Math.PI * 2 + 0.4;
-      plantTreeAt(group, x + Math.cos(ang) * 8, z + Math.sin(ang) * 8, mapId, arid, 1.1);
     }
   }
 
-  // Willow ring just outside the city (river / road flavor)
-  for (let i = 0; i < 14; i++) {
-    const ang = (i / 14) * Math.PI * 2 + Math.random() * 0.2;
-    const r = CITY_RADIUS + 9 + Math.random() * 22;
-    const x = Math.cos(ang) * r;
-    const z = Math.sin(ang) * r;
-    if (skipWildernessSpot(mapId, x, z, { clearRoad: 2.5 })) continue;
-    const willow = AssetKit.clonePropToHeight("willow", 9.5 + Math.random() * 5);
-    if (!willow) continue;
-    willow.rotation.y = Math.random() * Math.PI * 2;
-    willow.traverse((o) => {
-      if (o.isMesh) o.castShadow = false;
-    });
-    placeAtHeight(willow, x, z, mapId);
-    group.add(willow);
-  }
-
-  // Distant tree-row landmarks (authored huge — scale down to ~18–24m)
-  for (let i = 0; i < 6; i++) {
-    const ang = (i / 6) * Math.PI * 2 + 0.35;
-    const r = CITY_RADIUS + 50 + Math.random() * 42;
+  // Few willows / tree-rows far out (landmarks only)
+  const landmarkN = 4;
+  for (let i = 0; i < landmarkN; i++) {
+    const ang = (i / landmarkN) * Math.PI * 2 + 0.4;
+    const r = CITY_RADIUS + 55 + Math.random() * 35;
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
     if (skipWildernessSpot(mapId, x, z, { clearRoad: 6 })) continue;
-    const row = AssetKit.clonePropToHeight("trees_row", 17 + Math.random() * 7);
-    if (!row) continue;
-    row.rotation.y = ang + Math.PI / 2;
-    row.traverse((o) => {
+    const tree = AssetKit.landmarkTree(11 + Math.random() * 5);
+    if (!tree) continue;
+    tree.rotation.y = ang + Math.PI / 2;
+    tagFadeTree(tree);
+    tree.traverse((o) => {
       if (o.isMesh) o.castShadow = false;
     });
-    placeAtHeight(row, x, z, mapId);
-    group.add(row);
+    placeAtHeight(tree, x, z, mapId);
+    group.add(tree);
   }
 }
 
-/** City houses — prefer GLB homes (much taller than player), procedural fallback */
+/** City houses — house_small for density; at most two house_large landmarks */
 function placeCityBuildings(root, { arid = false } = {}) {
   const colors = arid
     ? ["#d2b48c", "#c4a574", "#e0c4a0", "#b8956a", "#cbb08a"]
@@ -1145,16 +1139,14 @@ function placeCityBuildings(root, { arid = false } = {}) {
     [-6, -17],
     [15, -5],
     [-14, 5],
-    [10, 14],
-    [-10, -15],
-    [13, 6],
-    [-16, 8],
   ];
+  let largeLeft = AssetKit.hasProp("house_large") ? 2 : 0;
   layouts.forEach(([bx, bz], i) => {
     if (Math.hypot(bx, bz) > CITY_RADIUS - 5.5) return;
     if (Math.hypot(bx, bz) < 9) return;
-    const useLarge = i % 3 === 0 && AssetKit.hasProp("house_large");
-    const targetH = useLarge ? 8.2 + (i % 4) * 0.55 : 6.4 + (i % 5) * 0.7;
+    const useLarge = largeLeft > 0 && (i === 2 || i === 9);
+    if (useLarge) largeLeft -= 1;
+    const targetH = useLarge ? 8.0 : 6.2 + (i % 4) * 0.45;
     let b = AssetKit.clonePropToHeight(useLarge ? "house_large" : "house_small", targetH);
     if (!b) b = AssetKit.clonePropToHeight("house_small", targetH);
     if (b) {
@@ -1162,7 +1154,7 @@ function placeCityBuildings(root, { arid = false } = {}) {
       b.position.set(bx, 0, bz);
       b.traverse((o) => {
         if (o.isMesh) {
-          o.castShadow = i % 4 === 0;
+          o.castShadow = i % 5 === 0;
           o.receiveShadow = true;
         }
       });
@@ -1188,7 +1180,7 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 22
   group.name = "wilderness_dressing";
 
   plantRoadForests(group, mapId, arid);
-  plantForestPatches(group, mapId, arid, arid ? 12 : 14);
+  plantForestPatches(group, mapId, arid, arid ? 8 : 10);
 
   // Fill open field (not only near roads)
   for (let i = 0; i < treeCount; i++) {
@@ -1687,9 +1679,9 @@ export function createScene() {
   dressFieldWilderness(overworld, {
     mapId: "overworld",
     arid: false,
-    treeCount: 110,
-    rockCount: 160,
-    bushCount: 140,
+    treeCount: 70,
+    rockCount: 100,
+    bushCount: 90,
   });
 
   // East-edge portal to Seungryong
@@ -1783,9 +1775,9 @@ export function makeValleyMapRoot() {
   dressFieldWilderness(root, {
     mapId: "valley",
     arid: true,
-    treeCount: 120,
-    rockCount: 180,
-    bushCount: 130,
+    treeCount: 75,
+    rockCount: 110,
+    bushCount: 85,
   });
 
   // NW rogue hamlet — 2–3 detailed houses
@@ -2042,17 +2034,18 @@ export function makeOrcMapRoot() {
   root.add(teleRing);
   root.userData.telePad = telePad;
 
-  // Thick dark forest around the tower — custom trees, taller than the player
-  for (let i = 0; i < 55; i++) {
+  // Light Kenney forest around the tower
+  for (let i = 0; i < 35; i++) {
     const ang = Math.random() * Math.PI * 2;
     const r = 9 + Math.random() * 22;
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
     if (Math.hypot(x, z) < 8.5) continue;
     if (Math.hypot(x, z - 14) < 5) continue;
-    const h = 8 + Math.random() * 7;
-    const tree = AssetKit.randomForestTree(h) || makeFallbackTree(false);
+    const h = 7 + Math.random() * 5;
+    const tree = NatureKit.randomForestTree(false, h) || makeFallbackTree(false);
     if (!tree) continue;
+    tagFadeTree(tree);
     tree.position.set(x, 0, z);
     tree.rotation.y = Math.random() * Math.PI * 2;
     root.add(tree);
@@ -2061,12 +2054,13 @@ export function makeOrcMapRoot() {
   // Outer islet forests
   for (const isle of ORC_ISLANDS) {
     if (isle.tier === "main") continue;
-    const n = 4 + ((Math.random() * 4) | 0);
+    const n = 3 + ((Math.random() * 3) | 0);
     for (let i = 0; i < n; i++) {
       const ang = Math.random() * Math.PI * 2;
       const r = 2 + Math.random() * (isle.r - 3.2);
-      const tree = AssetKit.randomForestTree(7 + Math.random() * 5);
+      const tree = NatureKit.randomForestTree(false, 6 + Math.random() * 4);
       if (!tree) continue;
+      tagFadeTree(tree);
       tree.position.set(isle.x + Math.cos(ang) * r, 0, isle.z + Math.sin(ang) * r);
       tree.rotation.y = Math.random() * Math.PI * 2;
       root.add(tree);

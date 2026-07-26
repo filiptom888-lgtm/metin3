@@ -1,6 +1,6 @@
 /**
- * Custom Meshy / marketplace GLBs — classes, props, terrain, enemies.
- * Skinned enemies use SkeletonUtils + AnimationMixer; scenery stays static.
+ * Custom Meshy / marketplace GLBs — staged load for fast world enter.
+ * Critical props block boot; enemies/heavy props load in background / on demand.
  */
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -13,19 +13,24 @@ const CLASS_FILES = {
   shaman: "/models/classes/shaman.glb",
 };
 
-const PROP_FILES = {
+/** Block world enter — cheap city props only */
+const CRITICAL_PROPS = {
   house_small: "/models/props/house_small.glb",
+  wooden_gate: "/models/props/wooden_gate.glb",
+};
+
+/** Background — heavy / optional scenery */
+const BACKGROUND_PROPS = {
   house_large: "/models/props/house_large.glb",
   viking_hut: "/models/props/viking_hut.glb",
-  wooden_gate: "/models/props/wooden_gate.glb",
   outpost_tent: "/models/props/outpost_tent.glb",
   lampposts: "/models/props/lampposts.glb",
   willow: "/models/terrain/willow.glb",
   trees_row: "/models/terrain/trees_row.glb",
+  // tree_single is skinned — never plant for forest density; landmark only if needed
   tree_single: "/models/terrain/tree_single.glb",
 };
 
-/** Rigged enemies — keep clips for idle / walk */
 const ENEMY_FILES = {
   orc: "/models/enemies/orc.glb",
   orc_boss: "/models/enemies/orc_boss.glb",
@@ -37,8 +42,16 @@ const ENEMY_FILES = {
 };
 
 const cache = new Map();
-let ready = false;
-let loading = null;
+const enemyLoadPromises = new Map();
+let criticalReady = false;
+let backgroundStarted = false;
+let criticalLoading = null;
+let _loader = null;
+
+function getLoader() {
+  if (!_loader) _loader = new GLTFLoader();
+  return _loader;
+}
 
 function measureAndGround(root) {
   root.updateMatrixWorld(true);
@@ -52,11 +65,11 @@ function measureAndGround(root) {
   return root;
 }
 
-function prepStatic(root, { castShadow = false } = {}) {
+function prepStatic(root) {
   root.traverse((o) => {
     if (!o.isMesh) return;
-    o.castShadow = castShadow;
-    o.receiveShadow = !!castShadow;
+    o.castShadow = false;
+    o.receiveShadow = true;
     if (o.material) {
       const mats = Array.isArray(o.material) ? o.material : [o.material];
       const cloned = mats.map((m) => {
@@ -71,10 +84,41 @@ function prepStatic(root, { castShadow = false } = {}) {
   return measureAndGround(root);
 }
 
-function loadGltf(loader, url) {
+function loadGltf(url) {
   return new Promise((resolve) => {
-    loader.load(url, resolve, undefined, () => resolve(null));
+    getLoader().load(url, resolve, undefined, () => resolve(null));
   });
+}
+
+async function cacheStaticProp(key, url, skinned = false) {
+  if (cache.has(key)) return true;
+  const gltf = await loadGltf(url);
+  if (!gltf?.scene) return false;
+  if (skinned) {
+    measureAndGround(gltf.scene);
+    cache.set(key, {
+      template: gltf.scene,
+      clips: gltf.animations || [],
+      skinned: true,
+      baseHeight: gltf.scene.userData.baseHeight,
+    });
+  } else {
+    prepStatic(gltf.scene);
+    cache.set(key, gltf.scene);
+  }
+  return true;
+}
+
+async function cacheClass(classId) {
+  const key = "class:" + classId;
+  if (cache.has(key)) return true;
+  const url = CLASS_FILES[classId];
+  if (!url) return false;
+  const gltf = await loadGltf(url);
+  if (!gltf?.scene) return false;
+  prepStatic(gltf.scene);
+  cache.set(key, gltf.scene);
+  return true;
 }
 
 function pickClip(clips, patterns) {
@@ -87,74 +131,100 @@ function pickClip(clips, patterns) {
   return clips[0] || null;
 }
 
-function cloneMaterials(root) {
-  root.traverse((o) => {
-    if (!o.isMesh || !o.material) return;
-    o.material = Array.isArray(o.material)
-      ? o.material.map((m) => m.clone())
-      : o.material.clone();
-  });
+function kindToEnemyKey(kind) {
+  const k = String(kind || "wolf");
+  if (k === "dog" || k === "wolf") return "wolfman";
+  if (k === "alpha_wolf") return "alpha_wolf";
+  if (k === "ork" || k === "elite_ork") return "orc";
+  if (k === "black_ork" || k === "black_ork_brute" || k === "orc_chief") return "orc_boss";
+  if (k === "spider") return "spider";
+  if (k === "phoenix") return "phoenix";
+  if (k === "ophanim" || k === "tower_boss") return "ophanim";
+  return null;
 }
 
 export const AssetKit = {
   get ready() {
-    return ready;
+    return criticalReady;
   },
 
-  async preload() {
-    if (ready) return true;
-    if (loading) return loading;
-    loading = (async () => {
-      const loader = new GLTFLoader();
-
-      const staticEntries = [
-        ...Object.entries(CLASS_FILES).map(([k, u]) => ["class:" + k, u, false]),
-        ...Object.entries(PROP_FILES).map(([k, u]) => ["prop:" + k, u, k === "tree_single"]),
-      ];
-
-      await Promise.all(
-        staticEntries.map(async ([key, url, skinned]) => {
-          const gltf = await loadGltf(loader, url);
-          if (!gltf?.scene) return;
-          if (skinned) {
-            measureAndGround(gltf.scene);
-            cache.set(key, {
-              template: gltf.scene,
-              clips: gltf.animations || [],
-              skinned: true,
-              baseHeight: gltf.scene.userData.baseHeight,
-            });
-          } else {
-            prepStatic(gltf.scene);
-            cache.set(key, gltf.scene);
-          }
-        })
-      );
-
-      await Promise.all(
-        Object.entries(ENEMY_FILES).map(async ([key, url]) => {
-          const gltf = await loadGltf(loader, url);
-          if (!gltf?.scene) return;
-          measureAndGround(gltf.scene);
-          gltf.scene.traverse((o) => {
-            if (o.isMesh) {
-              o.castShadow = true;
-              o.receiveShadow = true;
-            }
-          });
-          cache.set("enemy:" + key, {
-            template: gltf.scene,
-            clips: gltf.animations || [],
-            skinned: true,
-            baseHeight: gltf.scene.userData.baseHeight,
-          });
-        })
-      );
-
-      ready = cache.size > 0;
-      return ready;
+  /** Fast path: one class + cheap city props. */
+  async preloadCritical(preferredClassId = "warrior") {
+    if (criticalReady) return true;
+    if (criticalLoading) return criticalLoading;
+    criticalLoading = (async () => {
+      const classId = CLASS_FILES[preferredClassId] ? preferredClassId : "warrior";
+      await Promise.all([
+        cacheClass(classId),
+        ...Object.entries(CRITICAL_PROPS).map(([k, u]) => cacheStaticProp("prop:" + k, u)),
+      ]);
+      criticalReady = cache.has("prop:house_small") || cache.has("class:" + classId);
+      return criticalReady;
     })();
-    return loading;
+    return criticalLoading;
+  },
+
+  /** Full preload kept for compatibility — critical then background. */
+  async preload() {
+    await this.preloadCritical("warrior");
+    this.preloadBackground();
+    return criticalReady;
+  },
+
+  /** Non-blocking: other classes, heavy props, no enemies (those are lazy). */
+  preloadBackground() {
+    if (backgroundStarted) return;
+    backgroundStarted = true;
+    (async () => {
+      for (const id of Object.keys(CLASS_FILES)) {
+        await cacheClass(id);
+      }
+      for (const [k, u] of Object.entries(BACKGROUND_PROPS)) {
+        const skinned = k === "tree_single";
+        await cacheStaticProp("prop:" + k, u, skinned);
+      }
+    })().catch((err) => console.warn("[AssetKit bg]", err));
+  },
+
+  /** Ensure a class model is available (for char select / remotes). */
+  async ensureClass(classId) {
+    return cacheClass(classId || "warrior");
+  },
+
+  /** Lazy-load one enemy GLB the first time that kind is needed. */
+  async ensureEnemy(enemyKey) {
+    const key = "enemy:" + enemyKey;
+    if (cache.has(key)) return true;
+    if (enemyLoadPromises.has(key)) return enemyLoadPromises.get(key);
+    const url = ENEMY_FILES[enemyKey];
+    if (!url) return false;
+    const p = (async () => {
+      const gltf = await loadGltf(url);
+      if (!gltf?.scene) return false;
+      measureAndGround(gltf.scene);
+      gltf.scene.traverse((o) => {
+        if (o.isMesh) {
+          o.castShadow = true;
+          o.receiveShadow = true;
+        }
+      });
+      cache.set(key, {
+        template: gltf.scene,
+        clips: gltf.animations || [],
+        skinned: true,
+        baseHeight: gltf.scene.userData.baseHeight,
+      });
+      return true;
+    })();
+    enemyLoadPromises.set(key, p);
+    return p;
+  },
+
+  /** Kick enemy loads for common field kinds after world starts. */
+  preloadCommonEnemies() {
+    for (const k of ["wolfman", "orc", "orc_boss", "alpha_wolf"]) {
+      this.ensureEnemy(k).catch(() => {});
+    }
   },
 
   hasClass(classId) {
@@ -169,12 +239,11 @@ export const AssetKit = {
     return cache.has("enemy:" + key);
   },
 
-  /** Static class body scaled to target player height (~1.85). */
   classBody(classId, targetHeight = 1.85) {
     const src = cache.get("class:" + classId) || cache.get("class:warrior");
     if (!src) return null;
+    // Share materials — clone geometry graph only
     const g = src.clone(true);
-    cloneMaterials(g);
     g.traverse((o) => {
       if (o.isMesh) {
         o.castShadow = true;
@@ -192,7 +261,6 @@ export const AssetKit = {
     if (!entry) return null;
     if (entry.skinned) {
       const g = cloneSkinned(entry.template);
-      cloneMaterials(g);
       g.scale.setScalar(scale);
       g.traverse((o) => {
         if (o.isMesh) {
@@ -202,8 +270,8 @@ export const AssetKit = {
       });
       return g;
     }
+    // Share materials across instances (big FPS win)
     const g = entry.clone(true);
-    cloneMaterials(g);
     g.scale.setScalar(scale);
     return g;
   },
@@ -217,16 +285,11 @@ export const AssetKit = {
     return this.cloneProp(key, Math.max(0.02, targetHeight / base));
   },
 
-  /**
-   * Skinned enemy (or class stand-in) with idle/walk mixer.
-   * @returns {THREE.Group|null}
-   */
   enemyBody(enemyKey, targetHeight, kindLabel) {
     const entry = cache.get("enemy:" + enemyKey);
     if (!entry) return null;
 
     const model = cloneSkinned(entry.template);
-    cloneMaterials(model);
     model.traverse((o) => {
       if (o.isMesh) {
         o.castShadow = true;
@@ -235,8 +298,7 @@ export const AssetKit = {
     });
 
     const base = entry.baseHeight || 1;
-    const s = Math.max(0.001, targetHeight / base);
-    model.scale.setScalar(s);
+    model.scale.setScalar(Math.max(0.001, targetHeight / base));
 
     const wrapper = new THREE.Group();
     wrapper.name = `enemy_${enemyKey}`;
@@ -293,54 +355,68 @@ export const AssetKit = {
     return wrapper;
   },
 
-  /** Map game mob kinds → enemy / class GLB */
   enemyForKind(kind) {
     const k = String(kind || "wolf");
-    /** @type {{ key: string, h: number, classId?: string } | null} */
-    let spec = null;
-    if (k === "dog") spec = { key: "wolfman", h: 1.25 };
-    else if (k === "wolf") spec = { key: "wolfman", h: 1.75 };
-    else if (k === "alpha_wolf") spec = { key: "alpha_wolf", h: 2.05 };
-    else if (k === "ork") spec = { key: "orc", h: 2.35 };
-    else if (k === "elite_ork") spec = { key: "orc", h: 2.75 };
-    else if (k === "black_ork") spec = { key: "orc_boss", h: 2.9 };
-    else if (k === "black_ork_brute") spec = { key: "orc_boss", h: 3.45 };
-    else if (k === "orc_chief") spec = { key: "orc_boss", h: 3.9 };
-    else if (k === "spider") spec = { key: "spider", h: 1.15 };
-    else if (k === "phoenix") spec = { key: "phoenix", h: 3.2 };
-    else if (k === "ophanim" || k === "tower_boss") spec = { key: "ophanim", h: 4.6 };
-    else if (k === "bandit" || k === "human") spec = { key: "class", h: 1.75, classId: "ninja" };
-    else if (k === "soldier") spec = { key: "class", h: 1.85, classId: "warrior" };
-    else if (k === "rogue_chief") spec = { key: "class", h: 2.15, classId: "sura" };
-    else spec = { key: "wolfman", h: 1.75 };
-
-    if (spec.key === "class") {
-      const body = this.classBody(spec.classId, spec.h);
+    if (k === "bandit" || k === "human") {
+      const body = this.classBody("ninja", 1.75);
       if (!body) return null;
-      const wrapper = new THREE.Group();
-      const rig = new THREE.Group();
-      wrapper.add(rig);
-      rig.add(body);
-      wrapper.userData = {
-        useGltf: true,
-        gltfEnemy: true,
-        gltfBody: body,
-        mixer: null,
-        rig,
-        kind: k,
-        animPhase: Math.random() * 10,
-      };
-      return wrapper;
+      return wrapClassEnemy(body, k);
+    }
+    if (k === "soldier") {
+      const body = this.classBody("warrior", 1.85);
+      if (!body) return null;
+      return wrapClassEnemy(body, k);
+    }
+    if (k === "rogue_chief") {
+      const body = this.classBody("sura", 2.15);
+      if (!body) return null;
+      return wrapClassEnemy(body, k);
     }
 
-    return this.enemyBody(spec.key, spec.h, k);
+    const enemyKey = kindToEnemyKey(k);
+    if (!enemyKey) return null;
+    if (!this.hasEnemy(enemyKey)) {
+      // Kick load; caller uses procedural until ready
+      this.ensureEnemy(enemyKey).catch(() => {});
+      return null;
+    }
+    const heights = {
+      wolfman: k === "dog" ? 1.25 : 1.75,
+      alpha_wolf: 2.05,
+      orc: k === "elite_ork" ? 2.75 : 2.35,
+      orc_boss: k === "orc_chief" ? 3.9 : k === "black_ork_brute" ? 3.45 : 2.9,
+      spider: 1.15,
+      phoenix: 3.2,
+      ophanim: 4.6,
+    };
+    return this.enemyBody(enemyKey, heights[enemyKey] || 1.8, k);
   },
 
-  /** Forest tree — willow / single / row (all taller than player). */
-  randomForestTree(targetHeight = 9) {
-    const roll = Math.random();
-    if (roll < 0.42) return this.clonePropToHeight("willow", targetHeight);
-    if (roll < 0.78) return this.clonePropToHeight("tree_single", targetHeight * (0.95 + Math.random() * 0.25));
-    return this.clonePropToHeight("trees_row", targetHeight * (1.35 + Math.random() * 0.4));
+  /** Landmarks only — bulk forests use NatureKit. */
+  landmarkTree(targetHeight = 12) {
+    if (Math.random() < 0.55 && this.hasProp("willow")) {
+      return this.clonePropToHeight("willow", targetHeight);
+    }
+    if (this.hasProp("trees_row")) {
+      return this.clonePropToHeight("trees_row", targetHeight * 1.4);
+    }
+    return this.clonePropToHeight("willow", targetHeight);
   },
 };
+
+function wrapClassEnemy(body, kind) {
+  const wrapper = new THREE.Group();
+  const rig = new THREE.Group();
+  wrapper.add(rig);
+  rig.add(body);
+  wrapper.userData = {
+    useGltf: true,
+    gltfEnemy: true,
+    gltfBody: body,
+    mixer: null,
+    rig,
+    kind,
+    animPhase: Math.random() * 10,
+  };
+  return wrapper;
+}

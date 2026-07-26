@@ -1920,10 +1920,13 @@ $("#inp-name").value = `Hero${Math.floor(Math.random() * 90 + 10)}`;
 $("#config-hint").textContent = configHint();
 
 const net = new WorldNet();
-// Kenney Nature Kit (CC0) — trees / tents / rocks for field maps
-await Promise.all([NatureKit.preload(), AssetKit.preload()]).catch((err) =>
-  console.warn("[assets]", err)
-);
+// Critical assets only (Kenney + house/gate + one class) — heavy GLBs load in background
+await Promise.all([
+  NatureKit.preload(),
+  AssetKit.preloadCritical("warrior"),
+]).catch((err) => console.warn("[assets]", err));
+AssetKit.preloadBackground();
+AssetKit.preloadCommonEnemies();
 const game = new Game($("#c"), ui, net);
 
 function drawMapRing(ctx, toX, toY, minR, maxR, color, { fill = true, dash = null } = {}) {
@@ -2525,6 +2528,7 @@ async function refreshCharList() {
 
 async function enterWorld(character) {
   await audio.unlock();
+  await AssetKit.ensureClass(character.classId || "warrior").catch(() => {});
   const cls = CLASSES[character.classId] || CLASSES.warrior;
   currentProfile = {
     id: hasSupabase && sessionUser ? sessionUser.id : `local_${character.id}`,

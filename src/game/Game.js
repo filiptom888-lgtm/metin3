@@ -25,6 +25,7 @@ import {
 import { clampFieldWalk, isFieldWalkable } from "./terrain.js";
 import { bridgeCenter } from "./rivers.js";
 import { applyDayNight, DAY_LENGTH } from "./DayNight.js";
+import { AssetKit } from "./AssetKit.js";
 import { questHuntFor, zoneRing } from "../data/mapMarkers.js";
 import { NPCS } from "../data/npcs.js";
 import { FxSystem } from "./fx.js";
@@ -73,6 +74,8 @@ export class Game {
     this.hemi = hemi || null;
     this.overworld = overworld || null;
     this.worldTime = DAY_LENGTH * 0.32; // late morning start
+    this._fadeTrees = [];
+    this._fadeTreeAcc = 0;
     this.huntMarkerRoot = new THREE.Group();
     this.huntMarkerRoot.name = "hunt_markers";
     this.scene.add(this.huntMarkerRoot);
@@ -464,7 +467,52 @@ export class Game {
     this.orcRoot = makeOrcMapRoot();
     this.scene.add(this.orcRoot);
 
+    this._collectFadeTrees();
     this.switchMap("overworld");
+  }
+
+  _collectFadeTrees() {
+    this._fadeTrees = [];
+    this.scene.traverse((o) => {
+      if (o.userData?.fadeTree) this._fadeTrees.push(o);
+    });
+  }
+
+  /** Near-camera canopy fade so big trees don't black out the view */
+  _updateTreeFade(dt) {
+    this._fadeTreeAcc = (this._fadeTreeAcc || 0) + dt;
+    if (this._fadeTreeAcc < 0.1) return;
+    this._fadeTreeAcc = 0;
+    if (!this._fadeTrees?.length || !this.camera) return;
+    const cx = this.camera.position.x;
+    const cz = this.camera.position.z;
+    const near = 8;
+    const far = 14;
+    for (const tree of this._fadeTrees) {
+      if (!tree.visible && tree.parent && !tree.parent.visible) continue;
+      const d = Math.hypot(tree.position.x - cx, tree.position.z - cz);
+      let opacity = 1;
+      if (d < near) opacity = 0.2;
+      else if (d < far) opacity = 0.2 + ((d - near) / (far - near)) * 0.8;
+      tree.traverse((o) => {
+        if (!o.isMesh || !o.material) return;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) {
+          if (opacity < 0.97) {
+            m.transparent = true;
+            m.opacity = opacity;
+            m.depthWrite = opacity > 0.5;
+            m.userData = m.userData || {};
+            m.userData._fadeActive = true;
+          } else if (m.userData?._fadeActive) {
+            m.transparent = false;
+            m.opacity = 1;
+            m.depthWrite = true;
+            m.userData._fadeActive = false;
+          }
+        }
+      });
+    }
   }
 
   /** True map switch — field maps + Demon Tower instance */
@@ -2117,6 +2165,7 @@ export class Game {
 
     // Day / night (field maps) — road torches glow after dusk
     applyDayNight(this.scene, this.sun, this.hemi, this.worldTime, this._collectTorchLights());
+    this._updateTreeFade(dt);
 
     // Keep the tight shadow frustum centered on the local player
     if (this.sun && p) {
