@@ -25,7 +25,6 @@ import {
 import { clampFieldWalk, isFieldWalkable } from "./terrain.js";
 import { bridgeCenter } from "./rivers.js";
 import { applyDayNight, DAY_LENGTH } from "./DayNight.js";
-import { AssetKit } from "./AssetKit.js";
 import { questHuntFor, zoneRing } from "../data/mapMarkers.js";
 import { NPCS } from "../data/npcs.js";
 import { FxSystem } from "./fx.js";
