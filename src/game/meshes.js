@@ -16,6 +16,7 @@ import {
   onBeatenRoad,
   inRiver,
   bridgeCenter,
+  bridgeAbutments,
 } from "./terrain.js";
 import { riverDef, riverWaterY } from "./rivers.js";
 
@@ -677,41 +678,28 @@ function addCityWalls(scene) {
 }
 
 /** Street lamps from GLB + barrels / flower beds */
-function addCityCozyProps(scene, { warm = true } = {}) {
+function addCityCozyProps(scene, { warm = true, mapId = "overworld" } = {}) {
   const wood = mat("#5a3a22", { roughness: 0.9 });
-  const iron = mat("#3a3830", { roughness: 0.7, metalness: 0.35 });
   const cityLights = [];
 
+  // Tall lampposts around the plaza (GLB when loaded, else procedural)
   const lanternSpots = [
-    [6, 6], [-6, 6], [6, -6], [-6, -6],
-    [10, 0], [-10, 0], [0, 10], [0, -10],
-    [14, 8], [-14, -8], [8, -14], [-8, 14],
+    [8, 8],
+    [-8, 8],
+    [8, -8],
+    [-8, -8],
   ];
-  const lampGlass = mat("#f0d070", { emissive: "#ffb050", emissiveIntensity: 1.1, roughness: 0.4 });
   for (const [lx, lz] of lanternSpots) {
-    if (Math.hypot(lx, lz) > CITY_RADIUS - 3) continue;
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 2.6, 6), iron);
-    pole.position.set(lx, 1.3, lz);
-    scene.add(pole);
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.08), iron);
-    arm.position.set(lx + 0.22, 2.45, lz);
-    scene.add(arm);
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), lampGlass);
-    bulb.position.set(lx + 0.42, 2.35, lz);
-    scene.add(bulb);
-    const light = new THREE.PointLight(warm ? 0xffc070 : 0xc0d8ff, 0, 20, 1.4);
-    light.position.set(lx + 0.42, 2.4, lz);
-    light.name = "torch_light";
-    scene.add(light);
-    cityLights.push(light);
+    if (Math.hypot(lx, lz) > CITY_RADIUS - 2.5) continue;
+    placeLamppost(scene, lx, lz, mapId, { warm, lightsOut: cityLights });
   }
   if (!scene.userData.torchLights) scene.userData.torchLights = [];
   scene.userData.torchLights.push(...cityLights);
 
-  // barrels + crates near plaza edge
-  for (let i = 0; i < 10; i++) {
-    const ang = (i / 10) * Math.PI * 2 + 0.4;
-    const r = 8.5 + (i % 3) * 0.6;
+  // Sparse barrels + crates near plaza edge
+  for (let i = 0; i < 6; i++) {
+    const ang = (i / 6) * Math.PI * 2 + 0.4;
+    const r = 8.5 + (i % 2) * 0.5;
     const bx = Math.cos(ang) * r;
     const bz = Math.sin(ang) * r;
     if (i % 2 === 0) {
@@ -719,37 +707,12 @@ function addCityCozyProps(scene, { warm = true } = {}) {
       barrel.position.set(bx, 0.35, bz);
       barrel.castShadow = false;
       scene.add(barrel);
-      const band = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.03, 6, 14), iron);
-      band.rotation.x = Math.PI / 2;
-      band.position.set(bx, 0.35, bz);
-      scene.add(band);
     } else {
       const crate = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.45, 0.55), wood);
       crate.position.set(bx, 0.22, bz);
       crate.rotation.y = ang;
       crate.castShadow = false;
       scene.add(crate);
-    }
-  }
-
-  // flower rings near fountain
-  const petal = warm ? ["#e87890", "#f0c060", "#8bc46a"] : ["#c9a06a", "#a08050", "#6a8a4a"];
-  for (let i = 0; i < 16; i++) {
-    const ang = (i / 16) * Math.PI * 2;
-    const bed = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.5, 0.18, 8), mat("#4a6a38", { roughness: 0.95 }));
-    bed.position.set(Math.cos(ang) * 3.6, 0.1, Math.sin(ang) * 3.6);
-    scene.add(bed);
-    for (let j = 0; j < 3; j++) {
-      const f = new THREE.Mesh(
-        new THREE.SphereGeometry(0.08, 5, 4),
-        mat(petal[(i + j) % petal.length], { emissive: "#302010", emissiveIntensity: 0.1 })
-      );
-      f.position.set(
-        Math.cos(ang) * 3.6 + (j - 1) * 0.12,
-        0.28,
-        Math.sin(ang) * 3.6 + ((j % 2) - 0.5) * 0.1
-      );
-      scene.add(f);
     }
   }
 }
@@ -787,13 +750,24 @@ function makeFallbackTree(arid = false) {
   return g;
 }
 
-function skipWildernessSpot(mapId, x, z, { clearRoad = 2.6 } = {}) {
+function nearBridgeClear(mapId, x, z) {
+  const abut = bridgeAbutments(mapId);
+  if (abut?.a && Math.hypot(x - abut.a.x, z - abut.a.z) < 14) return true;
+  if (abut?.b && Math.hypot(x - abut.b.x, z - abut.b.z) < 14) return true;
+  const b = bridgeCenter(mapId);
+  if (b && Math.hypot(x - b.x, z - b.z) < 10) return true;
+  return false;
+}
+
+function skipWildernessSpot(mapId, x, z, { clearRoad = 6.5 } = {}) {
   if (Math.hypot(x, z) < CITY_RADIUS + 5) return true;
   if (onBeatenRoad(x, z, mapId, clearRoad)) return true;
   if (inRiver(mapId, x, z, 3)) return true;
+  if (nearBridgeClear(mapId, x, z)) return true;
   if (mapId === "overworld") {
     if (Math.hypot(x - EDGE_PORTAL, z) < 14) return true;
-    if (Math.hypot(x - TOWER_CORNER.x, z - TOWER_CORNER.z) < 20) return true;
+    // Wide clear around Demon Tower pad + SE approach
+    if (Math.hypot(x - TOWER_CORNER.x, z - TOWER_CORNER.z) < 30) return true;
   }
   if (mapId === "valley") {
     if (Math.hypot(x + EDGE_PORTAL, z) < 14) return true;
@@ -810,10 +784,8 @@ function skipWildernessSpot(mapId, x, z, { clearRoad = 2.6 } = {}) {
 }
 
 function plantTreeAt(group, x, z, mapId, arid, scaleMul = 1) {
-  if (skipWildernessSpot(mapId, x, z, { clearRoad: 3.2 })) return false;
-  // Player ~1.8 — Kenney bulk trees (cheap); custom GLBs are landmarks only
-  let targetH = (arid ? 6.5 : 7.8) * (0.72 + Math.random() * 0.85) * scaleMul;
-  if (Math.random() < 0.12) targetH *= 1.35;
+  if (skipWildernessSpot(mapId, x, z, { clearRoad: 6.5 })) return false;
+  let targetH = (arid ? 6.2 : 7.2) * (0.8 + Math.random() * 0.55) * scaleMul;
   let tree = NatureKit.randomForestTree(arid, targetH);
   if (!tree) {
     tree = makeFallbackTree(arid);
@@ -822,76 +794,98 @@ function plantTreeAt(group, x, z, mapId, arid, scaleMul = 1) {
   }
   tree.rotation.y = Math.random() * Math.PI * 2;
   tagFadeTree(tree);
-  if (Math.random() < 0.08) {
-    tree.traverse((o) => {
-      if (o.isMesh) o.castShadow = true;
-    });
-  }
   placeAtHeight(tree, x, z, mapId);
   group.add(tree);
-  if (Math.random() < 0.3) {
-    const bushH = 1.35 + Math.random() * 1.4;
-    const bush = NatureKit.randomBush(bushH);
-    if (bush) {
-      const bx = x + (Math.random() - 0.5) * 3.2;
-      const bz = z + (Math.random() - 0.5) * 3.2;
-      if (!skipWildernessSpot(mapId, bx, bz, { clearRoad: 2.8 })) {
-        bush.rotation.y = Math.random() * Math.PI * 2;
-        placeAtHeight(bush, bx, bz, mapId);
-        group.add(bush);
-      }
-    }
-  }
   return true;
 }
 
-/** Dense tree belts lining both sides of every beaten road */
-function plantRoadForests(group, mapId, arid) {
+/** Sparse tree clumps beside roads — not dense forest belts */
+function plantRoadTreeClumps(group, mapId, arid) {
   for (const r of fieldRoads(mapId)) {
     const dx = r.x1 - r.x0;
     const dz = r.z1 - r.z0;
     const len = Math.hypot(dx, dz);
-    if (len < 3) continue;
+    if (len < 8) continue;
     const ux = dx / len;
     const uz = dz / len;
     const px = -uz;
     const pz = ux;
-    const steps = Math.max(6, Math.ceil(len / 3.2));
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
+    const steps = Math.max(2, Math.floor(len / 40));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / (steps + 1);
       const cx = r.x0 + dx * t;
       const cz = r.z0 + dz * t;
-      for (const side of [-1, 1]) {
-        const rows = 1 + ((Math.random() * 2) | 0);
-        for (let row = 0; row < rows; row++) {
-          const offset = r.w * 0.5 + 4.5 + row * 4.0 + Math.random() * 2.6;
-          const along = (Math.random() - 0.5) * 2.4;
-          const x = cx + px * side * offset + ux * along;
-          const z = cz + pz * side * offset + uz * along;
-          plantTreeAt(group, x, z, mapId, arid, 1.05 + row * 0.08);
-        }
+      if (nearBridgeClear(mapId, cx, cz)) continue;
+      if (mapId === "overworld" && Math.hypot(cx - TOWER_CORNER.x, cz - TOWER_CORNER.z) < 32) continue;
+      const side = i % 2 === 0 ? 1 : -1;
+      const baseOff = r.w * 0.5 + 6 + Math.random() * 2;
+      const clump = 3 + ((Math.random() * 3) | 0);
+      for (let k = 0; k < clump; k++) {
+        const along = (k - clump * 0.5) * 2.1 + (Math.random() - 0.5);
+        const out = baseOff + (Math.random() - 0.3) * 2.4;
+        const x = cx + px * side * out + ux * along;
+        const z = cz + pz * side * out + uz * along;
+        plantTreeAt(group, x, z, mapId, arid, 0.95 + Math.random() * 0.2);
       }
     }
   }
 }
 
-/** Large forest patches so open field isn’t empty */
-function plantForestPatches(group, mapId, arid, patchCount = 22) {
-  for (let p = 0; p < patchCount; p++) {
-    const ang = (p / patchCount) * Math.PI * 2 + Math.random() * 0.45;
-    const dist = CITY_RADIUS + 14 + Math.random() * (MAP_HALF - CITY_RADIUS - 22);
-    const cx = Math.cos(ang) * dist;
-    const cz = Math.sin(ang) * dist;
-    if (skipWildernessSpot(mapId, cx, cz, { clearRoad: 6 })) continue;
-    const nearRoad = distToRoad(cx, cz, mapId);
-    const radius = nearRoad < 32 ? 20 + Math.random() * 14 : 14 + Math.random() * 12;
-    const trees = nearRoad < 32 ? 70 + ((Math.random() * 45) | 0) : 40 + ((Math.random() * 35) | 0);
-    for (let i = 0; i < trees; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const rr = Math.pow(Math.random(), 0.5) * radius;
-      plantTreeAt(group, cx + Math.cos(a) * rr, cz + Math.sin(a) * rr, mapId, arid);
-    }
+/** Place a tall lamppost GLB with PointLight (fallback: procedural pole) */
+function placeLamppost(parent, x, z, mapId, { warm = true, lightsOut = null } = {}) {
+  let lamp = AssetKit.clonePropToHeight("lampposts", 6.2);
+  const lights = lightsOut || [];
+  if (lamp) {
+    placeAtHeight(lamp, x, z, mapId);
+    lamp.rotation.y = Math.random() * Math.PI * 2;
+    const light = new THREE.PointLight(warm ? 0xffc070 : 0xc0d8ff, 0, 26, 1.35);
+    light.position.set(0, 5.2, 0);
+    light.name = "torch_light";
+    lamp.add(light);
+    lights.push(light);
+    parent.add(lamp);
+    return lamp;
   }
+  // Procedural fallback
+  const iron = mat("#3a3830", { roughness: 0.7, metalness: 0.35 });
+  const g = new THREE.Group();
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 5.2, 8), iron);
+  pole.position.y = 2.6;
+  g.add(pole);
+  const bulb = new THREE.Mesh(
+    new THREE.SphereGeometry(0.28, 10, 8),
+    mat("#f0d070", { emissive: "#ffb050", emissiveIntensity: 1.2, roughness: 0.35 })
+  );
+  bulb.position.y = 5.15;
+  g.add(bulb);
+  const light = new THREE.PointLight(warm ? 0xffc070 : 0xc0d8ff, 0, 26, 1.35);
+  light.position.y = 5.2;
+  light.name = "torch_light";
+  g.add(light);
+  lights.push(light);
+  placeAtHeight(g, x, z, mapId);
+  parent.add(g);
+  return g;
+}
+
+function placeOutpostTent(parent, x, z, mapId, yaw = 0) {
+  let tent = AssetKit.clonePropToHeight("outpost_tent", 3.5);
+  if (!tent) {
+    tent = NatureKit.cloneToHeight("tent_open", 2.8) || makeBiologistTent();
+  }
+  if (!tent) return null;
+  tent.rotation.y = yaw;
+  placeAtHeight(tent, x, z, mapId);
+  parent.add(tent);
+  const pad = new THREE.Mesh(
+    new THREE.CircleGeometry(2.2, 12),
+    mat("#5a4a30", { roughness: 0.96 })
+  );
+  pad.rotation.x = -Math.PI / 2;
+  pad.position.set(x, fieldHeightAt(x, z, mapId) + 0.02, z);
+  pad.receiveShadow = true;
+  parent.add(pad);
+  return tent;
 }
 
 /** Deep river water + large plank bridge spanning the channel */
@@ -1148,119 +1142,72 @@ function placeCityBuildings(root, { arid = false } = {}) {
   });
 }
 
-/** Dense wilderness: tall forests, big rocks, thick undergrowth */
-export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 220, rockCount = 220, bushCount = 200 } = {}) {
+/** Open field dress — sparse trees, few rocks, road lamps; no forest belts / log spam */
+export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 28, rockCount = 24, bushCount = 18 } = {}) {
   const group = new THREE.Group();
   group.name = "wilderness_dressing";
+  const torchLights = [];
+  let lampCount = 0;
+  const LAMP_CAP = 12;
+  let tentCount = 0;
+  const TENT_CAP = 12;
 
-  plantRoadForests(group, mapId, arid);
-  plantForestPatches(group, mapId, arid, arid ? 6 : 8);
+  plantRoadTreeClumps(group, mapId, arid);
 
-  // Fill open field (not only near roads)
+  // Sparse open-field trees (not dense forest)
   for (let i = 0; i < treeCount; i++) {
     const ang = Math.random() * Math.PI * 2;
-    const r = CITY_RADIUS + 8 + Math.random() * (MAP_HALF - CITY_RADIUS - 12);
+    const r = CITY_RADIUS + 14 + Math.random() * (MAP_HALF - CITY_RADIUS - 22);
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
-    if (distToRoad(x, z, mapId) > 36 && Math.random() > 0.55) continue;
-    plantTreeAt(group, x, z, mapId, arid, 0.95 + Math.random() * 0.25);
+    if (distToRoad(x, z, mapId) < 10) continue;
+    plantTreeAt(group, x, z, mapId, arid, 0.95 + Math.random() * 0.2);
   }
 
   for (let i = 0; i < rockCount; i++) {
     const ang = Math.random() * Math.PI * 2;
-    const r = CITY_RADIUS + 6 + Math.random() * (MAP_HALF - CITY_RADIUS - 10);
+    const r = CITY_RADIUS + 10 + Math.random() * (MAP_HALF - CITY_RADIUS - 14);
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
     if (skipWildernessSpot(mapId, x, z)) continue;
-    // Keep rocks small in the basin; slightly larger toward the rim
-    const edgeBias = Math.min(1, Math.max(0, (r - 50) / 40));
-    const targetH = 0.55 + Math.random() * 0.85 + edgeBias * (0.6 + Math.random() * 1.1);
+    const edgeBias = Math.min(1, Math.max(0, (r - 55) / 35));
+    const targetH = 0.45 + Math.random() * 0.7 + edgeBias * (0.5 + Math.random() * 0.9);
     let rock = NatureKit.randomRock(targetH);
     if (!rock) {
       rock = new THREE.Mesh(
-        new THREE.DodecahedronGeometry(0.35 + Math.random() * 0.55, 0),
+        new THREE.DodecahedronGeometry(0.3 + Math.random() * 0.45, 0),
         mat(arid ? "#6a5848" : "#5c564c")
       );
       rock.castShadow = true;
-      rock.position.y = 0.28;
+      rock.position.y = 0.22;
     }
     rock.rotation.y = Math.random() * Math.PI * 2;
-    rock.rotation.z = (Math.random() - 0.5) * 0.2;
     placeAtHeight(rock, x, z, mapId);
     group.add(rock);
   }
 
   for (let i = 0; i < bushCount; i++) {
     const ang = Math.random() * Math.PI * 2;
-    const r = CITY_RADIUS + 5 + Math.random() * (MAP_HALF - CITY_RADIUS - 8);
+    const r = CITY_RADIUS + 8 + Math.random() * (MAP_HALF - CITY_RADIUS - 16);
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
     if (skipWildernessSpot(mapId, x, z)) continue;
-    if (distToRoad(x, z, mapId) > 28 && Math.random() > 0.55) continue;
-    const bush = NatureKit.randomBush(1.2 + Math.random() * 1.8);
+    if (distToRoad(x, z, mapId) > 22 && Math.random() > 0.4) continue;
+    const bush = NatureKit.randomBush(1.0 + Math.random() * 1.2);
     if (!bush) continue;
     bush.rotation.y = Math.random() * Math.PI * 2;
     placeAtHeight(bush, x, z, mapId);
     group.add(bush);
   }
 
-  // Extra logs / fences near camps & roads
-  for (let i = 0; i < 70; i++) {
-    const ang = Math.random() * Math.PI * 2;
-    const r = CITY_RADIUS + 10 + Math.random() * (MAP_HALF - CITY_RADIUS - 16);
-    const x = Math.cos(ang) * r;
-    const z = Math.sin(ang) * r;
-    if (skipWildernessSpot(mapId, x, z) && Math.random() > 0.35) continue;
-    const key = Math.random() < 0.45 ? "log" : "log_large";
-    const log = NatureKit.cloneToHeight(key, 1.1 + Math.random() * 1.6);
-    if (!log) continue;
-    log.rotation.y = Math.random() * Math.PI;
-    placeAtHeight(log, x, z, mapId);
-    group.add(log);
-  }
-
-  // No random cliff_block / cliff_half in the playable basin (they read as giant square slabs).
-  // A few small rock shelves only near the mountain rim for silhouette.
-  for (let i = 0; i < 5; i++) {
-    const ang = (i / 5) * Math.PI * 2 + 0.35;
-    const r = MAP_HALF - 18 - (i % 2) * 3;
-    const x = Math.cos(ang) * r;
-    const z = Math.sin(ang) * r;
-    if (skipWildernessSpot(mapId, x, z, { clearRoad: 8 })) continue;
-    const cliff = NatureKit.cloneToHeight("cliff_half", 2.2 + (i % 3) * 0.45);
-    if (!cliff) continue;
-    cliff.rotation.y = ang + Math.PI;
-    placeAtHeight(cliff, x, z, mapId);
-    group.add(cliff);
-  }
-
-  // Tent camps — small dirt pads under tents only (no giant mud “puddle” rings)
+  // Tent camps — one outpost_tent each (cap for perf)
   for (const camp of campsOnMap(mapId)) {
     const campG = new THREE.Group();
     campG.name = `camp_${camp.id}`;
-
-    for (let t = 0; t < camp.tents; t++) {
-      const ang = (t / camp.tents) * Math.PI * 2 + 0.4;
-      const rr = 3.2 + (t % 2) * 1.4;
-      const tx = camp.x + Math.cos(ang) * rr;
-      const tz = camp.z + Math.sin(ang) * rr;
-      const pad = new THREE.Mesh(
-        new THREE.CircleGeometry(1.55, 10),
-        mat("#5a4a30", { roughness: 0.96 })
-      );
-      pad.rotation.x = -Math.PI / 2;
-      pad.position.set(tx, fieldHeightAt(tx, tz, mapId) + 0.03, tz);
-      pad.receiveShadow = true;
-      campG.add(pad);
-      const tentKey = t % 2 === 0 ? "tent_open" : "tent_closed";
-      let tent = NatureKit.cloneToHeight(tentKey, 2.6 + Math.random() * 0.5);
-      if (!tent) tent = NatureKit.cloneToHeight(t % 2 ? "tent_small_closed" : "tent_small_open", 2.2);
-      if (!tent) tent = makeBiologistTent();
-      tent.rotation.y = ang + Math.PI;
-      placeAtHeight(tent, tx, tz, mapId);
-      campG.add(tent);
+    if (tentCount < TENT_CAP) {
+      placeOutpostTent(campG, camp.x + 1.2, camp.z - 0.8, mapId, Math.random() * Math.PI * 2);
+      tentCount++;
     }
-
     const fire = NatureKit.cloneToHeight(Math.random() < 0.5 ? "campfire" : "campfire_logs", 1.35);
     if (fire) {
       placeAtHeight(fire, camp.x, camp.z, mapId);
@@ -1270,114 +1217,47 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 22
       placeAtHeight(pit, camp.x, camp.z, mapId, 0.12);
       campG.add(pit);
     }
-
-    for (let f = 0; f < 3; f++) {
-      const fence = NatureKit.cloneToHeight("fence", 1.6);
-      if (!fence) break;
-      const ang = f * 2.1;
-      placeAtHeight(fence, camp.x + Math.cos(ang) * (camp.r - 2), camp.z + Math.sin(ang) * (camp.r - 2), mapId);
-      fence.rotation.y = ang + Math.PI / 2;
-      campG.add(fence);
-    }
-
     group.add(campG);
   }
 
-  // Landmark props from custom models (bigger than the player)
   dressMapLandmarks(group, mapId, arid);
 
-  // Half-empty enemy outposts
-  const torchLights = [];
+  // Half-empty enemy outposts — one tent, no fence rings
   for (const op of outpostsOnMap(mapId)) {
     const og = new THREE.Group();
     og.name = `outpost_${op.id}`;
-
-    // Kenney / procedural tents only
-    for (let t = 0; t < (op.tents || 1); t++) {
-      const ang = t * 2.2 + 0.5;
-      const rr = 2.8 + t;
-      const tx = op.x + Math.cos(ang) * rr;
-      const tz = op.z + Math.sin(ang) * rr;
-      const pad = new THREE.Mesh(
-        new THREE.CircleGeometry(1.4, 8),
-        mat("#4a3a28", { roughness: 0.97 })
-      );
-      pad.rotation.x = -Math.PI / 2;
-      pad.position.set(tx, fieldHeightAt(tx, tz, mapId) + 0.03, tz);
-      pad.receiveShadow = true;
-      og.add(pad);
-      let tent = NatureKit.cloneToHeight(op.ruined ? "tent_small_open" : "tent_open", 2.4);
-      if (!tent) tent = makeBiologistTent();
-      tent.rotation.y = ang + Math.PI;
-      if (op.ruined) tent.rotation.z = (Math.random() - 0.5) * 0.25;
-      placeAtHeight(tent, tx, tz, mapId);
-      og.add(tent);
+    if (tentCount < TENT_CAP) {
+      placeOutpostTent(og, op.x + 0.8, op.z + 0.5, mapId, Math.random() * Math.PI * 2);
+      tentCount++;
     }
-
-    // Dead / sparse fire
     const ash = new THREE.Mesh(
       new THREE.CylinderGeometry(0.7, 0.9, 0.18, 8),
       mat("#2a2218", { roughness: 1 })
     );
     placeAtHeight(ash, op.x, op.z, mapId, 0.08);
     og.add(ash);
-    const logs = NatureKit.cloneToHeight("campfire_logs", 1.2);
-    if (logs) {
-      placeAtHeight(logs, op.x + 0.3, op.z - 0.2, mapId);
-      og.add(logs);
-    }
-
-    for (let f = 0; f < 4; f++) {
-      const fence = NatureKit.cloneToHeight("fence", 1.55);
-      if (!fence) break;
-      const ang = f * 1.7 + 0.2;
-      const broken = op.ruined && f % 2 === 0;
-      placeAtHeight(
-        fence,
-        op.x + Math.cos(ang) * (op.r - 1.5),
-        op.z + Math.sin(ang) * (op.r - 1.5),
-        mapId
-      );
-      fence.rotation.y = ang + Math.PI / 2;
-      if (broken) {
-        fence.rotation.z = 0.55;
-        fence.position.y += 0.15;
-      }
-      og.add(fence);
-    }
     group.add(og);
   }
 
-  // Abandoned stones + road torches along beaten paths
+  // Sparse road lampposts (not abandoned stones / torch spam)
   for (const road of fieldRoads(mapId)) {
     const dx = road.x1 - road.x0;
     const dz = road.z1 - road.z0;
     const len = Math.hypot(dx, dz) || 1;
-    const steps = Math.max(2, Math.floor(len / 11));
-    for (let i = 1; i < steps; i++) {
-      const u = i / steps;
+    const steps = Math.max(1, Math.floor(len / 48));
+    for (let i = 1; i <= steps; i++) {
+      if (lampCount >= LAMP_CAP) break;
+      const u = i / (steps + 1);
       const x = road.x0 + dx * u;
       const z = road.z0 + dz * u;
+      if (nearBridgeClear(mapId, x, z)) continue;
+      if (mapId === "overworld" && Math.hypot(x - TOWER_CORNER.x, z - TOWER_CORNER.z) < 32) continue;
+      if (Math.hypot(x, z) < CITY_RADIUS + 6) continue;
       const side = i % 2 === 0 ? 1 : -1;
-      const nx = (-dz / len) * side * (2.2 + (i % 3) * 0.4);
-      const nz = (dx / len) * side * (2.2 + (i % 3) * 0.4);
-
-      // Torches every other step
-      if (i % 2 === 1) {
-        const torch = makeRoadTorch();
-        placeAtHeight(torch, x + nx * 0.85, z + nz * 0.85, mapId);
-        group.add(torch);
-        const light = torch.getObjectByName("torch_light");
-        if (light) torchLights.push(light);
-      }
-
-      // Abandoned roadside stones
-      if (i % 3 === 0 || Math.random() < 0.35) {
-        const stone = makeAbandonedStone(mapId, arid);
-        stone.rotation.y = Math.random() * Math.PI;
-        placeAtHeight(stone, x + nx * 1.4, z + nz * 1.4, mapId);
-        group.add(stone);
-      }
+      const nx = (-dz / len) * side * (road.w * 0.5 + 2.4);
+      const nz = (dx / len) * side * (road.w * 0.5 + 2.4);
+      placeLamppost(group, x + nx, z + nz, mapId, { warm: !arid, lightsOut: torchLights });
+      lampCount++;
     }
   }
 
@@ -1386,6 +1266,18 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 22
   group.userData.torchLights = torchLights;
   root.add(group);
   return group;
+}
+
+/** Biologist research pad just outside north gate — tent + lamp */
+export function dressBiologistCamp(root, mapId = "overworld") {
+  const g = new THREE.Group();
+  g.name = "biologist_camp";
+  const bx = 5.5;
+  const bz = 26.5;
+  placeOutpostTent(g, bx + 2.4, bz + 0.6, mapId, -0.6);
+  placeLamppost(g, bx - 1.8, bz + 2.2, mapId, { warm: true, lightsOut: root.userData.torchLights || (root.userData.torchLights = []) });
+  root.add(g);
+  return g;
 }
 
 /**
@@ -1655,7 +1547,7 @@ export function createScene() {
   placeCityBuildings(overworld, { arid: false });
 
   addCityWalls(overworld);
-  addCityCozyProps(overworld, { warm: true });
+  addCityCozyProps(overworld, { warm: true, mapId: "overworld" });
 
   addMapHorizon(overworld, {
     half: MAP_HALF,
@@ -1677,10 +1569,11 @@ export function createScene() {
   dressFieldWilderness(overworld, {
     mapId: "overworld",
     arid: false,
-    treeCount: 55,
-    rockCount: 70,
-    bushCount: 65,
+    treeCount: 28,
+    rockCount: 22,
+    bushCount: 16,
   });
+  dressBiologistCamp(overworld, "overworld");
 
   // East-edge portal to Seungryong
   const eastPortal = makeMapPortalMesh("#6ec8ff", "Seungryong");
@@ -1752,7 +1645,7 @@ export function makeValleyMapRoot() {
   placeCityBuildings(root, { arid: true });
 
   addCityWalls(root);
-  addCityCozyProps(root, { warm: false });
+  addCityCozyProps(root, { warm: false, mapId: "valley" });
 
   addMapHorizon(root, {
     half: MAP_HALF,
@@ -1773,9 +1666,9 @@ export function makeValleyMapRoot() {
   dressFieldWilderness(root, {
     mapId: "valley",
     arid: true,
-    treeCount: 50,
-    rockCount: 85,
-    bushCount: 55,
+    treeCount: 24,
+    rockCount: 28,
+    bushCount: 14,
   });
 
   // NW rogue hamlet — 2–3 detailed houses
@@ -3836,10 +3729,6 @@ export function makeNpcMesh(npc) {
     });
   } else if (role === "shop") {
     addPart(leftArm.userData.lower, new THREE.BoxGeometry(0.18, 0.14, 0.1), mat("#c43c2e"), 0, -0.28, 0.1);
-  }
-
-  if (role === "biologist") {
-    root.add(makeBiologistTent(1.9, 0, 0.4));
   }
 
   // legs

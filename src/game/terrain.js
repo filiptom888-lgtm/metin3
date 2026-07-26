@@ -116,7 +116,7 @@ export function onBeatenRoad(x, z, mapId, pad = 0.4) {
 }
 
 /**
- * Ground height for field maps. City basin stays nearly flat; soft rolls farther out.
+ * Ground height for field maps — flat play basin; rim rise only at mountain edge.
  */
 export function fieldHeightAt(x, z, mapId = "overworld") {
   if (mapId !== "overworld" && mapId !== "valley") return 0;
@@ -128,43 +128,26 @@ export function fieldHeightAt(x, z, mapId = "overworld") {
   const dCity = Math.hypot(x, z);
   if (dCity < CITY_RADIUS + 2.5) return 0;
   if (onBeatenRoad(x, z, mapId, 1.1)) {
-    // Roads follow gentle terrain but never dive into the river
     if (inRiver(mapId, x, z, -2)) return 0.05;
-    const fade = Math.min(1, (dCity - CITY_RADIUS - 2.5) / 28);
-    const n = fbm(x * 0.028 + 10, z * 0.028 + 4) * 0.9 - 0.4;
-    return Math.max(0, n) * fade * 0.22;
+    return 0.02;
   }
   if (mapId === "overworld" && Math.hypot(x - EDGE_PORTAL, z) < 10) return 0;
   if (mapId === "valley" && (Math.hypot(x - EDGE_PORTAL, z) < 10 || Math.hypot(x + EDGE_PORTAL, z) < 10))
     return 0;
-  if (mapId === "overworld" && Math.hypot(x - TOWER_CORNER.x, z - TOWER_CORNER.z) < 16) return 0;
+  if (mapId === "overworld" && Math.hypot(x - TOWER_CORNER.x, z - TOWER_CORNER.z) < 28) return 0;
 
-  // Wide flat hunting basin around the city — hills only ramp in past ~55–60m
-  const basinEnd = 58;
-  const mid = Math.min(1, Math.max(0, (dCity - CITY_RADIUS - 2.5) / (basinEnd - CITY_RADIUS - 2.5)));
-  const t = mid * mid * (3 - 2 * mid); // smoothstep 0→1
-
-  // Low-frequency rolls only (high-freq noise looked like square mesas)
-  const n =
-    fbm(x * 0.018 + 10, z * 0.018 + 4) * 1.05 +
-    fbm(x * 0.042 - 3, z * 0.042 + 7) * 0.28 -
-    0.52;
-  const baseAmp = mapId === "valley" ? 0.38 : 0.32;
-  const outerAmp = mapId === "valley" ? 1.05 : 0.9;
-  let hill = Math.max(0, n) * (baseAmp + t * (outerAmp - baseAmp));
-  // Keep the inner half of the basin almost pancake-flat
-  hill *= 0.08 + 0.92 * t;
+  // Nearly flat hunting field — tiny micro-roll only, no mid-map hills
+  const n = fbm(x * 0.02 + 10, z * 0.02 + 4) * 0.35 - 0.12;
+  let hill = Math.max(0, n) * 0.12;
 
   const edgeDist = MAP_HALF - Math.max(Math.abs(x), Math.abs(z));
   // Soft rise into the mountain rim (outer ring only)
-  const rim = edgeDist < 32 ? Math.pow(1 - edgeDist / 32, 1.5) * 3.8 : 0;
-  let h = hill + rim * Math.min(1, t + 0.35);
+  const rim = edgeDist < 28 ? Math.pow(1 - edgeDist / 28, 1.45) * 3.6 : 0;
+  let h = hill + rim;
 
-  // Carve river channel
   const dig = riverCarve(mapId, x, z);
   if (dig > 0) h -= dig;
 
-  // Never sink below the visual ground for walkable surfaces
   if (h < 0 && !inRiver(mapId, x, z, 1.5)) h = 0;
   return h;
 }
@@ -303,4 +286,4 @@ export function addBeatenRoadMeshes(root, mapId, dirtMat, edgeMat = null) {
   return group;
 }
 
-export { riverDef, bridgeCenter, inRiver, onRiverBridge, inDeepRiver, bridgeSurfaceAt };
+export { riverDef, bridgeCenter, bridgeAbutments, inRiver, onRiverBridge, inDeepRiver, bridgeSurfaceAt };

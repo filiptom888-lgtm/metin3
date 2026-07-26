@@ -38,8 +38,9 @@ export const OUTPOSTS = [
   {
     id: "ow_tower_trail",
     mapId: "overworld",
-    x: TOWER_CORNER.x - 55,
-    z: TOWER_CORNER.z + 50,
+    // Relocated west of tower road so the entrance stays clear
+    x: TOWER_CORNER.x - 78,
+    z: TOWER_CORNER.z + 8,
     r: 9,
     tents: 1,
     ruined: true,

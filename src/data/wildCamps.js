@@ -26,10 +26,11 @@ export const WILD_CAMPS = [
   {
     id: "shin_se_trail",
     mapId: "overworld",
-    x: TOWER_CORNER.x - 38,
-    z: TOWER_CORNER.z + 42,
-    r: 13,
-    tents: 3,
+    // Off the Demon Tower SE approach (was blocking the path)
+    x: TOWER_CORNER.x - 72,
+    z: TOWER_CORNER.z + 28,
+    r: 12,
+    tents: 1,
     mobs: [{ id: "wolf", n: 5 }],
   },
   {

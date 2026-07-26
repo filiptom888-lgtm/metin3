@@ -18,8 +18,11 @@ const CRITICAL_PROPS = {
   house_small: "/models/props/house_small.glb",
 };
 
-/** Background — other classes only (no heavy scenery/enemies at boot) */
-const BACKGROUND_PROPS = {};
+/** Background — other classes + sparse field props (not blocking enter) */
+const BACKGROUND_PROPS = {
+  outpost_tent: "/models/props/outpost_tent.glb",
+  lampposts: "/models/props/lampposts.glb",
+};
 
 /** Only special animated boss — never field trash */
 const ENEMY_FILES = {
