@@ -153,15 +153,33 @@ export function fieldHeightAt(x, z, mapId = "overworld") {
   const dig = riverCarve(mapId, x, z);
   if (dig > 0) h -= dig;
 
+  // Never sink below the visual ground for walkable surfaces
+  if (h < 0 && !inRiver(mapId, x, z, 1.5)) h = 0;
   return h;
 }
 
-/** True if a field position is walkable (bridge OK, deep river blocked). */
+/** True if inside the mountain foothill band (not walkable). */
+export function inMountainRim(x, z, half = MAP_HALF) {
+  const edgeDist = half - Math.max(Math.abs(x), Math.abs(z));
+  // Match foothill placement (~half-4 inward); leave portal corridors open via isFieldWalkable
+  return edgeDist < 14;
+}
+
+/** True if a field position is walkable (bridge OK, deep river / mountain rim blocked). */
 export function isFieldWalkable(mapId, x, z) {
   if (mapId !== "overworld" && mapId !== "valley") return true;
   if (bridgeSurfaceAt(mapId, x, z) != null) return true;
   if (onRiverBridge(mapId, x, z, 0.5)) return true;
   if (inDeepRiver(mapId, x, z)) return false;
+  // Block clipping into mountain foothills (except portal gaps near map edge)
+  if (inMountainRim(x, z)) {
+    const nearPortal =
+      (mapId === "overworld" && Math.hypot(x - EDGE_PORTAL, z) < 14) ||
+      (mapId === "valley" &&
+        (Math.hypot(x - EDGE_PORTAL, z) < 14 || Math.hypot(x + EDGE_PORTAL, z) < 14)) ||
+      (mapId === "overworld" && Math.hypot(x - TOWER_CORNER.x, z - TOWER_CORNER.z) < 18);
+    if (!nearPortal) return false;
+  }
   return true;
 }
 

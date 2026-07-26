@@ -2143,13 +2143,16 @@ export class Game {
       this.tryPickup();
     }
 
-    // Mesh + animation — smooth elevation so bridges/hills don't pop
+    // Mesh + animation — stick to ground (no sinking under hills / into mesh)
     const gy = this.groundY(p.x, p.z);
     if (p.y == null || Number.isNaN(p.y)) p.y = gy;
-    const climb = Math.min(1, 14 * dt);
-    // Allow faster drop onto deck when stepping onto bridge
-    const drop = Math.min(1, 22 * dt);
-    p.y += (gy - p.y) * (gy >= p.y ? climb : drop);
+    // Fast follow uphill; hard floor so we never go under the terrain surface
+    if (gy >= p.y) {
+      p.y += (gy - p.y) * Math.min(1, 18 * dt);
+    } else {
+      p.y += (gy - p.y) * Math.min(1, 28 * dt);
+    }
+    if (p.y < gy - 0.02) p.y = gy;
     this.localMesh.position.set(p.x, p.y, p.z);
     this.localMesh.rotation.y = p.rot;
     this.aimMarker.position.y = p.y + 0.06;
@@ -2190,6 +2193,10 @@ export class Game {
     );
     const desired = new THREE.Vector3(p.x, gy, p.z).add(this.camOffset);
     this.camera.position.lerp(desired, 1 - Math.pow(0.0008, dt));
+    // Never let the camera clip under the ground
+    const camFloor =
+      this.groundY(this.camera.position.x, this.camera.position.z) + 1.15;
+    if (this.camera.position.y < camFloor) this.camera.position.y = camFloor;
     // Look slightly ahead so the hero sits lower-center like Metin2
     const lookX = p.x - Math.sin(this.camYaw) * 0.55;
     const lookZ = p.z - Math.cos(this.camYaw) * 0.55;

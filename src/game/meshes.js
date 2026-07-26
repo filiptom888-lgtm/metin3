@@ -1446,27 +1446,24 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 22
 
 /**
  * Irregular mountain rim + distant skirt so the map never ends in a green void.
- * Leaves gaps at edge portals. Breaks the hard square silhouette with foothills.
+ * Cheap BasicMaterial peaks — looking at the horizon must stay smooth.
  */
 function makeMountainPeak(h, rockMat, tipMat, foothill = false) {
   const g = new THREE.Group();
   const baseR = foothill ? h * 0.58 : h * 0.4;
-  const base = new THREE.Mesh(new THREE.ConeGeometry(baseR, h, foothill ? 5 : 6), rockMat);
+  const segs = foothill ? 4 : 5;
+  const base = new THREE.Mesh(new THREE.ConeGeometry(baseR, h, segs), rockMat);
   base.position.y = h * 0.5;
   base.castShadow = false;
   base.receiveShadow = false;
+  base.frustumCulled = true;
   g.add(base);
-  if (!foothill && h > 9) {
-    const tip = new THREE.Mesh(new THREE.ConeGeometry(baseR * 0.32, h * 0.26, 5), tipMat);
+  if (!foothill && h > 12) {
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(baseR * 0.32, h * 0.26, 4), tipMat);
     tip.position.y = h * 0.86;
     tip.castShadow = false;
+    tip.frustumCulled = true;
     g.add(tip);
-  }
-  if (!foothill) {
-    const side = new THREE.Mesh(new THREE.ConeGeometry(baseR * 0.48, h * 0.55, 5), rockMat);
-    side.position.set(baseR * 0.55, h * 0.28, baseR * 0.1);
-    side.castShadow = false;
-    g.add(side);
   }
   return g;
 }
@@ -1482,24 +1479,24 @@ export function addMapHorizon(root, { half = MAP_HALF, arid = false, portalGaps 
   const g = new THREE.Group();
   g.name = "map_horizon";
 
-  // Outer skirt — fills the void beyond the playable tile
+  // Outer skirt — unlit, no shadows (was a big cost when facing the rim)
   const skirtCol = arid ? "#5a4a32" : "#3a4a30";
   const skirt = new THREE.Mesh(
-    new THREE.RingGeometry(half * 0.88, half * 3.4, 72),
-    new THREE.MeshStandardMaterial({ color: skirtCol, roughness: 1, flatShading: true })
+    new THREE.RingGeometry(half * 0.92, half * 2.8, 48),
+    new THREE.MeshBasicMaterial({ color: skirtCol })
   );
   skirt.rotation.x = -Math.PI / 2;
   skirt.position.y = -1.1;
-  skirt.receiveShadow = true;
+  skirt.receiveShadow = false;
+  skirt.castShadow = false;
   g.add(skirt);
 
-  // Soft haze plate under fog color
   const haze = new THREE.Mesh(
-    new THREE.CircleGeometry(half * 3.55, 48),
+    new THREE.CircleGeometry(half * 2.95, 32),
     new THREE.MeshBasicMaterial({
       color: arid ? "#a89878" : "#8aa090",
       transparent: true,
-      opacity: 0.5,
+      opacity: 0.45,
       depthWrite: false,
     })
   );
@@ -1507,14 +1504,13 @@ export function addMapHorizon(root, { half = MAP_HALF, arid = false, portalGaps 
   haze.position.y = -1.6;
   g.add(haze);
 
-  const rock = mat(arid ? "#6a5848" : "#5c564c", { roughness: 0.97 });
-  const tip = mat(arid ? "#c8b898" : "#d0d8cc", { roughness: 0.92 });
-  const foot = mat(arid ? "#4a5a30" : "#2a4a28", { roughness: 0.95 });
+  const rock = new THREE.MeshBasicMaterial({ color: arid ? "#6a5848" : "#5c564c" });
+  const tip = new THREE.MeshBasicMaterial({ color: arid ? "#c8b898" : "#d0d8cc" });
+  const foot = new THREE.MeshBasicMaterial({ color: arid ? "#4a5a30" : "#2a4a28" });
 
-  const steps = 80;
+  const steps = 36;
   for (let i = 0; i < steps; i++) {
     const ang = (i / steps) * Math.PI * 2;
-    // Wobbly radius — not a perfect circle/square
     const wobble =
       Math.sin(ang * 2.7) * 7 +
       Math.sin(ang * 6.1 + 1.3) * 4.2 +
@@ -1524,38 +1520,38 @@ export function addMapHorizon(root, { half = MAP_HALF, arid = false, portalGaps 
     const z = Math.sin(ang) * rOut;
     if (nearPortalGap(x, z, portalGaps)) continue;
 
-    const peakH = 9 + Math.abs(Math.sin(ang * 2.2 + i * 0.15)) * 16 + (i % 6) * 1.4;
+    const peakH = 10 + Math.abs(Math.sin(ang * 2.2 + i * 0.15)) * 14 + (i % 5) * 1.2;
     const peak = makeMountainPeak(peakH, rock, tip, false);
     peak.position.set(x, -0.4, z);
     peak.rotation.y = ang + Math.PI * 0.5;
-    peak.scale.setScalar(0.9 + (i % 5) * 0.08);
+    peak.scale.setScalar(0.95 + (i % 4) * 0.07);
     g.add(peak);
 
-    // Inner foothills bite into the square map edge
-    if (i % 2 === 0) {
-      const rIn = half - 2 - Math.abs(Math.sin(ang * 3.5)) * 7 - (i % 3) * 1.5;
+    // Sparse inner foothills (visual + walk-blocked band)
+    if (i % 3 === 0) {
+      const rIn = half - 4 - Math.abs(Math.sin(ang * 3.5)) * 5;
       const fx = Math.cos(ang) * rIn;
       const fz = Math.sin(ang) * rIn;
       if (nearPortalGap(fx, fz, portalGaps)) continue;
       if (Math.max(Math.abs(fx), Math.abs(fz)) > half - 0.5) continue;
-      const hill = makeMountainPeak(3.8 + (i % 4) * 1.8, rock, foot, true);
+      const hill = makeMountainPeak(4.2 + (i % 4) * 1.4, rock, foot, true);
       hill.position.set(fx, 0, fz);
       hill.rotation.y = ang;
       g.add(hill);
     }
   }
 
-  // Extra mid-ring peaks for depth
-  for (let i = 0; i < 36; i++) {
-    const ang = (i / 36) * Math.PI * 2 + 0.2;
-    const r = half + 18 + Math.sin(ang * 4) * 8 + (i % 3) * 5;
+  // Fewer mid-ring peaks for depth
+  for (let i = 0; i < 14; i++) {
+    const ang = (i / 14) * Math.PI * 2 + 0.2;
+    const r = half + 20 + Math.sin(ang * 4) * 6 + (i % 3) * 4;
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
     if (nearPortalGap(x, z, portalGaps)) continue;
-    const peak = makeMountainPeak(14 + (i % 5) * 3, rock, tip, false);
+    const peak = makeMountainPeak(15 + (i % 4) * 2.5, rock, tip, false);
     peak.position.set(x, -0.6, z);
     peak.rotation.y = ang;
-    peak.scale.setScalar(1.05 + (i % 3) * 0.1);
+    peak.scale.setScalar(1.05);
     g.add(peak);
   }
 
