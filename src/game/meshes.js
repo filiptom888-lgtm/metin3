@@ -652,11 +652,10 @@ function addCityWalls(scene) {
   }
 }
 
-/** Street lanterns, barrels, flower beds — shared city cozy clutter */
+/** Street lamps from GLB + barrels / flower beds */
 function addCityCozyProps(scene, { warm = true } = {}) {
   const wood = mat("#5a3a22", { roughness: 0.9 });
   const iron = mat("#3a3830", { roughness: 0.7, metalness: 0.35 });
-  const lampGlass = mat("#f0d070", { emissive: "#ffb050", emissiveIntensity: 1.1, roughness: 0.4 });
   const cityLights = [];
 
   const lanternSpots = [
@@ -667,19 +666,24 @@ function addCityCozyProps(scene, { warm = true } = {}) {
   ];
   for (const [lx, lz] of lanternSpots) {
     if (Math.hypot(lx, lz) > CITY_RADIUS - 3) continue;
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 2.4, 6), iron);
-    pole.position.set(lx, 1.2, lz);
-    pole.castShadow = true;
-    scene.add(pole);
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.08, 0.08), iron);
-    arm.position.set(lx + 0.25, 2.25, lz);
-    scene.add(arm);
-    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), lampGlass);
-    lamp.position.set(lx + 0.45, 2.05, lz);
-    scene.add(lamp);
-    // Soft warm plaza glow — collected with road torches for day/night
-    const light = new THREE.PointLight(0xffc070, 0, 22, 1.4);
-    light.position.set(lx + 0.45, 2.15, lz);
+    const lamp = AssetKit.clonePropToHeight("lampposts", 4.8 + Math.random() * 0.6);
+    if (lamp) {
+      lamp.position.set(lx, 0, lz);
+      lamp.rotation.y = Math.atan2(-lx, -lz);
+      lamp.traverse((o) => {
+        if (o.isMesh) {
+          o.castShadow = false;
+          o.receiveShadow = true;
+        }
+      });
+      scene.add(lamp);
+    } else {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 2.4, 6), iron);
+      pole.position.set(lx, 1.2, lz);
+      scene.add(pole);
+    }
+    const light = new THREE.PointLight(warm ? 0xffc070 : 0xc0d8ff, 0, 22, 1.4);
+    light.position.set(lx, 3.2, lz);
     light.name = "torch_light";
     scene.add(light);
     cityLights.push(light);
@@ -790,25 +794,27 @@ function skipWildernessSpot(mapId, x, z, { clearRoad = 2.6 } = {}) {
 
 function plantTreeAt(group, x, z, mapId, arid, scaleMul = 1) {
   if (skipWildernessSpot(mapId, x, z, { clearRoad: 3.2 })) return false;
-  // Player ~1.8 tall — forests should read 3–6× taller
-  let targetH = (arid ? 6.2 : 7.8) * (0.72 + Math.random() * 0.85) * scaleMul;
-  if (Math.random() < 0.14) targetH *= 1.45; // occasional giants
-  let tree = NatureKit.randomForestTree(arid, targetH);
+  // Player ~1.8 — forests should read clearly taller
+  let targetH = (arid ? 8.5 : 10.5) * (0.72 + Math.random() * 0.85) * scaleMul;
+  if (Math.random() < 0.14) targetH *= 1.35;
+  let tree = AssetKit.randomForestTree(targetH);
+  if (!tree) {
+    tree = NatureKit.randomForestTree(arid, targetH);
+  }
   if (!tree) {
     tree = makeFallbackTree(arid);
     const approx = arid ? 6.5 : 8.2;
     tree.scale.setScalar(targetH / approx);
   }
   tree.rotation.y = Math.random() * Math.PI * 2;
-  // Only a fraction of trees cast shadows (big FPS win in dense forests)
-  if (Math.random() < 0.12) {
+  if (Math.random() < 0.1) {
     tree.traverse((o) => {
       if (o.isMesh) o.castShadow = true;
     });
   }
   placeAtHeight(tree, x, z, mapId);
   group.add(tree);
-  if (Math.random() < 0.55) {
+  if (Math.random() < 0.35) {
     const bushH = 1.35 + Math.random() * 1.4;
     const bush = NatureKit.randomBush(bushH);
     if (bush) {
@@ -835,15 +841,15 @@ function plantRoadForests(group, mapId, arid) {
     const uz = dz / len;
     const px = -uz;
     const pz = ux;
-    const steps = Math.max(12, Math.ceil(len / 1.35));
+    const steps = Math.max(8, Math.ceil(len / 2.4));
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
       const cx = r.x0 + dx * t;
       const cz = r.z0 + dz * t;
       for (const side of [-1, 1]) {
-        const rows = 3 + ((Math.random() * 2.8) | 0);
+        const rows = 2 + ((Math.random() * 2) | 0);
         for (let row = 0; row < rows; row++) {
-          const offset = r.w * 0.5 + 3.8 + row * 3.1 + Math.random() * 2.6;
+          const offset = r.w * 0.5 + 4.2 + row * 3.6 + Math.random() * 2.6;
           const along = (Math.random() - 0.5) * 2.4;
           const x = cx + px * side * offset + ux * along;
           const z = cz + pz * side * offset + uz * along;
@@ -1147,8 +1153,10 @@ function placeCityBuildings(root, { arid = false } = {}) {
   layouts.forEach(([bx, bz], i) => {
     if (Math.hypot(bx, bz) > CITY_RADIUS - 5.5) return;
     if (Math.hypot(bx, bz) < 9) return;
-    const targetH = 6.4 + (i % 5) * 0.7;
-    let b = AssetKit.clonePropToHeight("house_small", targetH);
+    const useLarge = i % 3 === 0 && AssetKit.hasProp("house_large");
+    const targetH = useLarge ? 8.2 + (i % 4) * 0.55 : 6.4 + (i % 5) * 0.7;
+    let b = AssetKit.clonePropToHeight(useLarge ? "house_large" : "house_small", targetH);
+    if (!b) b = AssetKit.clonePropToHeight("house_small", targetH);
     if (b) {
       b.rotation.y = (i * 0.85) % (Math.PI * 2);
       b.position.set(bx, 0, bz);
@@ -1180,7 +1188,7 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 22
   group.name = "wilderness_dressing";
 
   plantRoadForests(group, mapId, arid);
-  plantForestPatches(group, mapId, arid, arid ? 24 : 28);
+  plantForestPatches(group, mapId, arid, arid ? 12 : 14);
 
   // Fill open field (not only near roads)
   for (let i = 0; i < treeCount; i++) {
@@ -1679,9 +1687,9 @@ export function createScene() {
   dressFieldWilderness(overworld, {
     mapId: "overworld",
     arid: false,
-    treeCount: 260,
-    rockCount: 240,
-    bushCount: 220,
+    treeCount: 110,
+    rockCount: 160,
+    bushCount: 140,
   });
 
   // East-edge portal to Seungryong
@@ -1775,9 +1783,9 @@ export function makeValleyMapRoot() {
   dressFieldWilderness(root, {
     mapId: "valley",
     arid: true,
-    treeCount: 280,
-    rockCount: 280,
-    bushCount: 200,
+    treeCount: 120,
+    rockCount: 180,
+    bushCount: 130,
   });
 
   // NW rogue hamlet — 2–3 detailed houses
@@ -1969,10 +1977,22 @@ export function makeOrcMapRoot() {
 
     // Cozy camp clutter on outer islets
     if (isle.tier !== "main" && isle.r > 6) {
-      const hut = makeBuilding(2.6, 2.2, 2.4, "#8a7a58", { roofColor: "#3a2a18", smoke: true });
-      hut.position.set(isle.x + isle.r * 0.15, 0.2, isle.z - isle.r * 0.1);
-      hut.scale.setScalar(0.85);
-      root.add(hut);
+      const hut =
+        AssetKit.clonePropToHeight("viking_hut", 5.2) ||
+        AssetKit.clonePropToHeight("house_small", 4.8);
+      if (hut) {
+        hut.position.set(isle.x + isle.r * 0.15, 0.2, isle.z - isle.r * 0.1);
+        hut.rotation.y = Math.random() * Math.PI;
+        hut.traverse((o) => {
+          if (o.isMesh) o.receiveShadow = true;
+        });
+        root.add(hut);
+      } else {
+        const proc = makeBuilding(2.6, 2.2, 2.4, "#8a7a58", { roofColor: "#3a2a18", smoke: true });
+        proc.position.set(isle.x + isle.r * 0.15, 0.2, isle.z - isle.r * 0.1);
+        proc.scale.setScalar(0.85);
+        root.add(proc);
+      }
     }
   }
 
@@ -2022,65 +2042,34 @@ export function makeOrcMapRoot() {
   root.add(teleRing);
   root.userData.telePad = telePad;
 
-  // Thick dark forest around the tower — taller than the player
-  const trunk = mat("#1e1810");
-  const canopy = mat("#1a2e18", { roughness: 0.9 });
-  const canopyDark = mat("#0e1a10", { roughness: 0.92 });
-  for (let i = 0; i < 130; i++) {
+  // Thick dark forest around the tower — custom trees, taller than the player
+  for (let i = 0; i < 55; i++) {
     const ang = Math.random() * Math.PI * 2;
     const r = 9 + Math.random() * 22;
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
     if (Math.hypot(x, z) < 8.5) continue;
     if (Math.hypot(x, z - 14) < 5) continue;
-    const g = new THREE.Group();
-    const h = 5.5 + Math.random() * 6.5;
-    const cast = Math.random() < 0.12;
-    const t = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.58, h, 7), trunk);
-    t.position.y = h / 2;
-    t.castShadow = cast;
-    g.add(t);
-    const c1 = new THREE.Mesh(
-      new THREE.ConeGeometry(2.2 + Math.random() * 1.6, 4.2 + Math.random() * 2.4, 7),
-      Math.random() < 0.5 ? canopy : canopyDark
-    );
-    c1.position.y = h + 0.6;
-    c1.castShadow = cast;
-    g.add(c1);
-    if (Math.random() < 0.65) {
-      const c2 = new THREE.Mesh(
-        new THREE.ConeGeometry(1.5 + Math.random() * 1.1, 3.2, 7),
-        canopyDark
-      );
-      c2.position.y = h + 2.4;
-      c2.castShadow = cast;
-      g.add(c2);
-    }
-    g.position.set(x, 0, z);
-    g.scale.setScalar(0.95 + Math.random() * 0.45);
-    root.add(g);
+    const h = 8 + Math.random() * 7;
+    const tree = AssetKit.randomForestTree(h) || makeFallbackTree(false);
+    if (!tree) continue;
+    tree.position.set(x, 0, z);
+    tree.rotation.y = Math.random() * Math.PI * 2;
+    root.add(tree);
   }
 
   // Outer islet forests
   for (const isle of ORC_ISLANDS) {
     if (isle.tier === "main") continue;
-    const n = 8 + ((Math.random() * 8) | 0);
+    const n = 4 + ((Math.random() * 4) | 0);
     for (let i = 0; i < n; i++) {
       const ang = Math.random() * Math.PI * 2;
       const r = 2 + Math.random() * (isle.r - 3.2);
-      const g = new THREE.Group();
-      const h = 4.2 + Math.random() * 4.5;
-      const cast = Math.random() < 0.12;
-      const t = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.45, h, 6), trunk);
-      t.position.y = h / 2;
-      t.castShadow = cast;
-      g.add(t);
-      const c1 = new THREE.Mesh(new THREE.ConeGeometry(1.8 + Math.random() * 0.9, 3.4, 6), canopyDark);
-      c1.position.y = h + 0.35;
-      c1.castShadow = cast;
-      g.add(c1);
-      g.position.set(isle.x + Math.cos(ang) * r, 0, isle.z + Math.sin(ang) * r);
-      root.add(g);
+      const tree = AssetKit.randomForestTree(7 + Math.random() * 5);
+      if (!tree) continue;
+      tree.position.set(isle.x + Math.cos(ang) * r, 0, isle.z + Math.sin(ang) * r);
+      tree.rotation.y = Math.random() * Math.PI * 2;
+      root.add(tree);
     }
   }
 
@@ -3024,8 +3013,20 @@ function addPart(parent, geo, material, x, y, z, rx = 0, ry = 0, rz = 0) {
   return m;
 }
 
-/** Stylized low-poly wolf / orc (not collider primitives) */
+/** Prefer custom enemy GLBs; fall back to procedural low-poly */
 export function makeMobMesh(kind = "wolf") {
+  const gltf = AssetKit.enemyForKind(kind);
+  if (gltf) {
+    const isBoss = kind === "orc_chief" || kind === "rogue_chief" || kind === "black_ork_brute" || kind === "ophanim";
+    const isWolfish = kind === "wolf" || kind === "dog" || kind === "alpha_wolf";
+    gltf.add(groundShadow(isBoss ? 1.6 : isWolfish ? 1.15 : 1.25));
+    attachHpBar(gltf, {
+      y: isBoss ? 3.4 : isWolfish ? 2.05 : 2.55,
+      scaleX: isBoss ? 2.2 : 1.7,
+      scaleY: 0.4,
+    });
+    return gltf;
+  }
   if (kind === "ork") return makeOrkMesh({});
   if (kind === "elite_ork") return makeOrkMesh({ elite: true });
   if (kind === "black_ork") return makeOrkMesh({ black: true });
@@ -3353,7 +3354,40 @@ function makeOrkMesh({ elite = false, black = false, brute = false } = {}) {
 
 export function animateMob(mesh, dt, moving = true) {
   const d = mesh.userData;
-  if (!d?.rig) return;
+  if (!d) return;
+
+  // GLB enemies — drive clips or bob class stand-ins
+  if (d.gltfEnemy) {
+    d.animPhase = (d.animPhase || 0) + dt * (moving ? 9 : 2.2);
+    if (d.mixer) {
+      const next = moving ? "walk" : "idle";
+      if (next !== d.animMode) {
+        d.animMode = next;
+        const fade = 0.18;
+        if (next === "walk" && d.walkAction) {
+          d.walkAction.reset().setEffectiveWeight(1).fadeIn(fade).play();
+          d.walkAction.paused = false;
+          if (d.idleAction) d.idleAction.fadeOut(fade);
+        } else if (d.idleAction) {
+          d.idleAction.reset().setEffectiveWeight(1).fadeIn(fade).play();
+          if (d.walkAction) d.walkAction.fadeOut(fade);
+        } else if (d.walkAction) {
+          d.walkAction.paused = !moving;
+          d.walkAction.setEffectiveWeight(1);
+          if (!d.walkAction.isRunning()) d.walkAction.play();
+        }
+      }
+      if (d.walkAction && moving) d.walkAction.setEffectiveTimeScale(1.05);
+      d.mixer.update(dt);
+    } else if (d.rig) {
+      const c = Math.cos(d.animPhase);
+      d.rig.position.y = moving ? Math.abs(c) * 0.05 : Math.sin(d.animPhase * 0.5) * 0.015;
+      d.rig.rotation.y = moving ? Math.sin(d.animPhase) * 0.05 : d.rig.rotation.y * 0.85;
+    }
+    return;
+  }
+
+  if (!d.rig) return;
   d.animPhase = (d.animPhase || 0) + dt * (moving ? 9 : 2.2);
   const s = Math.sin(d.animPhase);
   const c = Math.cos(d.animPhase);
