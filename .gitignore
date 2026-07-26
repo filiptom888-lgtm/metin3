@@ -18,6 +18,8 @@ dist-ssr
 
 # Raw Meshy exports (~62MB each); optimized copies live in public/models/
 models/*.glb
+# Local asset dump (rigged bins, windmill.zip, oversized props) — served copies are under public/models/
+models/
 playwright-report
 test-results
 

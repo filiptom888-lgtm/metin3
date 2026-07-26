@@ -4,6 +4,7 @@ import { BANDIT_CAMP } from "./data/banditCamp.js";
 import { campsOnMap } from "./data/wildCamps.js";
 import { fieldRoads } from "./game/terrain.js";
 import { NatureKit } from "./game/NatureKit.js";
+import { AssetKit } from "./game/AssetKit.js";
 import { Game } from "./game/Game.js";
 import { WorldNet } from "./net/world.js";
 import { hasSupabase, configHint } from "./net/supabase.js";
@@ -1920,7 +1921,9 @@ $("#config-hint").textContent = configHint();
 
 const net = new WorldNet();
 // Kenney Nature Kit (CC0) — trees / tents / rocks for field maps
-await NatureKit.preload().catch((err) => console.warn("[nature]", err));
+await Promise.all([NatureKit.preload(), AssetKit.preload()]).catch((err) =>
+  console.warn("[assets]", err)
+);
 const game = new Game($("#c"), ui, net);
 
 function drawMapRing(ctx, toX, toY, minR, maxR, color, { fill = true, dash = null } = {}) {
