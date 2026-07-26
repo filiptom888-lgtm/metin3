@@ -1844,18 +1844,24 @@ export function animateCharacter(
   const inAttack = d.attacking > 0;
   const dur = Math.max(0.35, d.attackDur || 0.7);
 
-  if (moving && !inAttack) {
-    d.animPhase = (d.animPhase || 0) + dt * 9 * speed;
+  if (moving) {
+    // Keep legs stepping during auto-attack (upper body handles the swing)
+    const step = inAttack ? 0.55 : 1;
+    d.animPhase = (d.animPhase || 0) + dt * 9 * speed * (inAttack ? 0.85 : 1);
     const s = Math.sin(d.animPhase);
     const c = Math.cos(d.animPhase);
-    d.leftLeg.rotation.x = s * 0.7;
-    d.rightLeg.rotation.x = -s * 0.7;
-    if (d.leftLeg.userData?.shin) d.leftLeg.userData.shin.rotation.x = Math.max(0, -s) * 0.5;
-    if (d.rightLeg.userData?.shin) d.rightLeg.userData.shin.rotation.x = Math.max(0, s) * 0.5;
-    d.leftArm.rotation.x = -s * 0.55;
-    d.rightArm.rotation.x = s * 0.55;
-    d.hips.position.y = 0.95 + Math.abs(c) * 0.04;
-    d.hips.rotation.y = s * 0.06;
+    d.leftLeg.rotation.x = s * 0.7 * step;
+    d.rightLeg.rotation.x = -s * 0.7 * step;
+    if (d.leftLeg.userData?.shin) d.leftLeg.userData.shin.rotation.x = Math.max(0, -s) * 0.5 * step;
+    if (d.rightLeg.userData?.shin) d.rightLeg.userData.shin.rotation.x = Math.max(0, s) * 0.5 * step;
+    if (!inAttack) {
+      d.leftArm.rotation.x = -s * 0.55;
+      d.rightArm.rotation.x = s * 0.55;
+    } else {
+      d.leftArm.rotation.x = -s * 0.25;
+    }
+    d.hips.position.y = 0.95 + Math.abs(c) * 0.04 * step;
+    if (!inAttack) d.hips.rotation.y = s * 0.06;
   } else if (!inAttack) {
     d.leftLeg.rotation.x *= 0.78;
     d.rightLeg.rotation.x *= 0.78;
@@ -1864,11 +1870,6 @@ export function animateCharacter(
     d.hips.position.y += (0.95 - d.hips.position.y) * 0.15;
     d.hips.rotation.y *= 0.85;
     d.hips.position.y = 0.95 + Math.sin(performance.now() * 0.003) * 0.015;
-  } else if (moving) {
-    // Plant feet during swing — light step only
-    d.leftLeg.rotation.x *= 0.85;
-    d.rightLeg.rotation.x *= 0.85;
-    d.leftArm.rotation.x *= 0.7;
   }
 
   if (inAttack) {
@@ -1878,9 +1879,9 @@ export function animateCharacter(
     const swing = Math.sin(Math.min(1, Math.max(0, t)) * Math.PI) * 1.65;
     d.rightArm.rotation.x = -0.65 - swing;
     d.rightArm.rotation.z = swing * 0.45;
-    d.leftArm.rotation.x = -0.25 + swing * 0.2;
+    d.leftArm.rotation.x = (d.leftArm.rotation.x || 0) * 0.4 + (-0.25 + swing * 0.2) * 0.6;
     if (d.weapon) d.weapon.rotation.x = -swing * 0.6;
-    d.hips.rotation.y = swing * 0.14;
+    d.hips.rotation.y = (d.hips.rotation.y || 0) * 0.35 + swing * 0.14;
     d.hips.position.y = 0.95 + Math.sin(t * Math.PI) * 0.04;
   } else {
     d.rightArm.rotation.z *= 0.75;

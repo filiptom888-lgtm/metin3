@@ -12,6 +12,7 @@ import { NpcService } from "./services/NpcService.js";
 import { ItemService } from "./services/ItemService.js";
 import { PartyService } from "./services/PartyService.js";
 import { TradeService } from "./services/TradeService.js";
+import { PvPService } from "./services/PvPService.js";
 import { DungeonService } from "./services/DungeonService.js";
 import { WORLD_WARPS, SPECS, hasSkillPath } from "./data/meta.js";
 import { derivedStats, xpForLevel } from "./game/character.js";
@@ -1374,6 +1375,12 @@ ui.hideDuelCountdown = () => {
   const el = $("#duel-countdown");
   if (el) el.hidden = true;
 };
+/** Clear stuck duel / invite / context overlays (login, leave, alone). */
+ui.clearSocialCombat = () => {
+  ui.hideSocialInvite();
+  ui.hideDuelCountdown();
+  ui.hidePlayerContext();
+};
 
 function renderTradeSlots(el, items, mine) {
   if (!el) return;
@@ -1771,6 +1778,22 @@ window.addEventListener("keydown", (e) => {
   if (k === "p") togglePanel("party");
   if (k === "escape") {
     e.preventDefault();
+    // Dismiss overlays first so Esc always recovers a stuck invite / context menu
+    const invite = $("#social-invite-banner");
+    if (invite && !invite.hidden) {
+      if (_socialInviteKind === "duel") game.declineDuel();
+      else if (_socialInviteKind === "trade") game.declineTrade();
+      else ui.hideSocialInvite();
+      return;
+    }
+    if ($("#player-context") && !$("#player-context").hidden) {
+      ui.hidePlayerContext();
+      return;
+    }
+    if (PvPService.duel?.state === "countdown") {
+      game.endDuel("Duel cancelled");
+      return;
+    }
     $("#panel-dungeon").hidden = true;
     togglePanel("menu");
   }

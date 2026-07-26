@@ -111,8 +111,8 @@ function cloneHero(cache) {
      */
     update(dt, state = {}) {
       const attacking = (state.attacking || 0) > 0;
-      // During cast/swing — freeze locomotion so the body doesn't walk through attacks
-      const moving = !!state.moving && !attacking;
+      // Keep walk/run during auto-attack — only lean the torso for the swing
+      const moving = !!state.moving;
       const run = !!state.run && moving;
       const next = !moving ? "idle" : run ? "run" : "walk";
       if (next !== this.mode) this._setMode(next);

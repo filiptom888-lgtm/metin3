@@ -238,6 +238,11 @@ export class Game {
     this.clearWorldEntities();
     this.fx?.clear();
 
+    // Never carry a phantom duel / invite into a fresh session
+    PvPService.end();
+    TradeService.pendingInvite = null;
+    this.ui.clearSocialCombat?.();
+
     const cls = CLASSES[character.classId];
     const d = derivedStats(character);
     QuestService.ensure(character);
@@ -643,7 +648,42 @@ export class Game {
     this.remotes.clear();
     this.local = null;
     this.pendingDeath = false;
+    PvPService.end();
+    TradeService.pendingInvite = null;
+    this.ui.clearSocialCombat?.();
     this.ui.hideDeath?.();
+  }
+
+  _peerOnline(id) {
+    if (!id || id === this.local?.id) return false;
+    if (this.remotes.has(id)) return true;
+    return !!this.net?.peers?.has?.(id);
+  }
+
+  /** Cancel duel/invite if the other player is gone (or you're alone). */
+  _pruneDuelAgainstMissingPeers(peerIds) {
+    const localId = this.local?.id;
+    if (!localId) return;
+    const alive = peerIds instanceof Set ? peerIds : new Set(peerIds || []);
+
+    if (PvPService.pendingChallenge) {
+      const from = PvPService.pendingChallenge.from;
+      if (!from || from === localId || !alive.has(from)) {
+        PvPService.pendingChallenge = null;
+        this.ui.hideSocialInvite?.();
+      }
+    }
+
+    if (PvPService.duel) {
+      const opp = PvPService.opponentId(localId);
+      if (!opp || !alive.has(opp)) {
+        PvPService.end();
+        this.ui.hideDuelCountdown?.();
+        this.ui.hideSocialInvite?.();
+        this.onDuelChange?.(null);
+        this.ui.toast?.("Duel cancelled — opponent left");
+      }
+    }
   }
 
   clearWorldEntities() {
@@ -827,6 +867,12 @@ export class Game {
   acceptDuel() {
     const inv = PvPService.pendingChallenge;
     if (!inv || !this.local) return;
+    if (!this._peerOnline(inv.from)) {
+      PvPService.pendingChallenge = null;
+      this.ui.hideSocialInvite?.();
+      this.ui.toast("Challenger is no longer online");
+      return;
+    }
     const id = `duel_${Date.now().toString(36)}`;
     this.net.sendEvent({
       type: "duel_accept",
@@ -854,6 +900,7 @@ export class Game {
       this.net.sendEvent({ type: "duel_decline", from: this.local.id, to: inv.from });
     }
     PvPService.pendingChallenge = null;
+    this.ui.hideDuelCountdown?.();
     this.ui.hideSocialInvite?.();
     this.ui.toast("Challenge declined");
   }
@@ -1775,7 +1822,7 @@ export class Game {
     if (this.time > p.buffUntil) p.buffMul = 1;
     this._updateCasts(dt);
 
-    // Move (slow while casting — Metin2-style)
+    // Move — skills slow hard; basic auto-attacks stay mobile
     let mx = 0;
     let mz = 0;
     if (this.keys.has("w") || this.keys.has("arrowup")) mz -= 1;
@@ -1783,10 +1830,13 @@ export class Game {
     if (this.keys.has("a") || this.keys.has("arrowleft")) mx -= 1;
     if (this.keys.has("d") || this.keys.has("arrowright")) mx += 1;
     const stealth = this.time < p.stealthUntil;
-    const casting = this.casts.length > 0;
+    const castingSkill = this.casts.some((c) => c.kind === "skill");
+    const castingBasic = this.casts.some((c) => c.kind === "basic");
     const recovering = this.time < (p.recoverUntil || 0);
-    // Metin2: heavy slow while casting, light slow in recovery
-    const moveMul = casting ? 0.22 : recovering ? 0.55 : 1;
+    let moveMul = 1;
+    if (castingSkill) moveMul = 0.32;
+    else if (castingBasic) moveMul = 0.88;
+    else if (recovering) moveMul = p.recoverIsBasic ? 0.94 : 0.62;
     const speed = p.speed * p.buffMul * (stealth ? 1.25 : 1) * moveMul;
     if (mx || mz) {
       const len = Math.hypot(mx, mz);
@@ -1815,7 +1865,10 @@ export class Game {
         p.z = land.z;
       }
     }
-    p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+    // Smooth turn toward aim — removes snap-spin while strafing + auto-attacking
+    const wantRot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+    const turnRate = castingSkill ? 18 : castingBasic || recovering ? 14 : 11;
+    p.rot = dampAngle(p.rot, wantRot, turnRate, dt);
 
     // NPC / tower / portal proximity (NPCs can live on any field map)
     let near =
@@ -1896,13 +1949,15 @@ export class Game {
       }
     }
 
-    // Attack blocked during cast windup + recovery frames
-    const busy = this.casts.length > 0 || this.time < (p.recoverUntil || 0);
-    if ((this.mouse.down || this.keys.has(" ")) && p.atkCd <= 0 && !busy) {
+    // Basic attacks: only blocked by an active cast (recover is light — cadence from atkCd)
+    // Skills: still blocked through recovery
+    const castingAny = this.casts.length > 0;
+    const skillBusy = castingAny || (recovering && !p.recoverIsBasic);
+    if ((this.mouse.down || this.keys.has(" ")) && p.atkCd <= 0 && !castingAny) {
       this.doAttack();
     }
     for (let i = 0; i < 4; i++) {
-      if (this.keys.has(String(i + 1)) && p.skillCd[i] <= 0 && !busy) {
+      if (this.keys.has(String(i + 1)) && p.skillCd[i] <= 0 && !skillBusy) {
         this.keys.delete(String(i + 1));
         this.castSkill(i);
       }
@@ -1959,13 +2014,13 @@ export class Game {
     this.camera.fov += (wantFov - this.camera.fov) * Math.min(1, 6 * dt);
     this.camera.updateProjectionMatrix();
 
-    // Remotes interpolate
+    // Remotes interpolate (pos + yaw)
     for (const [, r] of this.remotes) {
       const t = r.target;
       if (!t) continue;
-      r.state.x += (t.x - r.state.x) * Math.min(1, 12 * dt);
-      r.state.z += (t.z - r.state.z) * Math.min(1, 12 * dt);
-      r.state.rot = t.rot;
+      r.state.x += (t.x - r.state.x) * Math.min(1, 14 * dt);
+      r.state.z += (t.z - r.state.z) * Math.min(1, 14 * dt);
+      r.state.rot = dampAngle(r.state.rot ?? t.rot, t.rot, 12, dt);
       r.state.hp = t.hp;
       r.state.maxHp = t.maxHp || r.state.maxHp || 100;
       r.mesh.position.set(r.state.x, 0, r.state.z);
@@ -1995,19 +2050,37 @@ export class Game {
     } else if (this.net.isHost) {
       this.updateHostWorld(dt);
       this.worldAcc += dt;
-      // ~6 Hz world sync — lighter on Realtime than 8–12 Hz under multiplayer load
-      if (this.worldAcc >= 0.16) {
+      // ~10 Hz world sync — clients lerp between packets
+      if (this.worldAcc >= 0.1) {
         this.worldAcc = 0;
         this.net.sendWorld(this.serializeWorld());
       }
     } else {
-      // clients still animate synced entities
+      // Clients: lerp mob/metin poses toward host targets (kills teleport stutter)
       for (const [, m] of this.metins) {
         m.pulse = (m.pulse || 0) + dt * 2;
+        if (m.tx != null) {
+          m.x += (m.tx - m.x) * Math.min(1, 12 * dt);
+          m.z += (m.tz - m.z) * Math.min(1, 12 * dt);
+          m.mesh.position.set(m.x, 0, m.z);
+        }
         this._animateMetin(m, dt);
       }
       for (const [, mob] of this.mobs) {
-        animateMob(mob.mesh, dt, true);
+        if (mob.tx != null) {
+          const px = mob.x;
+          const pz = mob.z;
+          mob.x += (mob.tx - mob.x) * Math.min(1, 12 * dt);
+          mob.z += (mob.tz - mob.z) * Math.min(1, 12 * dt);
+          const dx = mob.x - px;
+          const dz = mob.z - pz;
+          const moving = Math.hypot(dx, dz) > 0.0008;
+          if (moving) mob.mesh.rotation.y = dampAngle(mob.mesh.rotation.y, Math.atan2(dx, dz), 10, dt);
+          mob.mesh.position.set(mob.x, 0, mob.z);
+          animateMob(mob.mesh, dt, moving);
+        } else {
+          animateMob(mob.mesh, dt, true);
+        }
       }
     }
 
@@ -2029,8 +2102,8 @@ export class Game {
 
     // Net player send
     this.sendAcc += dt;
-    // ~8 Hz player poses — enough for smooth remotes without saturating the channel
-    if (this.sendAcc >= 1 / 8) {
+    // ~12 Hz player poses — smoother remotes with yaw lerp on receivers
+    if (this.sendAcc >= 1 / 12) {
       this.sendAcc = 0;
       this.net.sendPlayer({
         id: p.id,
@@ -2435,7 +2508,8 @@ export class Game {
       c.time -= dt;
       if (c.faceAim && p) {
         this.updateAim();
-        p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+        const want = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+        p.rot = dampAngle(p.rot, want, c.kind === "basic" ? 16 : 20, dt);
       }
       // Keep telegraph glued to caster
       if (c.telegraph && p) {
@@ -2454,19 +2528,22 @@ export class Game {
   _beginAttackAnim(totalDur) {
     const p = this.local;
     if (!p) return;
-    p.attackDur = Math.max(0.35, totalDur);
+    // Short visual window so walk/run resumes between swings
+    p.attackDur = Math.max(0.22, totalDur);
     p.attacking = p.attackDur;
   }
 
-  _beginRecover(recover) {
+  _beginRecover(recover, { basic = false } = {}) {
     const p = this.local;
     if (!p) return;
-    const r = Math.max(0.2, recover || 0.35);
+    const r = Math.max(basic ? 0.1 : 0.2, recover || 0.35);
     p.recoverUntil = this.time + r;
-    // Keep attack pose through recovery
-    if (p.attacking < r) {
-      p.attacking = r;
-      p.attackDur = Math.max(p.attackDur || r, r);
+    p.recoverIsBasic = !!basic;
+    // Keep attack pose briefly — don't cover the whole recover for basics
+    const pose = basic ? Math.min(r, 0.16) : r;
+    if (p.attacking < pose) {
+      p.attacking = pose;
+      p.attackDur = Math.max(p.attackDur || pose, pose);
     }
   }
 
@@ -2492,16 +2569,20 @@ export class Game {
   doAttack() {
     const p = this.local;
     const cls = CLASSES[p.classId];
-    if (this.casts.length || this.time < (p.recoverUntil || 0)) return;
+    // Don't stack basics; skill recover still blocks via castSkill
+    if (this.casts.length) return;
+    if (this.time < (p.recoverUntil || 0) && !p.recoverIsBasic) return;
 
     const ranged = cls.id === "shaman" || p.range > 4;
-    const windup = ranged ? 0.42 : 0.32;
-    const recover = ranged ? 0.38 : 0.42;
-    p.atkCd = Math.max(cls.cd, windup + recover + 0.05);
-    this._beginAttackAnim(windup + recover);
+    // Snappier auto-attack — class cd drives cadence, not windup+recover
+    const windup = ranged ? 0.2 : 0.14;
+    const recover = ranged ? 0.16 : 0.12;
+    p.atkCd = Math.max(cls.cd, windup + 0.04);
+    this._beginAttackAnim(windup + recover * 0.55);
 
     this.updateAim();
-    p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+    const wantRot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+    p.rot = dampAngle(p.rot, wantRot, 22, 1 / 30);
 
     const reach = ranged ? Math.max(p.range, 12) : p.range + 0.95;
     const target = this.pickAimedTarget(p, reach);
@@ -2544,9 +2625,9 @@ export class Game {
   _resolveBasicAttack(c) {
     const p = this.local;
     if (!p) return;
-    this._beginRecover(c.recover || 0.4);
+    this._beginRecover(c.recover || 0.12, { basic: true });
     this.updateAim();
-    p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+    p.rot = dampAngle(p.rot, Math.atan2(this.aim.x - p.x, this.aim.z - p.z), 24, 1 / 30);
     let target = null;
     if (c.targetId) {
       if (c.targetKind === "player") {
@@ -2625,7 +2706,8 @@ export class Game {
 
   castSkill(i) {
     const p = this.local;
-    if (this.casts.length || this.time < (p.recoverUntil || 0)) return;
+    if (this.casts.length) return;
+    if (this.time < (p.recoverUntil || 0) && !p.recoverIsBasic) return;
     if (!SkillService.hasPath(this.character)) {
       this.ui.toast(`Skills unlock at Lv.${SkillService.unlockLevel} — talk to the Skill Master`);
       return;
@@ -2698,9 +2780,11 @@ export class Game {
   _resolveSkillCast(c) {
     const p = this.local;
     if (!p) return;
-    this._beginRecover(c.recover || 0.4);
+    this._beginRecover(c.recover || 0.4, { basic: false });
     this.updateAim();
-    if (c.faceAim) p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+    if (c.faceAim) {
+      p.rot = dampAngle(p.rot, Math.atan2(this.aim.x - p.x, this.aim.z - p.z), 22, 1 / 30);
+    }
 
     // Roll damage at release (not at cast start)
     const roll = CombatService.rollHit({
@@ -2864,9 +2948,30 @@ export class Game {
       return;
     }
     const canApply = this.net.isHost || this.isDungeonAuthority();
-    if (!canApply) return;
-    if (target.type === "mob" && target.ref?.hp > 0) this.damageMob(target.ref, dmg, p.id);
-    else if (target.type === "metin" && target.ref?.hp > 0) this.damageMetin(target.ref, dmg, p.id);
+    if (canApply) {
+      if (target.type === "mob" && target.ref?.hp > 0) this.damageMob(target.ref, dmg, p.id);
+      else if (target.type === "metin" && target.ref?.hp > 0) this.damageMetin(target.ref, dmg, p.id);
+      return;
+    }
+    // Non-host: optimistic HP feedback — host world sync reconciles / confirms kills
+    if (target.type === "mob" && target.ref?.hp > 0) {
+      const applied = Math.max(1, Math.floor(dmg - (target.ref.def || 0) * 0.35));
+      target.ref.hp = Math.max(1, target.ref.hp - applied);
+      updateHpBar(target.ref.mesh, {
+        name: target.ref.name || target.ref.templateId || "Enemy",
+        hp: target.ref.hp,
+        maxHp: target.ref.maxHp || 1,
+      });
+    } else if (target.type === "metin" && target.ref?.hp > 0) {
+      const applied = Math.max(1, Math.floor(dmg));
+      target.ref.hp = Math.max(1, target.ref.hp - applied);
+      updateHpBar(target.ref.mesh, {
+        name: target.ref.name || "Metin",
+        hp: target.ref.hp,
+        maxHp: target.ref.maxHp || 1,
+        color: "#c45cff",
+      });
+    }
   }
 
   meleeHit(p, dmg, cone, range = p.range) {
@@ -3488,14 +3593,19 @@ export class Game {
         };
         this.mobs.set(m.id, mob);
       }
-      mob.x = m.x;
-      mob.z = m.z;
+      // Target pose for client lerp (avoids 10Hz teleport stutter)
+      if (mob.x == null || Math.hypot(mob.x - m.x, mob.z - m.z) > 8) {
+        mob.x = m.x;
+        mob.z = m.z;
+        mob.mesh.position.set(m.x, 0, m.z);
+      }
+      mob.tx = m.x;
+      mob.tz = m.z;
       mob.hp = m.hp;
       mob.maxHp = m.maxHp;
       mob.dungeon = !!m.dungeon;
       mob.boss = !!m.boss;
       mob.mapId = m.mapId || "overworld";
-      mob.mesh.position.set(m.x, 0, m.z);
     }
     for (const [id, mob] of [...this.mobs]) {
       if (!seenM.has(id)) {
@@ -3515,11 +3625,15 @@ export class Game {
         met = { ...m, mesh, pulse: 0, spawnT: 5, name: tmpl.name, dropTable: tmpl.drop_table, templateId: tmpl.id };
         this.metins.set(m.id, met);
       }
-      met.x = m.x;
-      met.z = m.z;
+      if (met.x == null || Math.hypot(met.x - m.x, met.z - m.z) > 8) {
+        met.x = m.x;
+        met.z = m.z;
+        met.mesh.position.set(m.x, 0, m.z);
+      }
+      met.tx = m.x;
+      met.tz = m.z;
       met.hp = m.hp;
       met.mapId = m.mapId || "overworld";
-      met.mesh.position.set(m.x, 0, m.z);
     }
     for (const [id, met] of [...this.metins]) {
       if (!seenT.has(id)) {
@@ -3575,6 +3689,7 @@ export class Game {
         });
       }
     }
+    this._pruneDuelAgainstMissingPeers(ids);
   }
 
   onNetEvent(e) {
@@ -3635,17 +3750,21 @@ export class Game {
 
     // Duel
     if (e.type === "duel_invite" && e.to === this.local?.id) {
+      // Ignore self / ghost invites when the challenger isn't online
+      if (!e.from || e.from === this.local.id || !this._peerOnline(e.from)) return;
+      if (PvPService.duel) return;
       PvPService.pendingChallenge = { from: e.from, fromName: e.fromName, to: e.to };
       this.ui.showSocialInvite?.({
         kind: "duel",
-        text: `${e.fromName} challenges you to a duel!`,
+        text: `${e.fromName || "Player"} challenges you to a duel!`,
       });
-      this.ui.toast(`${e.fromName} challenged you`);
+      this.ui.toast(`${e.fromName || "Player"} challenged you`);
     }
     if (e.type === "duel_decline" && e.to === this.local?.id) {
       this.ui.toast("Challenge declined");
     }
     if (e.type === "duel_accept" && e.to === this.local?.id) {
+      if (!e.from || e.from === this.local.id || !this._peerOnline(e.from)) return;
       PvPService.beginCountdown({
         id: e.duelId || `duel_${Date.now().toString(36)}`,
         a: this.local.id,
@@ -3653,6 +3772,7 @@ export class Game {
         aName: this.local.name,
         bName: e.fromName,
       });
+      this.ui.hideSocialInvite?.();
       this.ui.showDuelCountdown?.(5, false);
       this.onDuelChange?.(PvPService.duel);
       this.ui.toast(`Duel vs ${e.fromName} — get ready!`);
@@ -3842,4 +3962,12 @@ export class Game {
 
 function prevent(e) {
   e.preventDefault();
+}
+
+/** Shortest-arc angle damp toward target (radians). */
+function dampAngle(cur, target, rate, dt) {
+  let diff = target - cur;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  return cur + diff * Math.min(1, rate * dt);
 }
