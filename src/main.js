@@ -401,11 +401,6 @@ const ui = {
       ctx.fill();
     }
     ctx.restore();
-    ctx.strokeStyle = "#c9a227";
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(w / 2, h / 2, w / 2 - 2, 0, Math.PI * 2);
-    ctx.stroke();
   },
 };
 

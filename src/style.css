@@ -566,16 +566,24 @@ button, input { font: inherit; color: inherit; }
   height: 148px;
   border-radius: 50%;
   overflow: hidden;
-  border: 4px solid #d4b44a;
+  box-sizing: border-box;
+  border: 3px solid #c9a227;
   box-shadow:
-    0 0 0 3px #2a1e08,
-    0 0 0 5px #8a6820,
-    0 10px 28px rgba(0, 0, 0, 0.65),
-    inset 0 0 20px rgba(0, 0, 0, 0.45);
+    0 0 0 2px #1a1206,
+    0 8px 20px rgba(0, 0, 0, 0.55),
+    inset 0 0 14px rgba(0, 0, 0, 0.35);
   background: #142010;
   z-index: 6;
 }
-#mini { display: block; width: 148px; height: 148px; border-radius: 50%; }
+#mini {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 50%;
+  outline: none;
+  box-shadow: none;
+}
 
 .m2-bottom {
   position: absolute;
@@ -2075,7 +2083,7 @@ button, input { font: inherit; color: inherit; }
   .m2-bottom { grid-template-columns: 1fr; gap: 0.5rem; }
   .m2-stats-panel { justify-self: start; }
   .m2-hotbar-wrap { justify-self: start; }
-  .m2-minimap, #mini { width: 110px; height: 110px; }
+  .m2-minimap { width: 110px; height: 110px; }
   .orb { width: 74px; height: 74px; }
   .sp-orb { width: 62px; height: 62px; }
   .m2-chat { bottom: 200px; width: min(280px, 70vw); }
