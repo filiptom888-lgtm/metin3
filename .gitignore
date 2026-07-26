@@ -16,10 +16,9 @@ dist-ssr
 !.env.example
 .agents
 
-# Raw Meshy exports (~62MB each); optimized copies live in public/models/
-models/*.glb
-# Local asset dump (rigged bins, windmill.zip, oversized props) — served copies are under public/models/
-models/
+# Raw Meshy dumps at repo root (rigged bins, windmill.zip, oversized props).
+# Served copies live under public/models/ and MUST be tracked.
+/models/
 playwright-report
 test-results
 
