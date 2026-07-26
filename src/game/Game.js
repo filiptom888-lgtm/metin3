@@ -1967,6 +1967,7 @@ export class Game {
     else if (castingBasic) moveMul = 0.88;
     else if (recovering) moveMul = p.recoverIsBasic ? 0.94 : 0.62;
     const speed = p.speed * p.buffMul * (stealth ? 1.25 : 1) * moveMul;
+    let moveFacing = null;
     if (ix || iz) {
       const len = Math.hypot(ix, iz) || 1;
       ix /= len;
@@ -1976,10 +1977,13 @@ export class Game {
       const fz = -Math.cos(yaw);
       const rx = Math.cos(yaw);
       const rz = -Math.sin(yaw);
+      const mx = fx * iz + rx * ix;
+      const mz = fz * iz + rz * ix;
+      moveFacing = Math.atan2(mx, mz);
       const ox = p.x;
       const oz = p.z;
-      p.x += (fx * iz + rx * ix) * speed * dt;
-      p.z += (fz * iz + rz * ix) * speed * dt;
+      p.x += mx * speed * dt;
+      p.z += mz * speed * dt;
       const mapId = MapService.currentId;
       if (mapId === "overworld" || mapId === "valley") {
         const clamped = clampFieldWalk(mapId, p.x, p.z, ox, oz);
@@ -2037,10 +2041,15 @@ export class Game {
         }
       }
     }
-    // Smooth turn toward cursor / locked combat target
+    // Face walk direction while moving; aim only when attacking / casting / idle
     const held = this.casts.find((c) => c.faceAim);
-    const wantRot = this._aimFacing(p, held?.targetId, held?.targetKind);
-    const turnRate = castingSkill ? 20 : castingBasic || recovering ? 16 : 12;
+    const aiming =
+      !!held || this.mouse.down || this.keys.has(" ") || castingSkill || castingBasic;
+    const wantRot =
+      p.moving && moveFacing != null && !aiming
+        ? moveFacing
+        : this._aimFacing(p, held?.targetId, held?.targetKind);
+    const turnRate = castingSkill ? 20 : castingBasic || recovering ? 16 : p.moving ? 14 : 12;
     p.rot = dampAngle(p.rot, wantRot, turnRate, dt);
 
     // NPC / tower / portal proximity (NPCs can live on any field map)
@@ -2180,11 +2189,8 @@ export class Game {
       this.sun.target.updateMatrixWorld();
     }
 
-    // Stay behind while moving; free orbit when idle / RMB drag
-    if (!this._orbiting && p.moving) {
-      const behind = p.rot + Math.PI;
-      this.camYaw = dampAngle(this.camYaw, behind, 3.4, dt);
-    }
+    // Camera yaw only from RMB/MMB orbit — no auto-spin while walking.
+    // Position tracks the player; look stays on them when they turn in place.
     this.camDist += (this.camDistTarget - this.camDist) * Math.min(1, 9 * dt);
     const dist = this.camDist;
     const pitch = this.camPitch;
@@ -2196,15 +2202,13 @@ export class Game {
       Math.cos(this.camYaw) * flat
     );
     const desired = new THREE.Vector3(p.x, gy, p.z).add(this.camOffset);
-    this.camera.position.lerp(desired, 1 - Math.pow(0.0008, dt));
+    this.camera.position.lerp(desired, 1 - Math.pow(0.00005, dt));
     // Never let the camera clip under the ground
     const camFloor =
       this.groundY(this.camera.position.x, this.camera.position.z) + 1.15;
     if (this.camera.position.y < camFloor) this.camera.position.y = camFloor;
-    // Look slightly ahead so the hero sits lower-center like Metin2
-    const lookX = p.x - Math.sin(this.camYaw) * 0.55;
-    const lookZ = p.z - Math.cos(this.camYaw) * 0.55;
-    this.camera.lookAt(lookX, gy + 1.35, lookZ);
+    // Look at the player — stable while walking; character turn is visible in the mesh
+    this.camera.lookAt(p.x, gy + 1.35, p.z);
     const wantFov = THREE.MathUtils.lerp(54, 42, clamp((20 - dist) / 14, 0, 1));
     this.camera.fov += (wantFov - this.camera.fov) * Math.min(1, 6 * dt);
     this.camera.updateProjectionMatrix();
