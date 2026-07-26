@@ -29,10 +29,10 @@ export const BIOME_DEFS = {
     id: "desert",
     name: "Yongbi Desert",
     half: BIOME_HALF,
-    background: "#c4a878",
-    fog: "#d0b888",
-    fogNear: 42,
-    fogFar: 145,
+    background: "#b89868",
+    fog: "#d4bc90",
+    fogNear: 55,
+    fogFar: 155,
     ground: "#c9a878",
     groundTint: "#e0c490",
     accent: "#a07840",
@@ -105,4 +105,11 @@ export function isBiomeMap(id) {
 
 export function biomeIds() {
   return Object.keys(BIOME_DEFS);
+}
+
+/** Oasis town in Yongbi Desert SE corner (away from west return portal). */
+export const DESERT_CITY = { x: 48, z: 52, r: 16 };
+
+export function inDesertCity(x, z, pad = 0) {
+  return Math.hypot(x - DESERT_CITY.x, z - DESERT_CITY.z) < DESERT_CITY.r + pad;
 }

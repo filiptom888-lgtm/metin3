@@ -21,6 +21,25 @@ export const NPCS = [
     x: 0,
     z: 14,
   },
+  // Yongbi Desert oasis — shop + teleporter in SE town
+  {
+    id: "desert_shop",
+    name: "Oasis Trader",
+    role: "shop",
+    kingdom: 0,
+    mapId: "desert",
+    x: 43.5,
+    z: 51,
+  },
+  {
+    id: "desert_tele",
+    name: "Desert Gatekeeper",
+    role: "teleport",
+    kingdom: 0,
+    mapId: "desert",
+    x: 48,
+    z: 57.5,
+  },
 ];
 
 /** Shop stock grouped for UI tabs */

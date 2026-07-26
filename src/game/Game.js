@@ -35,7 +35,7 @@ import { FxSystem } from "./fx.js";
 import { derivedStats, applyLevelUps } from "./character.js";
 import { getItem, RARITY_COLOR } from "./items.js";
 import { clampToOrcLand } from "../data/orcMap.js";
-import { isBiomeMap } from "../data/biomeMaps.js";
+import { isBiomeMap, inDesertCity } from "../data/biomeMaps.js";
 import {
   equipFromInventory,
   unequipSlot,
@@ -2548,7 +2548,8 @@ export class Game {
       if (m.spawnT <= 0) {
         m.spawnT = 6;
         const count = fieldMobs.filter((x) => (x.mapId || "overworld") === mid).length;
-        const blockedCity = mid !== "orc_valley" && inCity(m.x, m.z);
+        const blockedCity =
+          (mid !== "orc_valley" && inCity(m.x, m.z)) || (mid === "desert" && inDesertCity(m.x, m.z));
         if (count < 38 && !blockedCity) {
           const a = rand(0, Math.PI * 2);
           let sx = m.x + Math.cos(a) * 4;
@@ -2581,8 +2582,8 @@ export class Game {
         // Mobs ignore players deep in the city (not on Orc Isles)
         if (
           mid !== "orc_valley" &&
-          inCity(pl.x, pl.z) &&
-          dist2(pl.x, pl.z, 0, 0) < CITY_RADIUS - 3
+          ((inCity(pl.x, pl.z) && dist2(pl.x, pl.z, 0, 0) < CITY_RADIUS - 3) ||
+            (mid === "desert" && inDesertCity(pl.x, pl.z, -2)))
         ) {
           continue;
         }

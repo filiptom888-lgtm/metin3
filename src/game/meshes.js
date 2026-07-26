@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { CLASSES, MAP_HALF, MAP_SIZE, CITY_RADIUS, CITY_GATE, EDGE_PORTAL, TOWER_CORNER } from "./data.js";
 import { ORC_BRIDGES, ORC_ISLANDS, ORC_MAP_HALF, ORC_MAP_SIZE } from "../data/orcMap.js";
-import { BIOME_DEFS, BIOME_EDGE, BIOME_SIZE, ORC_BIOME_GATES, biomeIds } from "../data/biomeMaps.js";
+import { BIOME_DEFS, BIOME_EDGE, BIOME_SIZE, ORC_BIOME_GATES, biomeIds, DESERT_CITY, inDesertCity } from "../data/biomeMaps.js";
 import { BANDIT_CAMP } from "../data/banditCamp.js";
 import { campsOnMap } from "../data/wildCamps.js";
 import { outpostsOnMap } from "../data/outposts.js";
@@ -1971,6 +1971,257 @@ export function makeOrcMapRoot() {
   return root;
 }
 
+function makeDesertCactus(h = 2.6) {
+  const g = new THREE.Group();
+  const green = mat("#3a6a38", { roughness: 0.92 });
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.36, h, 7), green);
+  trunk.position.y = h * 0.5;
+  trunk.castShadow = true;
+  g.add(trunk);
+  const armH = h * 0.38;
+  for (const side of [-1, 1]) {
+    if (Math.random() < 0.28) continue;
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, armH, 6), green);
+    arm.position.set(side * 0.55, h * 0.45, 0);
+    arm.rotation.z = side * 0.85;
+    g.add(arm);
+    const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.16, armH * 0.55, 6), green);
+    tip.position.set(side * 0.95, h * 0.55 + armH * 0.15, 0);
+    g.add(tip);
+  }
+  return g;
+}
+
+/** Dunes, cacti, caravan road — skips oasis city footprint */
+function dressDesertField(root, half) {
+  const dress = new THREE.Group();
+  dress.name = "desert_field";
+  const duneMat = mat("#d2b48c", { roughness: 0.98 });
+  const rockMat = mat("#8a7048", { roughness: 0.95 });
+
+  // Beaten sand road: west portal → oasis city
+  const roadMat = mat("#c4a878", { roughness: 0.97 });
+  const x0 = -BIOME_EDGE + 4;
+  const z0 = 0;
+  const x1 = DESERT_CITY.x - DESERT_CITY.r * 0.55;
+  const z1 = DESERT_CITY.z - DESERT_CITY.r * 0.35;
+  const dx = x1 - x0;
+  const dz = z1 - z0;
+  const len = Math.hypot(dx, dz) || 1;
+  const segs = 14;
+  for (let i = 0; i < segs; i++) {
+    const t0 = i / segs;
+    const t1 = (i + 1) / segs;
+    const mx = x0 + dx * ((t0 + t1) * 0.5);
+    const mz = z0 + dz * ((t0 + t1) * 0.5);
+    const segLen = len / segs + 0.4;
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.06, 4.2), roadMat);
+    strip.position.set(mx, 0.04, mz);
+    strip.rotation.y = Math.atan2(dx, dz);
+    strip.receiveShadow = true;
+    dress.add(strip);
+  }
+
+  for (let i = 0; i < 28; i++) {
+    const ang = (i / 28) * Math.PI * 2 + 0.15;
+    const r = 18 + (i % 6) * 9 + Math.random() * 4;
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (inDesertCity(x, z, 6)) continue;
+    if (Math.hypot(x + BIOME_EDGE, z) < 16) continue;
+    const mound = new THREE.Mesh(
+      new THREE.SphereGeometry(3.2 + (i % 4) * 0.7, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.48),
+      duneMat
+    );
+    mound.position.set(x, 0.15, z);
+    mound.scale.set(1.5 + Math.random() * 0.5, 0.4 + Math.random() * 0.2, 1.15);
+    mound.rotation.y = ang;
+    dress.add(mound);
+  }
+
+  for (let i = 0; i < 36; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = 12 + Math.random() * (half - 20);
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (inDesertCity(x, z, 5)) continue;
+    if (Math.hypot(x + BIOME_EDGE, z) < 14) continue;
+    const cactus = makeDesertCactus(2.0 + Math.random() * 1.8);
+    cactus.position.set(x, 0, z);
+    cactus.rotation.y = Math.random() * Math.PI;
+    dress.add(cactus);
+  }
+
+  for (let i = 0; i < 18; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = 20 + Math.random() * (half - 28);
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    if (inDesertCity(x, z, 5)) continue;
+    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.7 + Math.random() * 1.1, 0), rockMat);
+    rock.position.set(x, 0.35, z);
+    rock.rotation.set(Math.random(), Math.random(), Math.random());
+    dress.add(rock);
+  }
+
+  // Mid-map ruined tent camp (landmark)
+  const campX = -8;
+  const campZ = -28;
+  if (!inDesertCity(campX, campZ, 8)) {
+    placeOutpostTent(dress, campX, campZ, "desert", 0.8);
+    const ash = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 0.16, 8), mat("#2a2218"));
+    ash.position.set(campX + 1.5, 0.08, campZ);
+    dress.add(ash);
+  }
+
+  root.add(dress);
+}
+
+/** Adobe oasis town in the SE corner */
+function dressDesertOasisCity(root) {
+  const { x: cx, z: cz, r } = DESERT_CITY;
+  const g = new THREE.Group();
+  g.name = "desert_oasis_city";
+  g.position.set(cx, 0, cz);
+
+  const adobe = ["#d2b48c", "#c4a574", "#e0c4a0", "#b8956a"];
+  const roofs = ["#8a4a28", "#6a3820", "#5a3020"];
+  const wallMat = mat("#c9b090", { roughness: 0.94 });
+  const plazaTex = makeCobbleTexture(false);
+  plazaTex.repeat.set(8, 8);
+
+  const plaza = new THREE.Mesh(
+    new THREE.CircleGeometry(r - 0.6, 40),
+    new THREE.MeshStandardMaterial({ map: plazaTex, color: "#e8d8b8", roughness: 0.92, flatShading: false })
+  );
+  plaza.rotation.x = -Math.PI / 2;
+  plaza.position.y = 0.05;
+  plaza.receiveShadow = true;
+  g.add(plaza);
+
+  // Oasis pool
+  const water = new THREE.Mesh(
+    new THREE.CircleGeometry(3.2, 24),
+    new THREE.MeshStandardMaterial({
+      color: "#4a9aaa",
+      roughness: 0.15,
+      metalness: 0.35,
+      transparent: true,
+      opacity: 0.88,
+    })
+  );
+  water.rotation.x = -Math.PI / 2;
+  water.position.y = 0.1;
+  g.add(water);
+  const rim = new THREE.Mesh(
+    new THREE.TorusGeometry(3.35, 0.22, 8, 28),
+    mat("#a89070", { roughness: 0.9 })
+  );
+  rim.rotation.x = -Math.PI / 2;
+  rim.position.y = 0.12;
+  g.add(rim);
+
+  // Date palms (simple) around oasis
+  for (let i = 0; i < 5; i++) {
+    const ang = (i / 5) * Math.PI * 2 + 0.2;
+    const pr = 4.8;
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.18, 0.28, 4.2, 6),
+      mat("#5a4028", { roughness: 0.9 })
+    );
+    trunk.position.set(Math.cos(ang) * pr, 2.1, Math.sin(ang) * pr);
+    g.add(trunk);
+    const frond = new THREE.Mesh(
+      new THREE.ConeGeometry(1.6, 1.4, 6),
+      mat("#3a6a28", { roughness: 0.88 })
+    );
+    frond.position.set(Math.cos(ang) * pr, 4.5, Math.sin(ang) * pr);
+    g.add(frond);
+  }
+
+  // Adobe wall ring with gate toward the west return portal
+  const wallSegs = 28;
+  const gateAng = Math.atan2(-cz, -BIOME_EDGE - cx);
+  for (let i = 0; i < wallSegs; i++) {
+    const a0 = (i / wallSegs) * Math.PI * 2;
+    const am = a0 + Math.PI / wallSegs;
+    let da = am - gateAng;
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    if (Math.abs(da) < 0.3) continue;
+    const wx = Math.cos(am) * r;
+    const wz = Math.sin(am) * r;
+    const seg = new THREE.Mesh(new THREE.BoxGeometry(2.15, 3.4, 0.85), wallMat);
+    seg.position.set(wx, 1.7, wz);
+    seg.rotation.y = am + Math.PI / 2;
+    seg.castShadow = true;
+    g.add(seg);
+  }
+  // Gate posts
+  for (const side of [-1, 1]) {
+    const ga = gateAng + side * 0.34;
+    const post = new THREE.Mesh(new THREE.BoxGeometry(1.1, 4.2, 1.1), wallMat);
+    post.position.set(Math.cos(ga) * r, 2.1, Math.sin(ga) * r);
+    g.add(post);
+  }
+
+  // Houses around plaza (not on oasis)
+  const layouts = [
+    [8, -6],
+    [-9, -5],
+    [10, 7],
+    [-8, 8],
+    [6, 11],
+    [-11, 2],
+    [3, -11],
+    [-4, -10],
+    [12, 1],
+    [-2, 12],
+  ];
+  layouts.forEach(([bx, bz], i) => {
+    if (Math.hypot(bx, bz) < 6.5) return;
+    if (Math.hypot(bx, bz) > r - 4) return;
+    const b = makeBuilding(
+      3.4 + (i % 3) * 0.5,
+      2.8 + (i % 3) * 0.35,
+      3.2 + (i % 2) * 0.5,
+      adobe[i % adobe.length],
+      { roofColor: roofs[i % roofs.length], smoke: i % 3 === 0 }
+    );
+    b.position.set(bx, 0, bz);
+    b.rotation.y = (i * 0.7) % Math.PI;
+    g.add(b);
+  });
+
+  // Market awnings near shop spot
+  for (let i = 0; i < 3; i++) {
+    const aw = new THREE.Mesh(
+      new THREE.BoxGeometry(2.2, 0.08, 1.6),
+      mat(i === 1 ? "#c43c2e" : "#c9a040", { roughness: 0.85 })
+    );
+    aw.position.set(-5.5 + i * 0.2, 2.4, -1 + i * 2.2);
+    aw.rotation.y = 0.2;
+    g.add(aw);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 2.4, 6), mat("#5a3a22"));
+    pole.position.set(-5.5, 1.2, -1 + i * 2.2);
+    g.add(pole);
+  }
+
+  // Courtyard lamps
+  const lights = root.userData.torchLights || (root.userData.torchLights = []);
+  for (const [lx, lz] of [
+    [5, 5],
+    [-5, 5],
+    [5, -5],
+    [-5, -5],
+  ]) {
+    placeLamppost(g, lx, lz, "desert", { warm: true, lightsOut: lights });
+  }
+
+  root.add(g);
+  return g;
+}
+
 /** Open biome field (fire / desert / snow) — flat hunting ground + return portal west. */
 export function makeBiomeMapRoot(biomeId) {
   const def = BIOME_DEFS[biomeId];
@@ -1981,25 +2232,32 @@ export function makeBiomeMapRoot(biomeId) {
 
   const half = def.half;
   const size = half * 2;
+  const sandMap = def.props === "sand" ? makeSandTexture() : null;
+  if (sandMap) sandMap.repeat.set(size / 10, size / 10);
   const groundMat = new THREE.MeshStandardMaterial({
-    color: def.groundTint || def.ground,
+    color: sandMap ? "#e8d4a8" : def.groundTint || def.ground,
+    map: sandMap || null,
     roughness: def.props === "lava" ? 0.88 : 0.96,
     metalness: def.props === "lava" ? 0.12 : 0.02,
+    flatShading: false,
   });
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(size, size, 48, 48), groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
-  // Soft rolls for lava / dunes / drifts
+  // Soft rolls for lava / dunes / drifts — keep oasis city flat
   const pos = ground.geometry.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const lx = pos.getX(i);
     const ly = pos.getY(i);
+    const wx = lx;
+    const wz = ly;
     const d = Math.hypot(lx, ly);
     let h = 0;
     if (def.props === "lava") {
       h = Math.sin(lx * 0.08) * Math.cos(ly * 0.07) * 0.55 + (d > half * 0.7 ? 0.8 : 0);
     } else if (def.props === "sand") {
-      h = Math.sin(lx * 0.05 + 1.2) * Math.cos(ly * 0.045) * 0.7;
+      if (inDesertCity(wx, wz, 4)) h = 0;
+      else h = Math.sin(lx * 0.05 + 1.2) * Math.cos(ly * 0.045) * 0.55 + Math.sin(lx * 0.11) * 0.18;
     } else {
       h = Math.sin(lx * 0.04) * Math.cos(ly * 0.05) * 0.9 + Math.max(0, (d - half * 0.55) * 0.04);
     }
@@ -2037,25 +2295,8 @@ export function makeBiomeMapRoot(biomeId) {
       root.add(peak);
     }
   } else if (def.props === "sand") {
-    const dune = mat("#c9a878", { roughness: 0.98 });
-    for (let i = 0; i < 16; i++) {
-      const ang = (i / 16) * Math.PI * 2 + 0.2;
-      const r = 22 + (i % 5) * 8;
-      const mound = new THREE.Mesh(new THREE.SphereGeometry(3.5 + (i % 3), 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.45), dune);
-      mound.position.set(Math.cos(ang) * r, 0.2, Math.sin(ang) * r);
-      mound.scale.set(1.4, 0.45, 1.1);
-      root.add(mound);
-    }
-    for (let i = 0; i < 10; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const r = 15 + Math.random() * 50;
-      const cactus = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.25, 0.35, 2.2 + Math.random(), 6),
-        mat("#3a6a38")
-      );
-      cactus.position.set(Math.cos(ang) * r, 1.1, Math.sin(ang) * r);
-      root.add(cactus);
-    }
+    dressDesertField(root, half);
+    dressDesertOasisCity(root);
   } else {
     // snow — sparse pines + ice rocks
     for (let i = 0; i < 40; i++) {
@@ -2083,10 +2324,14 @@ export function makeBiomeMapRoot(biomeId) {
     }
   }
 
+  const portalGaps = [{ x: -BIOME_EDGE, z: 0, w: 18 }];
+  if (biomeId === "desert") {
+    portalGaps.push({ x: DESERT_CITY.x, z: DESERT_CITY.z, w: DESERT_CITY.r + 10 });
+  }
   addMapHorizon(root, {
     half,
     arid: def.props !== "snow",
-    portalGaps: [{ x: -BIOME_EDGE, z: 0, w: 18 }],
+    portalGaps,
   });
 
   const ret = makeMapPortalMesh(def.portalColor, def.returnLabel);
@@ -2095,6 +2340,7 @@ export function makeBiomeMapRoot(biomeId) {
   root.add(ret);
 
   root.userData = { mapId: biomeId, edgePortal: ret };
+  if (biomeId === "desert") root.userData.desertCity = DESERT_CITY;
   return root;
 }
 
