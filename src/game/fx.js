@@ -31,33 +31,36 @@ export class FxSystem {
 
   // ─── Basic melee ─────────────────────────────────────────────
 
+  /** Vertical sword arc in front of the attacker (no ground telegraph). */
   slash(x, z, rot, color = "#e8d48b") {
     const g = this._facingGroup(x, z, rot);
 
-    const crescent = new THREE.Mesh(
-      new THREE.RingGeometry(0.55, 2.35, 22, 1, -0.85, 1.7),
-      this._mat("#fff6d0", 0.92)
+    // Tall crescent slash — stands upright, sweeps in +Z
+    const blade = new THREE.Mesh(
+      new THREE.RingGeometry(0.4, 2.05, 20, 1, -1.05, 2.1),
+      this._mat("#fff8e0", 0.95)
     );
-    crescent.position.set(0, 1.15, 1.35);
-    crescent.rotation.y = Math.PI / 2;
-    crescent.rotation.z = 0.15;
-    g.add(crescent);
+    blade.position.set(0.15, 1.35, 1.55);
+    blade.rotation.y = Math.PI / 2;
+    blade.rotation.z = -0.35;
+    g.add(blade);
 
     const trail = new THREE.Mesh(
-      new THREE.RingGeometry(0.7, 2.1, 18, 1, -0.7, 1.4),
-      this._mat(color || "#e8d48b", 0.55)
+      new THREE.RingGeometry(0.55, 1.85, 16, 1, -0.9, 1.8),
+      this._mat(color || "#e8d48b", 0.62)
     );
-    trail.position.set(0, 1.05, 1.15);
+    trail.position.set(-0.1, 1.25, 1.35);
     trail.rotation.y = Math.PI / 2;
-    trail.rotation.z = -0.1;
+    trail.rotation.z = 0.2;
     g.add(trail);
 
-    const glint = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 0.18), this._mat("#ffffff", 0.55));
-    glint.position.set(0, 1.0, 1.5);
-    g.add(glint);
+    const tip = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 2.2), this._mat("#ffffff", 0.65));
+    tip.position.set(0, 1.3, 1.85);
+    tip.rotation.z = 0.4;
+    g.add(tip);
 
-    this.fx.push({ mesh: g, life: 0.48, max: 0.48, type: "slashSwing" });
-    this._burst(x + Math.sin(rot) * 1.6, z + Math.cos(rot) * 1.6, "#ffe9a0", 6, 1.1);
+    this.fx.push({ mesh: g, life: 0.32, max: 0.32, type: "slashSwing", spin: 9 });
+    this._burst(x + Math.sin(rot) * 1.5, z + Math.cos(rot) * 1.5, "#ffe9a0", 5, 0.9);
   }
 
   // ─── Cast telegraphs (return root so Game can follow player) ─
@@ -152,10 +155,12 @@ export class FxSystem {
   }
 
   _makeWedge(reach, spread, color, opacity) {
+    // Shape XY → after rot.x=-π/2 maps to XZ with +Y_shape → −Z_local.
+    // Use negative Y so the wedge opens toward +Z (player facing).
     const shape = new THREE.Shape();
     shape.moveTo(0, 0);
-    shape.lineTo(-Math.sin(spread) * reach, Math.cos(spread) * reach);
-    shape.absarc(0, 0, reach, Math.PI / 2 - spread, Math.PI / 2 + spread, false);
+    shape.lineTo(-Math.sin(spread) * reach, -Math.cos(spread) * reach);
+    shape.absarc(0, 0, reach, -Math.PI / 2 + spread, -Math.PI / 2 - spread, true);
     shape.lineTo(0, 0);
     const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), this._mat(color, opacity));
     mesh.rotation.x = -Math.PI / 2;
@@ -488,7 +493,7 @@ export class FxSystem {
         this.aoe(x, z, 2.6, color);
         break;
       case "cast":
-        this.cast(x, z, color, radius || 0.55);
+        // Ground telegraphs removed — no preview FX
         break;
       default:
         this.slash(x, z, rot, color || "#e8d48b");
@@ -583,9 +588,11 @@ export class FxSystem {
         }
       }
       if (f.type === "slashSwing") {
-        const s = 0.85 + (1 - t) * 0.45;
-        root.scale.set(s, 1, 0.9 + (1 - t) * 0.35);
-        for (const mat of mats) mat.opacity = Math.min(1, mat.opacity || 0.8) * t;
+        const s = 0.9 + (1 - t) * 0.35;
+        root.scale.set(s, 1, 0.95 + (1 - t) * 0.25);
+        // Sweep the blade across the swing
+        root.rotation.y += (f.spin || 6) * dt * (0.4 + t);
+        for (const mat of mats) mat.opacity = Math.min(1, mat.opacity || 0.8) * Math.max(0.15, t);
       }
       if (f.type === "castPulse" || f.type === "telegraph") {
         root.traverse((o) => {

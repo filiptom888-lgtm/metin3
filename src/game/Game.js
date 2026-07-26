@@ -1942,9 +1942,10 @@ export class Game {
         p.z = land.z;
       }
     }
-    // Smooth turn toward aim — removes snap-spin while strafing + auto-attacking
-    const wantRot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
-    const turnRate = castingSkill ? 18 : castingBasic || recovering ? 14 : 11;
+    // Smooth turn toward cursor / locked combat target
+    const held = this.casts.find((c) => c.faceAim);
+    const wantRot = this._aimFacing(p, held?.targetId, held?.targetKind);
+    const turnRate = castingSkill ? 20 : castingBasic || recovering ? 16 : 12;
     p.rot = dampAngle(p.rot, wantRot, turnRate, dt);
 
     // NPC / tower / portal proximity (NPCs can live on any field map)
@@ -2596,21 +2597,34 @@ export class Game {
       c.time -= dt;
       if (c.faceAim && p) {
         this.updateAim();
-        const want = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
-        p.rot = dampAngle(p.rot, want, c.kind === "basic" ? 16 : 20, dt);
-      }
-      // Keep telegraph glued to caster
-      if (c.telegraph && p) {
-        c.telegraph.position.set(p.x, 0, p.z);
-        c.telegraph.rotation.y = p.rot;
+        p.rot = dampAngle(p.rot, this._aimFacing(p, c.targetId, c.targetKind), c.kind === "basic" ? 22 : 20, dt);
       }
     }
     const done = this.casts.filter((c) => c.time <= 0);
     this.casts = this.casts.filter((c) => c.time > 0);
     for (const c of done) {
-      c.telegraph = null; // FxSystem will expire the mesh
       this._resolveCast(c);
     }
+  }
+
+  /** Facing toward cursor, or locked onto a held target id when still alive. */
+  _aimFacing(p, targetId = null, targetKind = null) {
+    if (targetId) {
+      if (targetKind === "metin") {
+        const met = this.metins.get(targetId);
+        if (met?.hp > 0) return Math.atan2(met.x - p.x, met.z - p.z);
+      } else if (targetKind === "player") {
+        const opp = this._duelOpponentTarget();
+        if (opp && opp.ref.id === targetId) return Math.atan2(opp.x - p.x, opp.z - p.z);
+      } else {
+        const mob = this.mobs.get(targetId);
+        if (mob?.hp > 0) return Math.atan2(mob.x - p.x, mob.z - p.z);
+      }
+    }
+    // Prefer enemy under cursor, else ground aim point
+    const aimed = this.aimEntity || this._pickEnemyAtCursor();
+    if (aimed) return Math.atan2(aimed.x - p.x, aimed.z - p.z);
+    return Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
   }
 
   _beginAttackAnim(totalDur) {
@@ -2635,13 +2649,6 @@ export class Game {
     }
   }
 
-  _telegraphShape(skType) {
-    if (skType === "cone" || skType === "dash") return "cone";
-    if (skType === "aoe" || skType === "burst" || skType === "dot" || skType === "drain") return "aoe";
-    if (skType === "bolt") return "bolt";
-    return "feet";
-  }
-
   _resolveCast(c) {
     const p = this.local;
     if (!p || !c) return;
@@ -2663,39 +2670,16 @@ export class Game {
 
     const ranged = cls.id === "shaman" || p.range > 4;
     // Snappier auto-attack — class cd drives cadence, not windup+recover
-    const windup = ranged ? 0.2 : 0.14;
-    const recover = ranged ? 0.16 : 0.12;
+    const windup = ranged ? 0.18 : 0.12;
+    const recover = ranged ? 0.14 : 0.1;
     p.atkCd = Math.max(cls.cd, windup + 0.04);
-    this._beginAttackAnim(windup + recover * 0.55);
+    this._beginAttackAnim(windup + recover * 0.7);
 
     this.updateAim();
-    const wantRot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
-    p.rot = dampAngle(p.rot, wantRot, 22, 1 / 30);
-
     const reach = ranged ? Math.max(p.range, 12) : p.range + 0.95;
     const target = this.pickAimedTarget(p, reach);
-    const color = ranged ? "#6ec8ff" : "#e8d48b";
-
-    const telegraph = this.fx?.telegraph({
-      x: p.x,
-      z: p.z,
-      rot: p.rot,
-      color,
-      duration: windup,
-      shape: ranged ? "bolt" : "cone",
-      reach: Math.min(reach, 3.2),
-    });
-    this.net.sendEvent({
-      type: "fx",
-      kind: "skill",
-      skill: "cast",
-      x: p.x,
-      z: p.z,
-      rot: p.rot,
-      color,
-      r: windup,
-      from: p.id,
-    });
+    // Snap face to cursor / target — no ground telegraph
+    p.rot = this._aimFacing(p, target?.ref?.id, target?.type);
 
     this.casts.push({
       kind: "basic",
@@ -2704,7 +2688,6 @@ export class Game {
       faceAim: true,
       ranged,
       reach,
-      telegraph,
       targetId: target?.ref?.id || null,
       targetKind: target?.type || null,
     });
@@ -2715,7 +2698,6 @@ export class Game {
     if (!p) return;
     this._beginRecover(c.recover || 0.12, { basic: true });
     this.updateAim();
-    p.rot = dampAngle(p.rot, Math.atan2(this.aim.x - p.x, this.aim.z - p.z), 24, 1 / 30);
     let target = null;
     if (c.targetId) {
       if (c.targetKind === "player") {
@@ -2730,6 +2712,8 @@ export class Game {
       }
     }
     if (!target) target = this.pickAimedTarget(p, c.reach);
+    // Face the hit target (or cursor) at the moment of impact
+    p.rot = this._aimFacing(p, target?.ref?.id, target?.type);
 
     const roll = CombatService.rollHit({
       attacker: p,
@@ -2764,7 +2748,7 @@ export class Game {
       return;
     }
 
-    // Gold crescent in front — never class-color ground blob
+    // Sword swing FX in front of the player (follows facing / cursor)
     this.fx?.slash(p.x, p.z, p.rot, roll.kind === "crit" ? "#ffe08a" : "#e8d48b");
     this.meleeHitAimed(p, dmg, target);
     if (target) this.fx?.hitSparks(target.x, target.z, "#fff4c8");
@@ -2812,7 +2796,8 @@ export class Game {
     const { cast: castTime, recover } = SkillService.timing(sk);
     this._beginAttackAnim(castTime + recover);
     this.updateAim();
-    p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
+    const skillTarget = this.pickAimedTarget(p, sk.reach || p.range + 1.4);
+    p.rot = this._aimFacing(p, skillTarget?.ref?.id, skillTarget?.type);
 
     const castColor =
       sk.color ||
@@ -2823,28 +2808,7 @@ export class Game {
           : sk.type === "drain" || sk.type === "dot"
             ? "#8b3fd4"
             : "#e8d48b");
-    const shape = this._telegraphShape(sk.type);
-    const telegraph = this.fx?.telegraph({
-      x: p.x,
-      z: p.z,
-      rot: p.rot,
-      color: castColor,
-      duration: castTime,
-      shape,
-      radius: sk.radius || 4.5,
-      reach: sk.reach || p.range + 1.4,
-    });
-    this.net.sendEvent({
-      type: "fx",
-      kind: "skill",
-      skill: "cast",
-      x: p.x,
-      z: p.z,
-      rot: p.rot,
-      color: castColor,
-      r: castTime,
-      from: p.id,
-    });
+    // No ground telegraph — release VFX only
     audio.sfx("skill");
 
     this.casts.push({
@@ -2861,7 +2825,8 @@ export class Game {
       radius: sk.radius || (sk.type === "burst" ? 3.8 : 4.8),
       reach: sk.reach || p.range + 1.4,
       skillIndex: i,
-      telegraph,
+      targetId: skillTarget?.ref?.id || null,
+      targetKind: skillTarget?.type || null,
     });
   }
 
@@ -2871,7 +2836,7 @@ export class Game {
     this._beginRecover(c.recover || 0.4, { basic: false });
     this.updateAim();
     if (c.faceAim) {
-      p.rot = dampAngle(p.rot, Math.atan2(this.aim.x - p.x, this.aim.z - p.z), 22, 1 / 30);
+      p.rot = this._aimFacing(p, c.targetId, c.targetKind);
     }
 
     // Roll damage at release (not at cast start)
@@ -3940,16 +3905,8 @@ export class Game {
 
     if (e.type === "fx" && e.from !== this.local?.id) {
       if (e.kind === "skill") {
-        if (e.skill === "cast") {
-          this.fx?.telegraph({
-            x: e.x,
-            z: e.z,
-            rot: e.rot || 0,
-            color: e.color || "#6ec8ff",
-            duration: e.r || 0.7,
-            shape: "feet",
-          });
-        } else {
+        // Ignore legacy "cast" telegraphs from peers — only show release FX
+        if (e.skill && e.skill !== "cast") {
           this.fx?.skill(
             e.skill || "aoe",
             e.x,
@@ -3961,7 +3918,7 @@ export class Game {
           );
         }
       }
-      if (e.kind === "slash") this.fx?.skill("slash", e.x, e.z, e.rot || 0, e.color || "#e8d48b");
+      if (e.kind === "slash") this.fx?.slash(e.x, e.z, e.rot || 0, e.color || "#e8d48b");
       if (e.kind === "aoe") this.fx?.skill("aoe", e.x, e.z, 0, e.color || "#c43c2e", e.r || 3);
       if (e.kind === "heal") this.fx?.heal(e.x, e.z);
       if (e.kind === "buff") this.fx?.buff(e.x, e.z);
