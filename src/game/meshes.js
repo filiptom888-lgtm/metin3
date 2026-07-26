@@ -1394,7 +1394,7 @@ export function dressFieldWilderness(root, { mapId, arid = false, treeCount = 22
 function makeMountainPeak(h, rockMat, tipMat, foothill = false) {
   const g = new THREE.Group();
   const baseR = foothill ? h * 0.58 : h * 0.4;
-  const segs = foothill ? 4 : 5;
+  const segs = foothill ? 5 : 6;
   const base = new THREE.Mesh(new THREE.ConeGeometry(baseR, h, segs), rockMat);
   base.position.y = h * 0.5;
   base.castShadow = false;
@@ -1402,7 +1402,7 @@ function makeMountainPeak(h, rockMat, tipMat, foothill = false) {
   base.frustumCulled = true;
   g.add(base);
   if (!foothill && h > 12) {
-    const tip = new THREE.Mesh(new THREE.ConeGeometry(baseR * 0.32, h * 0.26, 4), tipMat);
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(baseR * 0.32, h * 0.26, 5), tipMat);
     tip.position.y = h * 0.86;
     tip.castShadow = false;
     tip.frustumCulled = true;
@@ -1418,83 +1418,141 @@ function nearPortalGap(x, z, gaps) {
   return false;
 }
 
+/** Soft circular apron + cliffs + layered peaks so the square tile edge disappears. */
 export function addMapHorizon(root, { half = MAP_HALF, arid = false, portalGaps = [] } = {}) {
   const g = new THREE.Group();
   g.name = "map_horizon";
 
-  // Outer skirt — unlit, no shadows (was a big cost when facing the rim)
-  const skirtCol = arid ? "#5a4a32" : "#3a4a30";
+  const grassCol = arid ? "#9a8860" : "#4f7a3e";
+  const midCol = arid ? "#6a5840" : "#3d5234";
+  const rockCol = arid ? "#6a5848" : "#5a554c";
+  const deepCol = arid ? "#3a3020" : "#243028";
+  const hazeCol = arid ? "#b8a888" : "#9ab0a0";
+  const skyCol = arid ? "#c4b090" : "#8eacc4";
+  const tipCol = arid ? "#c8b898" : "#d0d8cc";
+  const footCol = arid ? "#4a5a30" : "#2f4a2a";
+
+  // 1) Grass apron past the square ground — hides the hard tile cut
+  const apron = new THREE.Mesh(
+    new THREE.RingGeometry(half * 0.82, half * 1.28, 72),
+    new THREE.MeshBasicMaterial({ color: grassCol })
+  );
+  apron.rotation.x = -Math.PI / 2;
+  apron.position.y = -0.05;
+  apron.receiveShadow = false;
+  g.add(apron);
+
+  // 2) Mid rock shelf (sloped look via two rings)
+  const shelf = new THREE.Mesh(
+    new THREE.RingGeometry(half * 1.15, half * 1.55, 64),
+    new THREE.MeshBasicMaterial({ color: midCol })
+  );
+  shelf.rotation.x = -Math.PI / 2;
+  shelf.position.y = -1.4;
+  g.add(shelf);
+
+  // 3) Cliff faces around the rim (skip portal corridors)
+  const cliffMat = new THREE.MeshBasicMaterial({ color: rockCol, side: THREE.DoubleSide });
+  const cliffSteps = 40;
+  for (let i = 0; i < cliffSteps; i++) {
+    const a0 = (i / cliffSteps) * Math.PI * 2;
+    const a1 = ((i + 1) / cliffSteps) * Math.PI * 2;
+    const am = (a0 + a1) * 0.5;
+    const r = half * 1.2;
+    const mx = Math.cos(am) * r;
+    const mz = Math.sin(am) * r;
+    if (nearPortalGap(mx, mz, portalGaps)) continue;
+    const arc = ((a1 - a0) * r) * 1.08;
+    const face = new THREE.Mesh(new THREE.PlaneGeometry(arc, 9.5), cliffMat);
+    face.position.set(mx, -2.8, mz);
+    face.lookAt(0, -2.8, 0);
+    face.castShadow = false;
+    g.add(face);
+  }
+
+  // 4) Deep outer skirt + haze (fog-matched so void never reads)
   const skirt = new THREE.Mesh(
-    new THREE.RingGeometry(half * 0.92, half * 2.8, 48),
-    new THREE.MeshBasicMaterial({ color: skirtCol })
+    new THREE.RingGeometry(half * 1.4, half * 3.4, 64),
+    new THREE.MeshBasicMaterial({ color: deepCol })
   );
   skirt.rotation.x = -Math.PI / 2;
-  skirt.position.y = -1.1;
-  skirt.receiveShadow = false;
-  skirt.castShadow = false;
+  skirt.position.y = -4.2;
   g.add(skirt);
 
   const haze = new THREE.Mesh(
-    new THREE.CircleGeometry(half * 2.95, 32),
+    new THREE.CircleGeometry(half * 3.55, 48),
     new THREE.MeshBasicMaterial({
-      color: arid ? "#a89878" : "#8aa090",
+      color: hazeCol,
       transparent: true,
-      opacity: 0.45,
+      opacity: 0.62,
       depthWrite: false,
     })
   );
   haze.rotation.x = -Math.PI / 2;
-  haze.position.y = -1.6;
+  haze.position.y = -4.6;
   g.add(haze);
 
-  const rock = new THREE.MeshBasicMaterial({ color: arid ? "#6a5848" : "#5c564c" });
-  const tip = new THREE.MeshBasicMaterial({ color: arid ? "#c8b898" : "#d0d8cc" });
-  const foot = new THREE.MeshBasicMaterial({ color: arid ? "#4a5a30" : "#2a4a28" });
+  // 5) Sky bowl — soft backdrop instead of flat clear color at the horizon
+  const skyBowl = new THREE.Mesh(
+    new THREE.SphereGeometry(half * 3.7, 28, 14, 0, Math.PI * 2, 0, Math.PI * 0.55),
+    new THREE.MeshBasicMaterial({
+      color: skyCol,
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: true,
+    })
+  );
+  skyBowl.position.y = 8;
+  g.add(skyBowl);
 
-  const steps = 36;
+  const rock = new THREE.MeshBasicMaterial({ color: rockCol });
+  const tip = new THREE.MeshBasicMaterial({ color: tipCol });
+  const foot = new THREE.MeshBasicMaterial({ color: footCol });
+
+  // Dense overlapping rim peaks — bases sunk into the cliff so they don't float
+  const steps = 48;
   for (let i = 0; i < steps; i++) {
     const ang = (i / steps) * Math.PI * 2;
     const wobble =
       Math.sin(ang * 2.7) * 7 +
       Math.sin(ang * 6.1 + 1.3) * 4.2 +
       Math.cos(ang * 1.4) * 5;
-    const rOut = half + 6 + Math.abs(wobble) * 0.85 + (i % 4) * 2.8;
+    const rOut = half + 10 + Math.abs(wobble) * 0.9 + (i % 4) * 3.2;
     const x = Math.cos(ang) * rOut;
     const z = Math.sin(ang) * rOut;
     if (nearPortalGap(x, z, portalGaps)) continue;
 
-    const peakH = 10 + Math.abs(Math.sin(ang * 2.2 + i * 0.15)) * 14 + (i % 5) * 1.2;
+    const peakH = 14 + Math.abs(Math.sin(ang * 2.2 + i * 0.15)) * 16 + (i % 5) * 1.4;
     const peak = makeMountainPeak(peakH, rock, tip, false);
-    peak.position.set(x, -0.4, z);
+    peak.position.set(x, -3.2, z);
     peak.rotation.y = ang + Math.PI * 0.5;
-    peak.scale.setScalar(0.95 + (i % 4) * 0.07);
+    peak.scale.setScalar(1.05 + (i % 4) * 0.08);
     g.add(peak);
 
-    // Sparse inner foothills (visual + walk-blocked band)
-    if (i % 3 === 0) {
-      const rIn = half - 4 - Math.abs(Math.sin(ang * 3.5)) * 5;
+    // Inner foothills sitting on the apron
+    if (i % 2 === 0) {
+      const rIn = half + 1.5 + Math.abs(Math.sin(ang * 3.5)) * 4;
       const fx = Math.cos(ang) * rIn;
       const fz = Math.sin(ang) * rIn;
       if (nearPortalGap(fx, fz, portalGaps)) continue;
-      if (Math.max(Math.abs(fx), Math.abs(fz)) > half - 0.5) continue;
-      const hill = makeMountainPeak(4.2 + (i % 4) * 1.4, rock, foot, true);
-      hill.position.set(fx, 0, fz);
+      const hill = makeMountainPeak(5.5 + (i % 4) * 1.6, rock, foot, true);
+      hill.position.set(fx, -0.8, fz);
       hill.rotation.y = ang;
       g.add(hill);
     }
   }
 
-  // Fewer mid-ring peaks for depth
-  for (let i = 0; i < 14; i++) {
-    const ang = (i / 14) * Math.PI * 2 + 0.2;
-    const r = half + 20 + Math.sin(ang * 4) * 6 + (i % 3) * 4;
+  // Far mid-ring for depth (heavier fog will soft-fade these)
+  for (let i = 0; i < 20; i++) {
+    const ang = (i / 20) * Math.PI * 2 + 0.18;
+    const r = half + 28 + Math.sin(ang * 4) * 8 + (i % 3) * 5;
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
     if (nearPortalGap(x, z, portalGaps)) continue;
-    const peak = makeMountainPeak(15 + (i % 4) * 2.5, rock, tip, false);
-    peak.position.set(x, -0.6, z);
+    const peak = makeMountainPeak(18 + (i % 4) * 3.2, rock, tip, false);
+    peak.position.set(x, -4.5, z);
     peak.rotation.y = ang;
-    peak.scale.setScalar(1.05);
+    peak.scale.setScalar(1.15);
     g.add(peak);
   }
 
@@ -1505,7 +1563,7 @@ export function addMapHorizon(root, { half = MAP_HALF, arid = false, portalGaps 
 export function createScene() {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color("#7ea8c8");
-  scene.fog = new THREE.Fog("#9ab4a0", 75, 280);
+  scene.fog = new THREE.Fog("#9ab0a0", 48, 165);
 
   const hemi = new THREE.HemisphereLight(0xfff2e0, 0x5a4a28, 0.95);
   scene.add(hemi);
