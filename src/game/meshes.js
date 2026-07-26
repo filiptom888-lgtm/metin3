@@ -892,7 +892,7 @@ function addFieldRiver(root, mapId) {
     root.add(bank);
   }
 
-  // Big bridge — deck + rails + posts
+  // Big bridge — deck + rails + posts (deck top = b.deckTop for walking)
   const bridge = new THREE.Group();
   bridge.name = "field_bridge";
   bridge.position.set(b.x, 0, b.z);
@@ -900,8 +900,9 @@ function addFieldRiver(root, mapId) {
 
   const plankMat = mat("#6a4a28", { roughness: 0.9 });
   const railMat = mat("#4a3218", { roughness: 0.92 });
-  const deck = new THREE.Mesh(new THREE.BoxGeometry(b.across, 0.45, b.along), plankMat);
-  deck.position.y = b.deckY;
+  const deckThick = 0.45;
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(b.across, deckThick, b.along), plankMat);
+  deck.position.y = b.deckTop - deckThick * 0.5;
   deck.castShadow = true;
   deck.receiveShadow = true;
   bridge.add(deck);
@@ -912,30 +913,31 @@ function addFieldRiver(root, mapId) {
       new THREE.BoxGeometry(b.across * 0.98, 0.06, 0.35),
       mat("#5a3a1e", { roughness: 0.95 })
     );
-    groove.position.set(0, b.deckY + 0.22, (i / 4) * (b.along * 0.42));
+    groove.position.set(0, b.deckTop + 0.02, (i / 4) * (b.along * 0.42));
     bridge.add(groove);
   }
 
   for (const side of [-1, 1]) {
     const rail = new THREE.Mesh(new THREE.BoxGeometry(b.across * 0.96, 0.22, 0.28), railMat);
-    rail.position.set(0, b.deckY + 1.05, side * (b.along * 0.48));
+    rail.position.set(0, b.deckTop + 0.85, side * (b.along * 0.48));
     rail.castShadow = true;
     bridge.add(rail);
     for (let p = -3; p <= 3; p++) {
       const post = new THREE.Mesh(new THREE.BoxGeometry(0.35, 1.35, 0.35), railMat);
-      post.position.set((p / 3) * (b.across * 0.42), b.deckY + 0.7, side * (b.along * 0.48));
+      post.position.set((p / 3) * (b.across * 0.42), b.deckTop + 0.5, side * (b.along * 0.48));
       post.castShadow = true;
       bridge.add(post);
     }
   }
 
-  // Stone abutments
+  // Stone abutments under each end
   for (const side of [-1, 1]) {
+    const abutH = b.deckTop + 0.9;
     const abut = new THREE.Mesh(
-      new THREE.BoxGeometry(3.2, b.deckY + 1.2, b.along + 1.5),
+      new THREE.BoxGeometry(3.2, abutH, b.along + 1.5),
       mat("#5a564c", { roughness: 0.96 })
     );
-    abut.position.set(side * (b.across * 0.5 - 0.6), (b.deckY + 1.2) * 0.5 - 0.4, 0);
+    abut.position.set(side * (b.across * 0.5 - 0.6), abutH * 0.5 - 0.35, 0);
     abut.castShadow = true;
     abut.receiveShadow = true;
     bridge.add(abut);

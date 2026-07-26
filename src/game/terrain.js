@@ -9,6 +9,9 @@ import {
   riverCarve,
   riverDef,
   bridgeCenter,
+  bridgeAbutments,
+  bridgeSurfaceAt,
+  inDeepRiver,
 } from "./rivers.js";
 
 function hash2(ix, iz) {
@@ -46,13 +49,16 @@ function fbm(x, z) {
 export function fieldRoads(mapId) {
   const roads = [];
   if (mapId === "overworld") {
-    const b = bridgeCenter("overworld");
-    const westX = b ? b.x - b.across * 0.5 - 1 : 70;
-    const eastX = b ? b.x + b.across * 0.5 + 1 : 85;
-    // East gate → bridge west abutment
-    roads.push({ x0: CITY_RADIUS - 1, z0: 0, x1: westX, z1: 0, w: 5.2 });
-    // Bridge east abutment → Seungryong portal
-    roads.push({ x0: eastX, z0: 0, x1: EDGE_PORTAL, z1: 0, w: 5.2 });
+    const abut = bridgeAbutments("overworld");
+    if (abut?.a && abut?.b) {
+      // Pick west/east abutments by world X
+      const west = abut.a.x <= abut.b.x ? abut.a : abut.b;
+      const east = abut.a.x <= abut.b.x ? abut.b : abut.a;
+      roads.push({ x0: CITY_RADIUS - 1, z0: 0, x1: west.x, z1: west.z, w: 5.2 });
+      roads.push({ x0: east.x, z0: east.z, x1: EDGE_PORTAL, z1: 0, w: 5.2 });
+    } else {
+      roads.push({ x0: CITY_RADIUS - 1, z0: 0, x1: EDGE_PORTAL, z1: 0, w: 5.2 });
+    }
     roads.push({ x0: 0, z0: CITY_RADIUS - 1, x1: 0, z1: CITY_RADIUS + 36, w: 4.2 });
     roads.push({ x0: 0, z0: -(CITY_RADIUS - 1), x1: 0, z1: -(CITY_RADIUS + 40), w: 4.2 });
     roads.push({
@@ -64,13 +70,13 @@ export function fieldRoads(mapId) {
     });
     roads.push({ x0: 40, z0: 35, x1: 90, z1: -20, w: 3.4 });
   } else if (mapId === "valley") {
-    const b = bridgeCenter("valley");
-    // Main E–W roads; bridge covers the river cut near SE
+    const abut = bridgeAbutments("valley");
     roads.push({ x0: -(CITY_RADIUS - 1), z0: 0, x1: -EDGE_PORTAL, z1: 0, w: 5.2 });
-    if (b) {
-      const approachZ = b.z;
-      roads.push({ x0: CITY_RADIUS - 1, z0: 0, x1: b.x - 8, z1: approachZ * 0.15, w: 4.6 });
-      roads.push({ x0: b.x + 8, z0: approachZ * 0.15, x1: EDGE_PORTAL, z1: 0, w: 4.6 });
+    if (abut?.a && abut?.b) {
+      const west = abut.a.x <= abut.b.x ? abut.a : abut.b;
+      const east = abut.a.x <= abut.b.x ? abut.b : abut.a;
+      roads.push({ x0: CITY_RADIUS - 1, z0: 0, x1: west.x, z1: west.z, w: 4.6 });
+      roads.push({ x0: east.x, z0: east.z, x1: EDGE_PORTAL, z1: 0, w: 4.6 });
     } else {
       roads.push({ x0: CITY_RADIUS - 1, z0: 0, x1: EDGE_PORTAL, z1: 0, w: 5.2 });
     }
@@ -114,9 +120,11 @@ export function onBeatenRoad(x, z, mapId, pad = 0.4) {
  */
 export function fieldHeightAt(x, z, mapId = "overworld") {
   if (mapId !== "overworld" && mapId !== "valley") return 0;
-  if (onRiverBridge(mapId, x, z)) {
-    return bridgeCenter(mapId)?.deckY ?? 1.2;
-  }
+
+  // Deck + approach ramps (must win over river carve)
+  const bridgeH = bridgeSurfaceAt(mapId, x, z);
+  if (bridgeH != null) return bridgeH;
+
   const dCity = Math.hypot(x, z);
   if (dCity < CITY_RADIUS + 2.5) return 0;
   if (onBeatenRoad(x, z, mapId, 1.1)) {
@@ -145,6 +153,26 @@ export function fieldHeightAt(x, z, mapId = "overworld") {
   if (dig > 0) h -= dig;
 
   return h;
+}
+
+/** True if a field position is walkable (bridge OK, deep river blocked). */
+export function isFieldWalkable(mapId, x, z) {
+  if (mapId !== "overworld" && mapId !== "valley") return true;
+  if (bridgeSurfaceAt(mapId, x, z) != null) return true;
+  if (onRiverBridge(mapId, x, z, 0.5)) return true;
+  if (inDeepRiver(mapId, x, z)) return false;
+  return true;
+}
+
+/**
+ * Keep movement on banks / bridge — slide along axes if the full step is blocked.
+ */
+export function clampFieldWalk(mapId, x, z, fromX, fromZ) {
+  if (mapId !== "overworld" && mapId !== "valley") return { x, z };
+  if (isFieldWalkable(mapId, x, z)) return { x, z };
+  if (isFieldWalkable(mapId, x, fromZ)) return { x, z: fromZ };
+  if (isFieldWalkable(mapId, fromX, z)) return { x: fromX, z };
+  return { x: fromX, z: fromZ };
 }
 
 /** Displace PlaneGeometry positions for hills + river. */
@@ -245,4 +273,4 @@ export function addBeatenRoadMeshes(root, mapId, dirtMat, edgeMat = null) {
   return group;
 }
 
-export { riverDef, bridgeCenter, inRiver, onRiverBridge };
+export { riverDef, bridgeCenter, inRiver, onRiverBridge, inDeepRiver, bridgeSurfaceAt };

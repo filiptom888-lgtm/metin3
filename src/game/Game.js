@@ -22,6 +22,8 @@ import {
   setQuestMarker,
   makeHuntBeacon,
 } from "./meshes.js";
+import { clampFieldWalk, isFieldWalkable } from "./terrain.js";
+import { bridgeCenter } from "./rivers.js";
 import { applyDayNight, DAY_LENGTH } from "./DayNight.js";
 import { questHuntFor, zoneRing } from "../data/mapMarkers.js";
 import { NPCS } from "../data/npcs.js";
@@ -1923,9 +1925,17 @@ export class Game {
       const fz = -Math.cos(yaw);
       const rx = Math.cos(yaw);
       const rz = -Math.sin(yaw);
+      const ox = p.x;
+      const oz = p.z;
       p.x += (fx * iz + rx * ix) * speed * dt;
       p.z += (fz * iz + rz * ix) * speed * dt;
-      p.moving = true;
+      const mapId = MapService.currentId;
+      if (mapId === "overworld" || mapId === "valley") {
+        const clamped = clampFieldWalk(mapId, p.x, p.z, ox, oz);
+        p.x = clamped.x;
+        p.z = clamped.z;
+      }
+      p.moving = Math.hypot(p.x - ox, p.z - oz) > 0.0001;
     } else {
       p.moving = false;
     }
@@ -1946,6 +1956,34 @@ export class Game {
         const land = clampToOrcLand(p.x, p.z);
         p.x = land.x;
         p.z = land.z;
+      } else if (MapService.is("overworld") || MapService.is("valley")) {
+        // If somehow stuck in the river under a bridge, snap onto the deck
+        const mid = MapService.currentId;
+        if (!isFieldWalkable(mid, p.x, p.z)) {
+          const b = bridgeCenter(mid);
+          if (b && Math.hypot(p.x - b.x, p.z - b.z) < b.across * 0.7) {
+            p.x = b.x;
+            p.z = b.z;
+          } else {
+            const rescued = clampFieldWalk(mid, p.x, p.z, p.x + 0.01, p.z + 0.01);
+            // Nudge toward city if still stuck
+            if (!isFieldWalkable(mid, rescued.x, rescued.z)) {
+              const ang = Math.atan2(-p.x, -p.z);
+              for (let s = 1; s <= 12; s++) {
+                const nx = p.x + Math.sin(ang) * s * 1.5;
+                const nz = p.z + Math.cos(ang) * s * 1.5;
+                if (isFieldWalkable(mid, nx, nz)) {
+                  p.x = nx;
+                  p.z = nz;
+                  break;
+                }
+              }
+            } else {
+              p.x = rescued.x;
+              p.z = rescued.z;
+            }
+          }
+        }
       }
     }
     // Smooth turn toward cursor / locked combat target
@@ -2058,11 +2096,16 @@ export class Game {
       this.tryPickup();
     }
 
-    // Mesh + animation
+    // Mesh + animation — smooth elevation so bridges/hills don't pop
     const gy = this.groundY(p.x, p.z);
-    this.localMesh.position.set(p.x, gy, p.z);
+    if (p.y == null || Number.isNaN(p.y)) p.y = gy;
+    const climb = Math.min(1, 14 * dt);
+    // Allow faster drop onto deck when stepping onto bridge
+    const drop = Math.min(1, 22 * dt);
+    p.y += (gy - p.y) * (gy >= p.y ? climb : drop);
+    this.localMesh.position.set(p.x, p.y, p.z);
     this.localMesh.rotation.y = p.rot;
-    this.aimMarker.position.y = gy + 0.06;
+    this.aimMarker.position.y = p.y + 0.06;
     this.localMesh.visible = !stealth || Math.sin(this.time * 20) > -0.2;
     setNameplate(this.localMesh, p.name, p.hp / p.maxHp, p.level, p.classId);
     animateCharacter(this.localMesh, dt, {
@@ -2940,9 +2983,11 @@ export class Game {
       }
       case "dash": {
         this.fx?.skill("dash", p.x, p.z, p.rot, color, radius, fxName, gy);
-        p.x += Math.sin(p.rot) * 7;
-        p.z += Math.cos(p.rot) * 7;
         {
+          const ox = p.x;
+          const oz = p.z;
+          p.x += Math.sin(p.rot) * 7;
+          p.z += Math.cos(p.rot) * 7;
           const half = MapService.current.half || MAP_HALF;
           p.x = clamp(p.x, -half + 1.2, half - 1.2);
           p.z = clamp(p.z, -half + 1.2, half - 1.2);
@@ -2950,6 +2995,10 @@ export class Game {
             const land = clampToOrcLand(p.x, p.z);
             p.x = land.x;
             p.z = land.z;
+          } else if (MapService.is("overworld") || MapService.is("valley")) {
+            const clamped = clampFieldWalk(MapService.currentId, p.x, p.z, ox, oz);
+            p.x = clamped.x;
+            p.z = clamped.z;
           }
         }
         p.invulnUntil = this.time + 0.35;

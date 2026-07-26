@@ -5,6 +5,9 @@ import { CITY_RADIUS, EDGE_PORTAL, MAP_HALF } from "./data.js";
 
 /** @typedef {{ ax:number, az:number, bx:number, bz:number, halfW:number, depth:number, bridgeT:number, deckY:number }} RiverDef */
 
+/** Deck plank thickness (matches meshes.js BoxGeometry height). */
+export const BRIDGE_DECK_THICK = 0.45;
+
 /** @type {Record<string, RiverDef>} */
 export const FIELD_RIVERS = {
   // Shinsoo — cuts the east road to Seungryong; must use the bridge
@@ -16,7 +19,7 @@ export const FIELD_RIVERS = {
     halfW: 16, // ~32m wide channel
     depth: 5.2,
     bridgeT: 0.525, // crosses east Shinsoo road (z≈0)
-    deckY: 1.35,
+    deckY: 1.35, // deck center Y
   },
   // Seungryong — diagonal cut south of city toward east portal
   valley: {
@@ -66,28 +69,107 @@ export function bridgeCenter(mapId) {
   return {
     x: r.ax + dx * r.bridgeT,
     z: r.az + dz * r.bridgeT,
+    // Aligns bridge local +Z with river flow (Three.js Ry)
     yaw: Math.atan2(dx, dz),
     across: r.halfW * 2 + 10,
-    along: 9.5,
+    along: 11, // road-width span (slightly generous for walking)
     deckY: r.deckY,
+    deckTop: r.deckY + BRIDGE_DECK_THICK * 0.5,
     river: r,
   };
 }
 
-/** On the wooden deck (walkable flat). */
-export function onRiverBridge(mapId, x, z) {
+/**
+ * World → bridge-local (matches Three.js group.rotation.y = yaw).
+ * local X = across the river, local Z = along the channel / road width.
+ */
+export function bridgeLocal(mapId, x, z) {
   const b = bridgeCenter(mapId);
-  if (!b) return false;
-  const c = Math.cos(-b.yaw);
-  const s = Math.sin(-b.yaw);
-  const lx = (x - b.x) * c - (z - b.z) * s;
-  const lz = (x - b.x) * s + (z - b.z) * c;
-  return Math.abs(lx) < b.across * 0.5 && Math.abs(lz) < b.along * 0.5;
+  if (!b) return null;
+  const c = Math.cos(b.yaw);
+  const s = Math.sin(b.yaw);
+  const dx = x - b.x;
+  const dz = z - b.z;
+  return {
+    b,
+    // Inverse of Ry: lx = c*dx - s*dz, lz = s*dx + c*dz
+    lx: c * dx - s * dz,
+    lz: s * dx + c * dz,
+  };
+}
+
+/** World position of a bridge-local point. */
+export function bridgeWorld(mapId, lx, lz) {
+  const b = bridgeCenter(mapId);
+  if (!b) return null;
+  const c = Math.cos(b.yaw);
+  const s = Math.sin(b.yaw);
+  return {
+    x: b.x + c * lx + s * lz,
+    z: b.z - s * lx + c * lz,
+  };
+}
+
+/** Abutment centers at each end of the deck (for road approaches). */
+export function bridgeAbutments(mapId) {
+  const b = bridgeCenter(mapId);
+  if (!b) return null;
+  const half = b.across * 0.5 - 0.5;
+  return {
+    a: bridgeWorld(mapId, -half, 0),
+    b: bridgeWorld(mapId, half, 0),
+    center: b,
+  };
 }
 
 /**
- * Height carve for river. Returns delta to subtract from base hill height
- * (positive number = how much to dig). Bridge returns special via onRiverBridge.
+ * On the wooden deck (walkable flat).
+ * @param {number} [pad] expands the footprint slightly
+ */
+export function onRiverBridge(mapId, x, z, pad = 0.35) {
+  const loc = bridgeLocal(mapId, x, z);
+  if (!loc) return false;
+  const { b, lx, lz } = loc;
+  return Math.abs(lx) < b.across * 0.5 + pad && Math.abs(lz) < b.along * 0.5 + pad;
+}
+
+/**
+ * Walk height on deck / approach ramps, or null if not on bridge structure.
+ */
+export function bridgeSurfaceAt(mapId, x, z) {
+  const loc = bridgeLocal(mapId, x, z);
+  if (!loc) return null;
+  const { b, lx, lz } = loc;
+  const halfA = b.across * 0.5;
+  const halfL = b.along * 0.5;
+  const top = b.deckTop;
+
+  // Full deck
+  if (Math.abs(lx) <= halfA && Math.abs(lz) <= halfL) return top;
+
+  // End ramps off abutments (along across-axis), keep road width
+  const rampLen = 7.5;
+  if (Math.abs(lz) <= halfL + 0.6) {
+    const overhang = Math.abs(lx) - halfA;
+    if (overhang > 0 && overhang < rampLen) {
+      const t = 1 - overhang / rampLen;
+      const s = t * t * (3 - 2 * t); // smoothstep
+      return top * s; // blend down to bank (~0)
+    }
+  }
+  return null;
+}
+
+/** Deep channel — not walkable unless on the bridge deck/ramp. */
+export function inDeepRiver(mapId, x, z) {
+  if (!FIELD_RIVERS[mapId]) return false;
+  if (onRiverBridge(mapId, x, z, 0.5)) return false;
+  if (bridgeSurfaceAt(mapId, x, z) != null) return false;
+  return riverCarve(mapId, x, z) > 1.05;
+}
+
+/**
+ * Height carve for river. Returns delta to subtract from base hill height.
  */
 export function riverCarve(mapId, x, z) {
   const r = FIELD_RIVERS[mapId];

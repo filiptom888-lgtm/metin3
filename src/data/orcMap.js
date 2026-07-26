@@ -20,12 +20,12 @@ export const ORC_ISLANDS = [
 
 /** Narrow walkable reefs / bridges between islands */
 export const ORC_BRIDGES = [
-  { x1: -32, z1: 0, x2: -43, z2: 0, w: 3.2 }, // main ↔ west
-  { x1: 28, z1: 18, x2: 36, z2: 30, w: 2.8 }, // main ↔ ne
-  { x1: 30, z1: -16, x2: 40, z2: -26, w: 2.8 }, // main ↔ se
-  { x1: -12, z1: 28, x2: -22, z2: 42, w: 2.6 }, // main ↔ nw
-  { x1: -14, z1: -30, x2: -26, z2: -42, w: 2.6 }, // main ↔ sw
-  { x1: 30, z1: 4, x2: 52, z2: 6, w: 2.5 }, // main ↔ east
+  { x1: -32, z1: 0, x2: -43, z2: 0, w: 3.8 }, // main ↔ west
+  { x1: 28, z1: 18, x2: 36, z2: 30, w: 3.4 }, // main ↔ ne
+  { x1: 30, z1: -16, x2: 40, z2: -26, w: 3.4 }, // main ↔ se
+  { x1: -12, z1: 28, x2: -22, z2: 42, w: 3.2 }, // main ↔ nw
+  { x1: -14, z1: -30, x2: -26, z2: -42, w: 3.2 }, // main ↔ sw
+  { x1: 30, z1: 4, x2: 52, z2: 6, w: 3.1 }, // main ↔ east
 ];
 
 export function onOrcIsland(x, z, margin = 0) {
@@ -43,7 +43,8 @@ function onOrcBridge(x, z) {
     const t = Math.max(0, Math.min(1, ((x - b.x1) * dx + (z - b.z1) * dz) / (len * len)));
     const px = b.x1 + dx * t;
     const pz = b.z1 + dz * t;
-    if (Math.hypot(x - px, z - pz) <= b.w * 0.55) return true;
+    // Slightly wider than visual so feet don't slip into the water
+    if (Math.hypot(x - px, z - pz) <= b.w * 0.72) return true;
   }
   return false;
 }
