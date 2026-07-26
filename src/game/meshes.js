@@ -1325,23 +1325,24 @@ export function addMapHorizon(root, { half = MAP_HALF, arid = false, portalGaps 
   const tipCol = arid ? "#c8b898" : "#d0d8cc";
   const footCol = arid ? "#4a5a30" : "#2f4a2a";
 
-  // 1) Grass apron past the square ground — hides the hard tile cut
+  // 1) Grass apron ONLY outside the square playfield.
+  // Old half*0.82 ring overlapped the map and drew as a bright green wedge over river/terrain.
   const apron = new THREE.Mesh(
-    new THREE.RingGeometry(half * 0.82, half * 1.28, 72),
+    new THREE.RingGeometry(half + 0.8, half * 1.34, 80),
     new THREE.MeshBasicMaterial({ color: grassCol })
   );
   apron.rotation.x = -Math.PI / 2;
-  apron.position.y = -0.05;
+  apron.position.y = -1.15;
   apron.receiveShadow = false;
   g.add(apron);
 
-  // 2) Mid rock shelf (sloped look via two rings)
+  // 2) Mid rock shelf (outside apron)
   const shelf = new THREE.Mesh(
-    new THREE.RingGeometry(half * 1.15, half * 1.55, 64),
+    new THREE.RingGeometry(half * 1.22, half * 1.58, 64),
     new THREE.MeshBasicMaterial({ color: midCol })
   );
   shelf.rotation.x = -Math.PI / 2;
-  shelf.position.y = -1.4;
+  shelf.position.y = -2.1;
   g.add(shelf);
 
   // 3) Cliff faces around the rim (skip portal corridors)
@@ -1351,7 +1352,7 @@ export function addMapHorizon(root, { half = MAP_HALF, arid = false, portalGaps 
     const a0 = (i / cliffSteps) * Math.PI * 2;
     const a1 = ((i + 1) / cliffSteps) * Math.PI * 2;
     const am = (a0 + a1) * 0.5;
-    const r = half * 1.2;
+    const r = half * 1.24;
     const mx = Math.cos(am) * r;
     const mz = Math.sin(am) * r;
     if (nearPortalGap(mx, mz, portalGaps)) continue;
@@ -1363,9 +1364,9 @@ export function addMapHorizon(root, { half = MAP_HALF, arid = false, portalGaps 
     g.add(face);
   }
 
-  // 4) Deep outer skirt + haze (fog-matched so void never reads)
+  // 4) Deep outer skirt + far haze (ring only — never a full disc under the playfield)
   const skirt = new THREE.Mesh(
-    new THREE.RingGeometry(half * 1.4, half * 3.4, 64),
+    new THREE.RingGeometry(half * 1.45, half * 3.4, 64),
     new THREE.MeshBasicMaterial({ color: deepCol })
   );
   skirt.rotation.x = -Math.PI / 2;
@@ -1373,16 +1374,17 @@ export function addMapHorizon(root, { half = MAP_HALF, arid = false, portalGaps 
   g.add(skirt);
 
   const haze = new THREE.Mesh(
-    new THREE.CircleGeometry(half * 3.55, 48),
+    new THREE.RingGeometry(half * 1.6, half * 3.55, 48),
     new THREE.MeshBasicMaterial({
       color: hazeCol,
       transparent: true,
-      opacity: 0.62,
+      opacity: 0.45,
       depthWrite: false,
     })
   );
   haze.rotation.x = -Math.PI / 2;
   haze.position.y = -4.6;
+  haze.renderOrder = -2;
   g.add(haze);
 
   // 5) Sky bowl — soft backdrop instead of flat clear color at the horizon
