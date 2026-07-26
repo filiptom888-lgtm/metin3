@@ -9,3 +9,16 @@ export const UPGRADE_TABLE = {
   7: { chance: 0.2, yang: 150000, downgrade: true, destroyOnFail: true },
   8: { chance: 0.12, yang: 300000, downgrade: true, destroyOnFail: true },
 };
+
+/** Infernal Blacksmith — safer, cheaper, much higher success */
+export function getUpgradeRecipe(level, { blessed = false } = {}) {
+  const base = UPGRADE_TABLE[level];
+  if (!base) return null;
+  if (!blessed) return { ...base };
+  return {
+    chance: Math.min(0.97, base.chance + 0.4),
+    yang: Math.max(200, Math.floor(base.yang * 0.25)),
+    downgrade: false,
+    destroyOnFail: false,
+  };
+}

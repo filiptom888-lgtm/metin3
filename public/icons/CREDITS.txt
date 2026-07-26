@@ -1,0 +1,7 @@
+Item glyph art derived from Game-icons.net (CC BY 3.0)
+https://game-icons.net/
+Authors: Lorc, Delapouite, and contributors
+https://creativecommons.org/licenses/by/3.0/
+
+Icons are recolored and framed for METIN3.
+UI chrome (panel frames / slots) is original METIN3 art.

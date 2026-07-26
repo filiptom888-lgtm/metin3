@@ -10,67 +10,68 @@
   </head>
   <body>
     <div id="app">
-      <section id="lobby" class="screen active">
-        <div class="lobby-bg" aria-hidden="true"></div>
-        <div class="lobby-panel">
-          <p class="brand">METIN3</p>
-          <h1>Open world · forever online</h1>
-          <p class="sub">Login · choose a character · hunt Metins with friends.</p>
+      <section id="lobby" class="screen active" data-view="auth">
+        <div class="lobby-bg" aria-hidden="true">
+          <div class="lobby-bg-img"></div>
+          <div class="lobby-bg-vignette"></div>
+          <div class="lobby-bg-grain"></div>
+        </div>
+        <div class="lobby-shell">
+          <div class="lobby-panel">
+            <div class="lobby-ornament top" aria-hidden="true"></div>
+            <p class="brand">METIN3</p>
+            <h1 class="lobby-tagline">Open world · forever online</h1>
+            <p class="sub">Login · choose a character · hunt Metins with friends.</p>
 
-          <!-- Auth -->
-          <div id="auth-view" class="lobby-view">
-            <label class="field">
-              <span>Email</span>
-              <input id="inp-email" type="email" autocomplete="username" placeholder="you@mail.com" />
-            </label>
-            <label class="field">
-              <span>Password</span>
-              <input id="inp-password" type="password" autocomplete="current-password" placeholder="••••••••" />
-            </label>
-            <p id="lobby-error" class="error" hidden></p>
-            <button id="btn-login" class="btn btn-primary" type="button">Sign in</button>
-            <div class="lobby-actions">
-              <button id="btn-signup" class="btn btn-ghost-full" type="button">Create account</button>
-              <button id="btn-guest" class="btn btn-ghost-full" type="button">Play as guest</button>
-              <button id="btn-reset" class="btn btn-ghost-full" type="button">Reset password</button>
+            <!-- Auth -->
+            <div id="auth-view" class="lobby-view">
+              <label class="field">
+                <span>Email</span>
+                <input id="inp-email" type="email" autocomplete="username" placeholder="you@mail.com" />
+              </label>
+              <label class="field">
+                <span>Password</span>
+                <input id="inp-password" type="password" autocomplete="current-password" placeholder="••••••••" />
+              </label>
+              <p id="lobby-error" class="error" hidden></p>
+              <button id="btn-login" class="btn btn-primary" type="button">Sign in</button>
+              <div class="lobby-actions">
+                <button id="btn-signup" class="btn btn-ghost-full" type="button">Create account</button>
+                <button id="btn-guest" class="btn btn-ghost-full" type="button">Play as guest</button>
+                <button id="btn-reset" class="btn btn-ghost-full" type="button">Reset password</button>
+              </div>
+              <p class="hint muted" id="config-hint"></p>
             </div>
-            <p class="hint muted" id="config-hint"></p>
-          </div>
 
-          <!-- Character select -->
-          <div id="chars-view" class="lobby-view" hidden>
-            <div class="char-list-head">
-              <p class="panel-title">Your characters</p>
-              <button id="btn-logout" class="btn-mini" type="button">Logout</button>
+            <!-- Character select -->
+            <div id="chars-view" class="lobby-view" hidden>
+              <div class="char-list-head">
+                <p class="panel-title">Your characters</p>
+                <button id="btn-logout" class="btn-mini" type="button">Logout</button>
+              </div>
+              <div id="char-list" class="char-list"></div>
+              <p id="chars-error" class="error" hidden></p>
+              <button id="btn-new-char" class="btn btn-primary" type="button">Create character</button>
             </div>
-            <div id="char-list" class="char-list"></div>
-            <p id="chars-error" class="error" hidden></p>
-            <button id="btn-new-char" class="btn btn-primary" type="button">Create character</button>
-          </div>
 
-          <!-- Character create -->
-          <div id="create-view" class="lobby-view" hidden>
-            <label class="field">
-              <span>Name</span>
-              <input id="inp-name" maxlength="16" placeholder="Wanderer" autocomplete="off" />
-            </label>
-            <label class="field">
-              <span>Delete PIN (4 digits)</span>
-              <input id="inp-pin" maxlength="4" inputmode="numeric" placeholder="0000" />
-            </label>
-            <div class="opt-row" id="gender-row">
-              <button type="button" class="opt-btn selected" data-gender="m">Male</button>
-              <button type="button" class="opt-btn" data-gender="f">Female</button>
-            </div>
-            <p class="field-label">Kingdom</p>
-            <div class="opt-row" id="kingdom-row"></div>
+            <!-- Character create -->
+            <div id="create-view" class="lobby-view" hidden>
+              <label class="field">
+                <span>Name</span>
+                <input id="inp-name" maxlength="16" placeholder="Wanderer" autocomplete="off" />
+              </label>
+              <div class="opt-row" id="gender-row">
+                <button type="button" class="opt-btn selected" data-gender="m">Male</button>
+                <button type="button" class="opt-btn" data-gender="f">Female</button>
+              </div>
             <p class="field-label">Class</p>
-            <div class="class-row" id="class-row"></div>
-            <p class="field-label">Specialization</p>
-            <div class="opt-row" id="spec-row"></div>
-            <p id="create-error" class="error" hidden></p>
-            <button id="btn-create" class="btn btn-primary" type="button">Enter the Kingdom</button>
-            <button id="btn-create-back" class="btn btn-ghost-full" type="button">Back</button>
+              <div class="class-row" id="class-row"></div>
+              <p class="field-hint">Skill path (Body / Blade / …) is chosen at the Skill Master in town at Lv.5.</p>
+              <p id="create-error" class="error" hidden></p>
+              <button id="btn-create" class="btn btn-primary" type="button">Enter the Kingdom</button>
+              <button id="btn-create-back" class="btn btn-ghost-full" type="button">Back</button>
+            </div>
+            <div class="lobby-ornament bottom" aria-hidden="true"></div>
           </div>
         </div>
       </section>
@@ -91,11 +92,17 @@
               <button type="button" id="btn-hud-inv" class="hud-menu-btn" title="Inventory (I)">Bag</button>
               <button type="button" id="btn-hud-char" class="hud-menu-btn" title="Character (C)">Char</button>
               <button type="button" id="btn-hud-quests" class="hud-menu-btn" title="Quests (Q)">Quest</button>
+              <button type="button" id="btn-hud-menu" class="hud-menu-btn" title="Menu (Esc)">Menu</button>
             </div>
           </div>
 
           <div id="minimap" class="m2-minimap">
             <canvas id="mini" width="148" height="148"></canvas>
+          </div>
+
+          <div id="quest-tracker" class="quest-tracker" hidden>
+            <div class="quest-tracker-title">Quests</div>
+            <div id="quest-tracker-list"></div>
           </div>
 
           <div class="m2-bottom">
@@ -123,7 +130,7 @@
 
             <div class="m2-hotbar-wrap">
               <div id="skill-bar" class="m2-hotbar"></div>
-              <div class="hotbar-hint">1–4 skills · 5–6 potions · I inventory · right-click potion to hotbar</div>
+              <div class="hotbar-hint">1–4 skills · 5–6 potions · Esc menu · K skills · I inventory</div>
             </div>
 
             <div class="m2-stats-panel">
@@ -174,9 +181,19 @@
                 <b id="inv-count">0/40</b>
               </div>
               <div class="inv-grid" id="inv-grid"></div>
-              <p class="inv-hint">Click use/equip · Potion right-click → hotbar 5/6 · Shift+right-click drop</p>
+              <p class="inv-hint">Click use/equip · Skill books open Skills · Potion right-click → hotbar 5/6 · Shift+right-click drop</p>
               <div id="item-tooltip" class="item-tooltip" hidden></div>
             </div>
+          </div>
+        </div>
+
+        <div id="panel-skills" class="panel m2-panel panel-skills" hidden>
+          <header><h3>Skills</h3><button type="button" data-close="skills">✕</button></header>
+          <div class="panel-body">
+            <p id="skills-path-title" class="panel-title">—</p>
+            <p id="skills-books" class="skills-books sub"></p>
+            <p class="skills-hint sub">Metin stones drop Skill Books. Read a book to raise a skill. Grand Master Books needed above rank 10 (max M20).</p>
+            <div id="skills-list" class="skills-list"></div>
           </div>
         </div>
 
@@ -221,11 +238,83 @@
           </div>
         </div>
 
+        <!-- Click player → Challenge / Trade / Party -->
+        <div id="player-context" class="player-context" hidden>
+          <p id="player-context-name">Player</p>
+          <button type="button" id="btn-ctx-challenge" class="btn-mini">Challenge</button>
+          <button type="button" id="btn-ctx-trade" class="btn-mini">Trade</button>
+          <button type="button" id="btn-ctx-party" class="btn-mini">Party invite</button>
+          <button type="button" id="btn-ctx-close" class="btn-mini">Close</button>
+        </div>
+
+        <div id="social-invite-banner" class="party-invite social-invite" hidden>
+          <p id="social-invite-text">Request</p>
+          <button type="button" id="btn-social-accept" class="btn-mini">Accept</button>
+          <button type="button" id="btn-social-decline" class="btn-mini">Decline</button>
+        </div>
+
+        <div id="duel-countdown" class="duel-countdown" hidden>
+          <span id="duel-countdown-num">5</span>
+          <small id="duel-countdown-label">Duel starts</small>
+        </div>
+
+        <div id="panel-trade" class="panel m2-panel panel-trade" hidden>
+          <header>
+            <h3>Trade</h3>
+            <button type="button" data-close="trade">✕</button>
+          </header>
+          <div class="panel-body trade-body">
+            <div class="trade-cols">
+              <div class="trade-side">
+                <p class="field-label" id="trade-my-title">Your offer</p>
+                <div id="trade-my-slots" class="trade-slots"></div>
+                <label class="trade-yang">
+                  <span>Yang</span>
+                  <input id="trade-my-yang" type="number" min="0" value="0" />
+                </label>
+                <p id="trade-my-flags" class="trade-flags"></p>
+              </div>
+              <div class="trade-side">
+                <p class="field-label" id="trade-their-title">Their offer</p>
+                <div id="trade-their-slots" class="trade-slots"></div>
+                <p class="trade-yang-ro">Yang: <b id="trade-their-yang">0</b></p>
+                <p id="trade-their-flags" class="trade-flags"></p>
+              </div>
+            </div>
+            <p class="sub trade-hint">Click inventory items (I) to add · Lock → both Confirm</p>
+            <div class="trade-actions">
+              <button type="button" id="btn-trade-lock" class="btn-mini">Lock</button>
+              <button type="button" id="btn-trade-confirm" class="btn-mini" disabled>Confirm</button>
+              <button type="button" id="btn-trade-cancel" class="btn-mini">Cancel</button>
+            </div>
+          </div>
+        </div>
+
         <div id="panel-menu" class="panel m2-panel panel-menu" hidden>
-          <header><h3>Menu</h3></header>
-          <div class="panel-body menu-actions">
-            <button type="button" id="btn-save" class="btn btn-primary">Save progress</button>
-            <button type="button" id="btn-leave" class="btn btn-ghost-full">Return to title</button>
+          <header><h3>System Menu</h3><button type="button" data-close="menu">✕</button></header>
+          <div class="panel-body">
+            <p class="menu-hint">Progress saves to your account automatically.</p>
+            <div class="menu-nav">
+              <button type="button" class="menu-nav-btn" data-menu-panel="char">
+                <b>Character</b><span>Stats & equipment · C</span>
+              </button>
+              <button type="button" class="menu-nav-btn" data-menu-panel="inv">
+                <b>Inventory</b><span>Items & potions · I</span>
+              </button>
+              <button type="button" class="menu-nav-btn" data-menu-panel="skills">
+                <b>Skills</b><span>Path ranks & books · K</span>
+              </button>
+              <button type="button" class="menu-nav-btn" data-menu-panel="quests">
+                <b>Quests</b><span>Active & available · Q</span>
+              </button>
+              <button type="button" class="menu-nav-btn" data-menu-panel="party">
+                <b>Party</b><span>Invite & members · P</span>
+              </button>
+            </div>
+            <div class="menu-actions menu-actions-foot">
+              <button type="button" id="btn-chars" class="btn btn-ghost-full">Character select</button>
+              <button type="button" id="btn-logout-game" class="btn btn-primary">Logout</button>
+            </div>
           </div>
         </div>
 

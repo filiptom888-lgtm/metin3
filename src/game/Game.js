@@ -10,18 +10,21 @@ import {
   makeDemonTowerMesh,
   makeDungeonMapRoot,
   makeValleyMapRoot,
+  makeOrcMapRoot,
   makeBoltMesh,
   setNameplate,
   attachPlayerNameplate,
   animateCharacter,
   animateMob,
   animateNpc,
+  animateWorldSmoke,
   updateHpBar,
   setQuestMarker,
 } from "./meshes.js";
 import { FxSystem } from "./fx.js";
 import { derivedStats, applyLevelUps } from "./character.js";
 import { getItem, RARITY_COLOR } from "./items.js";
+import { clampToOrcLand } from "../data/orcMap.js";
 import {
   equipFromInventory,
   unequipSlot,
@@ -36,10 +39,13 @@ import { NpcService } from "../services/NpcService.js";
 import { SpawnService } from "../services/SpawnService.js";
 import { SkillService } from "../services/SkillService.js";
 import { PartyService } from "../services/PartyService.js";
+import { PvPService } from "../services/PvPService.js";
+import { TradeService } from "../services/TradeService.js";
 import { DungeonService } from "../services/DungeonService.js";
-import { MapService } from "../services/MapService.js";
-import { DEMON_TOWER, demonPortalWorld } from "../data/demonTower.js";
+import { MAPS, MapService } from "../services/MapService.js";
+import { DEMON_TOWER, demonPortalWorld, TOWER_SMITH_NPC } from "../data/demonTower.js";
 import { findPortalNear } from "../data/mapPortals.js";
+import { BANDIT_CAMP, banditCampPoint } from "../data/banditCamp.js";
 import { MONSTERS } from "../data/monsters.js";
 import { METINS } from "../data/metins.js";
 import { QUESTS } from "../data/quests.js";
@@ -60,7 +66,10 @@ export class Game {
     this.scene = scene;
     this.overworld = overworld || null;
     this.dungeonRoot = null;
+    this.towerSmithMesh = null;
+    this.towerSmithNpc = null;
     this.valleyRoot = null;
+    this.orcRoot = null;
     this.arenaMesh = null;
     this.nearWorldPortal = null;
     this.camera = createCamera();
@@ -125,7 +134,11 @@ export class Game {
     this.sendAcc = 0;
     this.worldAcc = 0;
     this.presenceAcc = 0;
-    this.waveTimer = 2;
+    /** @deprecated — split into wild / metin / chief timers */
+    this.waveTimer = 0;
+    this.wildRespawnTimer = 45;
+    this.metinRespawnTimer = 90;
+    this.chiefRespawnTimer = 0;
     this._last = 0;
     this._raf = 0;
     this._orbiting = false;
@@ -165,8 +178,15 @@ export class Game {
     };
     this._onDown = (e) => {
       if (e.button === 0) {
+        if (this.running && !this.pendingDeath) {
+          // Click player → context menu (Challenge / Trade / Party) — don't start auto-attack
+          if (this._tryClickPlayer()) {
+            this.mouse.down = false;
+            return;
+          }
+          this._tryClickTower();
+        }
         this.mouse.down = true;
-        if (this.running && !this.pendingDeath) this._tryClickTower();
       }
       if (e.button === 1 || e.button === 2) {
         this._orbiting = true;
@@ -253,23 +273,28 @@ export class Game {
       buffMul: 1,
       stealthUntil: 0,
       invulnUntil: 0,
+      recoverUntil: 0,
       metins: character.metins || 0,
       kills: character.kills || 0,
       gold: character.gold || 0,
       attacking: 0,
+      attackDur: 0,
       mapId: "overworld",
     };
 
     if (!Array.isArray(this.character.hotbarPotions) || this.character.hotbarPotions.length < 2) {
       this.character.hotbarPotions = ["red_potion", "blue_potion"];
     }
+    if (!this.character.skillLevels || typeof this.character.skillLevels !== "object") {
+      this.character.skillLevels = {};
+    }
 
     this.localMesh = makePlayerMesh(character.classId, true);
     setNameplate(this.localMesh, character.name, 1, character.level, character.classId);
     this.scene.add(this.localMesh);
     this.heroCtrl = null;
-    this.spawnNpcs();
     this.spawnDemonTower();
+    this.spawnNpcs();
 
     this.bindInput(true);
     this.resize();
@@ -338,17 +363,50 @@ export class Game {
   }
 
   spawnNpcs() {
-    const parent = this.overworld || this.scene;
-    for (const m of this.npcMeshes) parent.remove(m);
+    for (const m of this.npcMeshes) m.parent?.remove(m);
     this.npcMeshes = [];
     for (const npc of NpcService.list) {
+      const mapId = npc.mapId || "overworld";
+      const parent =
+        mapId === "orc_valley"
+          ? this.orcRoot || this.scene
+          : mapId === "valley"
+            ? this.valleyRoot || this.scene
+            : this.overworld || this.scene;
       const mesh = makeNpcMesh(npc);
       mesh.position.set(npc.x, 0, npc.z);
-      mesh.rotation.y = Math.atan2(-npc.x, -npc.z);
+      mesh.rotation.y = Math.atan2(-npc.x, -npc.z || 1);
+      mesh.userData.mapId = mapId;
       parent.add(mesh);
       this.npcMeshes.push(mesh);
     }
     this.refreshQuestMarkers();
+  }
+
+  /** Warp to any field map destination (teleporter NPC). */
+  teleportTo(mapId, x, z, label = "destination") {
+    if (!this.local || DungeonService.isInside()) return;
+    const toMap = mapId || "overworld";
+    if (toMap !== MapService.currentId) {
+      this.switchMap(toMap);
+      if (this.net.isHost) this.seedWorld(toMap);
+      this.net.sendEvent({
+        type: "map_travel",
+        from: this.local.id,
+        mapId: toMap,
+        x,
+        z,
+      });
+    }
+    this.local.x = x;
+    this.local.z = z;
+    this.local.rot = Math.atan2(-x, -z || 1);
+    if (this.localMesh) {
+      this.localMesh.position.set(x, 0, z);
+      this.localMesh.rotation.y = this.local.rot;
+    }
+    this.nearNpc = null;
+    this.ui.toast?.(`Teleported to ${label}`);
   }
 
   spawnDemonTower() {
@@ -356,6 +414,7 @@ export class Game {
     if (this.towerMesh) ow.remove(this.towerMesh);
     if (this.dungeonRoot) this.scene.remove(this.dungeonRoot);
     if (this.valleyRoot) this.scene.remove(this.valleyRoot);
+    if (this.orcRoot) this.scene.remove(this.orcRoot);
 
     // Overworld landmark only
     this.towerMesh = makeDemonTowerMesh();
@@ -376,9 +435,11 @@ export class Game {
     }
     this.scene.add(this.dungeonRoot);
 
-    // Second field map (brown Seungryong)
+    // Field maps: Seungryong + Orc Isles
     this.valleyRoot = makeValleyMapRoot();
     this.scene.add(this.valleyRoot);
+    this.orcRoot = makeOrcMapRoot();
+    this.scene.add(this.orcRoot);
 
     this.switchMap("overworld");
   }
@@ -388,6 +449,7 @@ export class Game {
     const map = MapService.set(mapId);
     if (this.overworld) this.overworld.visible = mapId === "overworld";
     if (this.valleyRoot) this.valleyRoot.visible = mapId === "valley";
+    if (this.orcRoot) this.orcRoot.visible = mapId === "orc_valley";
     if (this.dungeonRoot) this.dungeonRoot.visible = mapId === "demon_tower";
     if (this.local) this.local.mapId = mapId;
     if (this.scene) {
@@ -413,7 +475,8 @@ export class Game {
     }
     for (const [, met] of this.metins) {
       if (!met.mesh) continue;
-      met.mesh.visible = !inDungeon && (met.mapId || "overworld") === mid;
+      if (met.dungeon) met.mesh.visible = inDungeon;
+      else met.mesh.visible = !inDungeon && (met.mapId || "overworld") === mid;
     }
     for (const [, l] of this.loot) {
       if (!l.mesh) continue;
@@ -510,28 +573,27 @@ export class Game {
     QuestService.ensure(ch);
     for (const mesh of this.npcMeshes) {
       const npc = mesh.userData?.npc;
-      if (!npc || npc.role !== "quest") {
+      if (!npc || (npc.role !== "quest" && npc.role !== "biologist")) {
         setQuestMarker(mesh, "");
         continue;
       }
+      const mine = QUESTS.filter((q) => (q.giver || "quest_elder") === npc.id);
       let best = "";
-      for (const q of QUESTS) {
-        const st = ch.quests[q.id];
-        if (st?.state === "completed") {
+      for (const q of mine) {
+        if (ch.quests[q.id]?.state === "completed") {
           best = "done";
           break;
         }
       }
       if (!best) {
-        for (const q of QUESTS) {
-          if (!ch.quests[q.id] && ch.level >= q.levelReq) {
-            best = "!";
-            break;
-          }
+        for (const q of mine) {
+          if (!QuestService.canAccept(ch, q)) continue;
+          best = "!";
+          break;
         }
       }
       if (!best) {
-        for (const q of QUESTS) {
+        for (const q of mine) {
           if (ch.quests[q.id]?.state === "accepted") {
             best = "?";
             break;
@@ -603,9 +665,15 @@ export class Game {
     if (existingMobs > 0) return;
     const seed = SpawnService.seedWild(mapId, this.character?.level || 1);
     for (const m of seed.metins) this.spawnMetin(m.x, m.z, m.templateId, mapId);
-    for (const m of seed.mobs) this.spawnMob(m.x, m.z, m.templateId, mapId);
+    for (const m of seed.mobs) this.spawnMob(m.x, m.z, m.templateId, mapId, { camp: !!m.camp });
     if (mapId === MapService.currentId) {
-      this.ui.toast(mapId === "valley" ? "Bandits roam the valley" : "Leave the city gates to hunt");
+      this.ui.toast(
+        mapId === "orc_valley"
+          ? "Black orcs hold the isles — the war tower looms"
+          : mapId === "valley"
+            ? "Bandits roam Seungryong — rogue camp NW · east to Orc Isles"
+            : "Dogs & wolves by the walls — east portal to Seungryong"
+      );
     }
     this._syncEntityMapVisibility();
   }
@@ -661,6 +729,304 @@ export class Game {
     this.net.sendEvent({ type: "party_leave", from: this.local.id, party: remaining });
     this.ui.toast("Left party");
     this.onPartyChange(null);
+  }
+
+  // —— Click player / duel / trade ——
+  _tryClickPlayer() {
+    if (!this.local || DungeonService.isInside()) return false;
+    const hit = this._raycastPlayerUnderCursor();
+    if (!hit) {
+      this.ui.hidePlayerContext?.();
+      return false;
+    }
+    const d = dist2(this.local.x, this.local.z, hit.x, hit.z);
+    if (d > 12) {
+      this.ui.toast("Get closer to interact");
+      return true;
+    }
+    this.selectedPlayerId = hit.id;
+    this.ui.showPlayerContext?.({
+      id: hit.id,
+      name: hit.name,
+      level: hit.level,
+      x: this.mouse.x,
+      y: this.mouse.y,
+    });
+    return true;
+  }
+
+  _raycastPlayerUnderCursor() {
+    const meshes = [];
+    const byMesh = new Map();
+    for (const [id, r] of this.remotes) {
+      const mid = r.target?.mapId || r.state?.mapId || "overworld";
+      if (mid !== MapService.currentId) continue;
+      if (r.target?.stealth) continue;
+      if (!r.mesh?.visible) continue;
+      meshes.push(r.mesh);
+      byMesh.set(r.mesh, id);
+    }
+    if (!meshes.length) return null;
+    this.raycaster.setFromCamera(this.mouse.ndc, this.camera);
+    const hits = this.raycaster.intersectObjects(meshes, true);
+    for (const h of hits) {
+      if (h.object?.isSprite) continue;
+      for (const [mesh, id] of byMesh) {
+        if (this._meshContains(mesh, h.object)) {
+          const r = this.remotes.get(id);
+          const st = r?.target || r?.state || {};
+          return {
+            id,
+            name: st.name || "Player",
+            level: st.level || 1,
+            x: st.x ?? r.state.x,
+            z: st.z ?? r.state.z,
+            mesh: r.mesh,
+            ref: { id, ...st, hp: st.hp ?? 100 },
+          };
+        }
+      }
+    }
+    return null;
+  }
+
+  _duelOpponentTarget() {
+    if (!this.local) return null;
+    const oid = PvPService.opponentId(this.local.id);
+    if (!oid || !PvPService.isDueling(this.local.id)) return null;
+    const r = this.remotes.get(oid);
+    if (!r) return null;
+    const st = r.target || r.state || {};
+    const mid = st.mapId || "overworld";
+    if (mid !== MapService.currentId) return null;
+    return {
+      type: "player",
+      ref: { id: oid, hp: st.hp ?? 1, name: st.name || PvPService.opponentName(this.local.id) },
+      x: st.x ?? r.state.x,
+      z: st.z ?? r.state.z,
+    };
+  }
+
+  challengePlayer(targetId) {
+    if (!this.local) return;
+    const err = PvPService.canChallenge(this.local.id, targetId);
+    if (err) {
+      this.ui.toast(err);
+      return;
+    }
+    this.net.sendEvent({
+      type: "duel_invite",
+      from: this.local.id,
+      fromName: this.local.name,
+      to: targetId,
+    });
+    this.ui.toast("Challenge sent");
+    this.ui.hidePlayerContext?.();
+  }
+
+  acceptDuel() {
+    const inv = PvPService.pendingChallenge;
+    if (!inv || !this.local) return;
+    const id = `duel_${Date.now().toString(36)}`;
+    this.net.sendEvent({
+      type: "duel_accept",
+      from: this.local.id,
+      fromName: this.local.name,
+      to: inv.from,
+      toName: inv.fromName,
+      duelId: id,
+    });
+    PvPService.beginCountdown({
+      id,
+      a: inv.from,
+      b: this.local.id,
+      aName: inv.fromName,
+      bName: this.local.name,
+    });
+    this.ui.hideSocialInvite?.();
+    this.ui.showDuelCountdown?.(5, false);
+    this.onDuelChange?.(PvPService.duel);
+  }
+
+  declineDuel() {
+    const inv = PvPService.pendingChallenge;
+    if (inv && this.local) {
+      this.net.sendEvent({ type: "duel_decline", from: this.local.id, to: inv.from });
+    }
+    PvPService.pendingChallenge = null;
+    this.ui.hideSocialInvite?.();
+    this.ui.toast("Challenge declined");
+  }
+
+  endDuel(reason = "", winnerId = null) {
+    if (!PvPService.duel || !this.local) return;
+    const duel = PvPService.duel;
+    const opp = PvPService.opponentName(this.local.id);
+    this.net.sendEvent({
+      type: "duel_end",
+      from: this.local.id,
+      duelId: duel.id,
+      a: duel.a,
+      b: duel.b,
+      winnerId,
+      reason,
+    });
+    PvPService.end();
+    this.ui.hideDuelCountdown?.();
+    this.onDuelChange?.(null);
+    if (reason !== "defeat") {
+      if (winnerId === this.local.id) this.ui.toast(`Duel won vs ${opp}!`);
+      else if (winnerId) this.ui.toast(`Duel lost vs ${opp}`);
+      else this.ui.toast(reason || "Duel ended");
+    }
+    if (this.local.hp < this.local.maxHp * 0.35) {
+      this.local.hp = Math.max(this.local.hp, Math.floor(this.local.maxHp * 0.35));
+    }
+  }
+
+  inviteTrade(targetId) {
+    if (!this.local) return;
+    const err = TradeService.canInvite(this.local.id, targetId);
+    if (err) {
+      this.ui.toast(err);
+      return;
+    }
+    this.net.sendEvent({
+      type: "trade_invite",
+      from: this.local.id,
+      fromName: this.local.name,
+      to: targetId,
+    });
+    this.ui.toast("Trade request sent");
+    this.ui.hidePlayerContext?.();
+  }
+
+  acceptTrade() {
+    const inv = TradeService.pendingInvite;
+    if (!inv || !this.local) return;
+    const id = `trd_${Date.now().toString(36)}`;
+    this.net.sendEvent({
+      type: "trade_accept",
+      from: this.local.id,
+      fromName: this.local.name,
+      to: inv.from,
+      toName: inv.fromName,
+      tradeId: id,
+    });
+    TradeService.open(id, inv.from, inv.fromName);
+    this.ui.hideSocialInvite?.();
+    this.onTradeChange?.(TradeService.session);
+  }
+
+  declineTrade() {
+    const inv = TradeService.pendingInvite;
+    if (inv && this.local) {
+      this.net.sendEvent({ type: "trade_decline", from: this.local.id, to: inv.from });
+    }
+    TradeService.pendingInvite = null;
+    this.ui.hideSocialInvite?.();
+    this.ui.toast("Trade declined");
+  }
+
+  tradeOfferItem(uid) {
+    if (!this.character || !TradeService.session) return;
+    const err = TradeService.offerItem(this.character, uid);
+    if (err) {
+      this.ui.toast(err);
+      return;
+    }
+    this._broadcastTradeOffer();
+    this.onTradeChange?.(TradeService.session);
+    this.onCharacterChange?.(this.character, this.local);
+  }
+
+  tradeWithdrawItem(uid) {
+    if (!this.character || !TradeService.session) return;
+    const err = TradeService.withdrawItem(this.character, uid);
+    if (err) {
+      this.ui.toast(err);
+      return;
+    }
+    this._broadcastTradeOffer();
+    this.onTradeChange?.(TradeService.session);
+    this.onCharacterChange?.(this.character, this.local);
+  }
+
+  tradeSetYang(amount) {
+    if (!this.character || !TradeService.session) return;
+    const err = TradeService.setYang(this.character, amount);
+    if (err) {
+      this.ui.toast(err);
+      return;
+    }
+    this._broadcastTradeOffer();
+    this.onTradeChange?.(TradeService.session);
+  }
+
+  tradeToggleLock() {
+    const s = TradeService.session;
+    if (!s || !this.local) return;
+    const next = !s.myLock;
+    TradeService.setLock(true, next);
+    this.net.sendEvent({
+      type: "trade_lock",
+      from: this.local.id,
+      tradeId: s.id,
+      locked: next,
+    });
+    this.onTradeChange?.(s);
+  }
+
+  tradeConfirm() {
+    const s = TradeService.session;
+    if (!s || !this.local) return;
+    const err = TradeService.setConfirm(true, true);
+    if (err) {
+      this.ui.toast(err);
+      return;
+    }
+    this.net.sendEvent({ type: "trade_confirm", from: this.local.id, tradeId: s.id });
+    this.onTradeChange?.(s);
+    if (TradeService.bothConfirmed()) this._finishTrade();
+  }
+
+  tradeCancel() {
+    const s = TradeService.session;
+    if (!this.local) return;
+    if (s) {
+      this.net.sendEvent({ type: "trade_cancel", from: this.local.id, tradeId: s.id });
+    }
+    TradeService.cancelRestore(this.character);
+    this.onTradeChange?.(null);
+    this.onCharacterChange?.(this.character, this.local);
+    this.ui.toast("Trade cancelled");
+  }
+
+  _broadcastTradeOffer() {
+    const s = TradeService.session;
+    if (!s || !this.local) return;
+    const payload = TradeService.myOfferPayload();
+    this.net.sendEvent({
+      type: "trade_offer",
+      from: this.local.id,
+      tradeId: s.id,
+      items: payload.items,
+      yang: payload.yang,
+    });
+  }
+
+  _finishTrade() {
+    if (!this.character || !TradeService.session) return;
+    const err = TradeService.execute(this.character);
+    if (err) {
+      this.ui.toast(err);
+      return;
+    }
+    this.local.gold = this.character.gold;
+    this.onTradeChange?.(null);
+    this.onCharacterChange?.(this.character, this.local);
+    this.ui.toast("Trade complete");
+    this.ui.requestSave?.(false);
   }
 
   // —— Demon Tower ——
@@ -837,19 +1203,21 @@ export class Game {
   }
 
   _spawnDungeonFloor(cfg) {
+    this._removeTowerSmith();
     const a = DEMON_TOWER.arena;
     let spawned = 0;
+    const floorHp = cfg.hpMul || 1 + (cfg.floor - 1) * 0.2;
     for (const row of cfg.mobs || []) {
       for (let i = 0; i < row.n; i++) {
         const ang = Math.random() * Math.PI * 2;
-        const r = 4 + Math.random() * 8;
+        const r = 4 + Math.random() * 7;
         const id = this.spawnMob(a.x + Math.cos(ang) * r, a.z + Math.sin(ang) * r, row.id, "demon_tower");
         const mob = this.mobs.get(id);
         if (mob) {
           mob.dungeon = true;
           mob.mapId = "demon_tower";
           if (mob.mesh) mob.mesh.visible = true;
-          mob.hp = Math.floor(mob.hp * (1 + (cfg.floor - 1) * 0.15));
+          mob.hp = Math.floor(mob.hp * floorHp);
           mob.maxHp = mob.hp;
           spawned++;
         }
@@ -869,8 +1237,29 @@ export class Game {
         spawned++;
       }
     }
+    // Floor 7 crucible — ring of Metin stones
+    for (const row of cfg.metins || []) {
+      const n = row.n || 6;
+      for (let i = 0; i < n; i++) {
+        const ang = (i / n) * Math.PI * 2 + Math.PI / n;
+        const r = 6.2;
+        const id = this.spawnMetin(
+          a.x + Math.cos(ang) * r,
+          a.z + Math.sin(ang) * r,
+          row.id || "tower",
+          "demon_tower",
+          { dungeon: true, force: true, hpMul: 1.15 }
+        );
+        const met = this.metins.get(id);
+        if (met) {
+          met.dungeon = true;
+          if (met.mesh) met.mesh.visible = true;
+          spawned++;
+        }
+      }
+    }
     this._dtFloorMobs = spawned;
-    DungeonService.run.cleared = spawned === 0;
+    if (DungeonService.run) DungeonService.run.cleared = spawned === 0;
   }
 
   _clearDungeonMobs() {
@@ -880,13 +1269,57 @@ export class Game {
         this.mobs.delete(id);
       }
     }
+    for (const [id, m] of [...this.metins]) {
+      if (m.dungeon) {
+        this.scene.remove(m.mesh);
+        this.metins.delete(id);
+      }
+    }
+    this._removeTowerSmith();
     this._dtFloorMobs = 0;
+  }
+
+  _spawnTowerSmith() {
+    if (this.towerSmithMesh || !this.dungeonRoot) return;
+    const npc = {
+      ...TOWER_SMITH_NPC,
+      x: DEMON_TOWER.smithPos?.x ?? TOWER_SMITH_NPC.x,
+      z: DEMON_TOWER.smithPos?.z ?? TOWER_SMITH_NPC.z,
+    };
+    this.towerSmithNpc = npc;
+    const mesh = makeNpcMesh(npc);
+    mesh.position.set(npc.x, 0, npc.z);
+    mesh.userData.npc = npc;
+    mesh.visible = true;
+    this.dungeonRoot.add(mesh);
+    this.towerSmithMesh = mesh;
+    const members =
+      PartyService.party?.members?.map((m) => m.id) ||
+      (this.local ? [this.local.id] : []);
+    DungeonService.enableSmith(members);
+    if (this.local) DungeonService.smithUsesLeft(this.local.id);
+    this.ui.toast("Infernal Blacksmith appears — 3 blessed upgrades each");
+    this.net.sendEvent({
+      type: "dt_smith",
+      from: this.local?.id,
+      instanceId: DungeonService.run?.instanceId,
+      members,
+    });
+  }
+
+  _removeTowerSmith() {
+    if (this.towerSmithMesh) {
+      this.towerSmithMesh.parent?.remove(this.towerSmithMesh);
+      this.towerSmithMesh = null;
+    }
+    this.towerSmithNpc = null;
   }
 
   _checkDungeonClear() {
     if (!DungeonService.run || DungeonService.run.cleared) return;
     let alive = 0;
     for (const [, m] of this.mobs) if (m.dungeon && m.hp > 0) alive++;
+    for (const [, m] of this.metins) if (m.dungeon && m.hp > 0) alive++;
     if (alive === 0) {
       DungeonService.markCleared();
       const cfg = DungeonService.floorConfig(DungeonService.run.floor);
@@ -898,12 +1331,16 @@ export class Game {
         this.ui.toast(`Floor ${cfg.floor} cleared! +${cfg.yang} Yang`);
         audio.sfx("level");
       }
+      if (cfg?.smith || DungeonService.isFinal()) {
+        this._spawnTowerSmith();
+      }
       this.onDungeonChange(DungeonService.run);
       this.net.sendEvent({
         type: "dt_cleared",
         from: this.local?.id,
         instanceId: DungeonService.run.instanceId,
         floor: DungeonService.run.floor,
+        smith: !!(cfg?.smith || DungeonService.isFinal()),
       });
     }
   }
@@ -950,35 +1387,78 @@ export class Game {
     if (this.arenaMesh?.userData?.portal) this.arenaMesh.userData.portal.visible = false;
     if (this.arenaMesh?.userData?.portalLabel) this.arenaMesh.userData.portalLabel.visible = false;
     this._setDungeonMapActive(false);
-    // Teleport back to overworld entrance
-    this.local.x = DEMON_TOWER.entrance.x - 5;
-    this.local.z = DEMON_TOWER.entrance.z + 5;
+    // Whole party → Shinsoo plaza; tower instance resets
+    const exit = DEMON_TOWER.exitCity || { x: 0, z: 0 };
+    this.local.x = exit.x;
+    this.local.z = exit.z;
+    this.local.mapId = "overworld";
     this.local.invulnUntil = this.time + 2;
+    const members = PartyService.memberIds();
+    if (!members.includes(this.local.id)) members.push(this.local.id);
     const exitPayload = {
       type: "dt_exit",
       from: this.local.id,
-      members: PartyService.memberIds(),
+      members,
       mapId: "overworld",
-      exit: { x: this.local.x, z: this.local.z },
+      exit: { x: exit.x, z: exit.z },
+      reset: true,
     };
     if (this.net.sendEventReliable) this.net.sendEventReliable(exitPayload);
     else this.net.sendEvent(exitPayload);
     this.ui.toast(
-      PartyService.size() > 1 ? "Party returned to the overworld" : "Returned to the overworld"
+      PartyService.size() > 1
+        ? "Demon Tower cleared — party returned to Shinsoo"
+        : "Demon Tower cleared — returned to Shinsoo"
     );
     this.onDungeonChange(null);
-    if (this.net.isHost) setTimeout(() => this.seedWorld(), 400);
+    if (this.net.isHost) setTimeout(() => this.seedWorld("overworld"), 400);
   }
 
-  spawnMetin(x, z, templateIdOrTier = "battle", mapId = MapService.currentId) {
-    const tmpl =
+  /** Idle pulse / spin for squat Metin stones */
+  _animateMetin(m, dt) {
+    const ud = m.mesh?.userData;
+    if (!ud?.crystal) return;
+    const baseY = ud.crystalBaseY ?? 0.62;
+    const bob = Math.sin(m.pulse) * 0.05;
+    ud.crystal.rotation.y += dt * 1.1;
+    ud.crystal.position.y = baseY + bob;
+    if (ud.shard) {
+      ud.shard.rotation.y -= dt * 1.8;
+      ud.shard.rotation.z = Math.sin(m.pulse * 1.3) * 0.25;
+    }
+    if (ud.runes) ud.runes.rotation.z += dt * 0.9;
+    if (ud.nucleus) {
+      const s = 0.9 + Math.sin(m.pulse * 2.2) * 0.18;
+      ud.nucleus.scale.setScalar(s);
+    }
+    if (ud.light) {
+      ud.light.intensity = 1.15 + Math.sin(m.pulse * 2) * 0.35;
+      ud.light.position.y = baseY + bob;
+    }
+    if (ud.glowDisc?.material) {
+      ud.glowDisc.material.opacity = 0.16 + Math.sin(m.pulse * 1.6) * 0.08;
+    }
+    if (ud.glowRing?.material) {
+      ud.glowRing.material.opacity = 0.45 + Math.sin(m.pulse * 1.6) * 0.12;
+      ud.glowRing.scale.setScalar(0.95 + Math.sin(m.pulse) * 0.06);
+    }
+  }
+
+  spawnMetin(x, z, templateIdOrTier = "battle", mapId = MapService.currentId, opts = {}) {
+    let tmpl =
       typeof templateIdOrTier === "number"
         ? Object.values(METINS).find((t) => t.tier === templateIdOrTier) || METINS.battle
-        : METINS[templateIdOrTier] || SpawnService.pickMetinTemplate();
+        : METINS[templateIdOrTier] || SpawnService.pickMetinTemplate(mapId);
+    // Enforce map tier — never place a wrong-band stone (unless forced / dungeon)
+    if (!opts.force && tmpl.maps && !tmpl.maps.includes(mapId)) {
+      const fallback = SpawnService.pickMetinTemplate(mapId);
+      return this.spawnMetin(x, z, fallback.id, mapId, opts);
+    }
     const id = uid("met");
     const mesh = makeMetinMesh(tmpl.tier, tmpl.color);
     mesh.position.set(x, 0, z);
-    mesh.visible = mapId === MapService.currentId && !MapService.isDungeon();
+    const dungeon = !!opts.dungeon || mapId === "demon_tower";
+    mesh.visible = dungeon ? MapService.isDungeon() : mapId === MapService.currentId && !MapService.isDungeon();
     this.scene.add(mesh);
     this.metins.set(id, {
       id,
@@ -987,19 +1467,61 @@ export class Game {
       tier: tmpl.tier,
       templateId: tmpl.id,
       name: tmpl.name,
+      level: tmpl.level,
       dropTable: tmpl.drop_table,
-      hp: tmpl.hp,
-      maxHp: tmpl.hp,
+      hp: Math.floor(tmpl.hp * (opts.hpMul || 1)),
+      maxHp: Math.floor(tmpl.hp * (opts.hpMul || 1)),
       mesh,
       pulse: rand(0, 10),
-      spawnT: 3,
-      wave: tmpl.wave || 3,
+      spawnT: dungeon ? 9999 : 3,
+      wave: dungeon ? 0 : tmpl.wave || 3,
       mapId,
+      dungeon,
     });
     return id;
   }
 
-  spawnMob(x, z, kind = "wolf", mapId = MapService.currentId) {
+  _playersOnMap(players, mapId) {
+    return players.filter((p) => (p.mapId || "overworld") === mapId).length;
+  }
+
+  /** Spawn a tight group of 3 wild mobs (not camp, not from metin) */
+  _spawnWildGroup(mapId, level) {
+    const zones = ["near", "mid", "edge"];
+    const zone = zones[(Math.random() * zones.length) | 0];
+    const base = SpawnService.pointInZone(mapId, zone);
+    const kind = SpawnService.pickMobForZone(mapId, zone, level).id;
+    for (let i = 0; i < 3; i++) {
+      const ang = (i / 3) * Math.PI * 2 + Math.random() * 0.4;
+      const r = 1.2 + Math.random() * 1.8;
+      let x = base.x + Math.cos(ang) * r;
+      let z = base.z + Math.sin(ang) * r;
+      if (mapId === "orc_valley") {
+        const land = clampToOrcLand(x, z);
+        x = land.x;
+        z = land.z;
+      }
+      this.spawnMob(x, z, kind, mapId, { fromMetin: false });
+    }
+  }
+
+  /** Rogue Chief returns with 4 supporting bandits */
+  _respawnRogueChief(playerCount) {
+    const p = banditCampPoint(3, 8);
+    this.spawnMob(p.x, p.z, "rogue_chief", BANDIT_CAMP.mapId, { camp: true, boss: true });
+    for (let i = 0; i < BANDIT_CAMP.supportOnBoss; i++) {
+      const s = banditCampPoint(5, BANDIT_CAMP.r - 2);
+      this.spawnMob(s.x, s.z, Math.random() < 0.35 ? "soldier" : "bandit", BANDIT_CAMP.mapId, {
+        camp: true,
+      });
+    }
+    this.chiefRespawnTimer = 0;
+    if (MapService.is("valley")) {
+      this.ui.toast("The Rogue Chief returns with reinforcements");
+    }
+  }
+
+  spawnMob(x, z, kind = "wolf", mapId = MapService.currentId, opts = {}) {
     const tmpl = MONSTERS[kind] || MONSTERS.wolf;
     const id = uid("mob");
     const mesh = makeMobMesh(tmpl.id || tmpl.kind || kind);
@@ -1012,16 +1534,23 @@ export class Game {
       templateId: tmpl.id,
       x,
       z,
+      homeX: x,
+      homeZ: z,
       hp: tmpl.hp,
       maxHp: tmpl.hp,
       speed: tmpl.speed,
       atk: tmpl.atk,
       def: tmpl.def || 0,
+      aggro: tmpl.aggro ?? 16,
+      leash: tmpl.leash ?? 28,
       dropTable: tmpl.drop_table,
       atkT: rand(0.5, 1.2),
       mesh,
       targetId: null,
       mapId,
+      camp: !!opts.camp,
+      boss: !!opts.boss || tmpl.rank === "boss",
+      fromMetin: !!opts.fromMetin,
     });
     return id;
   }
@@ -1079,9 +1608,13 @@ export class Game {
     };
 
     for (const [, m] of this.mobs) consider("mob", m, m.x, m.z, 0.15);
-    if (!DungeonService.isInside()) {
-      for (const [, m] of this.metins) consider("metin", m, m.x, m.z, 0.55);
+    for (const [, m] of this.metins) {
+      if (DungeonService.isInside() && !m.dungeon) continue;
+      if (!DungeonService.isInside() && m.dungeon) continue;
+      consider("metin", m, m.x, m.z, 0.55);
     }
+    const opp = this._duelOpponentTarget();
+    if (opp) consider("player", opp.ref, opp.x, opp.z, 0.35);
     return best;
   }
 
@@ -1093,11 +1626,20 @@ export class Game {
     for (const [, m] of this.metins) {
       if (m.hp > 0 && m.mesh?.visible && this._entityOnCurrentMap(m)) meshes.push(m.mesh);
     }
+    const duelOpp = this._duelOpponentTarget();
+    if (duelOpp) {
+      const r = this.remotes.get(duelOpp.ref.id);
+      if (r?.mesh?.visible) meshes.push(r.mesh);
+    }
     if (!meshes.length) return null;
     this.raycaster.setFromCamera(this.mouse.ndc, this.camera);
     const hits = this.raycaster.intersectObjects(meshes, true);
     for (const h of hits) {
       if (h.object?.isSprite) continue;
+      if (duelOpp) {
+        const r = this.remotes.get(duelOpp.ref.id);
+        if (r && this._meshContains(r.mesh, h.object)) return duelOpp;
+      }
       for (const [, m] of this.mobs) {
         if (this._meshContains(m.mesh, h.object)) {
           return { type: "mob", ref: m, x: m.x, z: m.z };
@@ -1113,12 +1655,17 @@ export class Game {
   }
 
   _updateAimHighlight() {
-    const next = this.aimEntity?.ref || null;
-    if (this._prevHighlight && this._prevHighlight !== next) {
-      this._setMeshHighlight(this._prevHighlight.mesh, false);
+    let nextMesh = null;
+    if (this.aimEntity?.type === "player") {
+      nextMesh = this.remotes.get(this.aimEntity.ref?.id)?.mesh || null;
+    } else if (this.aimEntity?.ref?.mesh) {
+      nextMesh = this.aimEntity.ref.mesh;
     }
-    if (next) this._setMeshHighlight(next.mesh, true);
-    this._prevHighlight = next;
+    if (this._prevHighlightMesh && this._prevHighlightMesh !== nextMesh) {
+      this._setMeshHighlight(this._prevHighlightMesh, false);
+    }
+    if (nextMesh) this._setMeshHighlight(nextMesh, true);
+    this._prevHighlightMesh = nextMesh;
   }
 
   _setMeshHighlight(mesh, on) {
@@ -1179,9 +1726,13 @@ export class Game {
       }
     };
     for (const [, m] of this.mobs) consider("mob", m, m.x, m.z, 1.0);
-    if (!DungeonService.isInside()) {
-      for (const [, m] of this.metins) consider("metin", m, m.x, m.z, 1.4);
+    for (const [, m] of this.metins) {
+      if (DungeonService.isInside() && !m.dungeon) continue;
+      if (!DungeonService.isInside() && m.dungeon) continue;
+      consider("metin", m, m.x, m.z, 1.4);
     }
+    const opp = this._duelOpponentTarget();
+    if (opp) consider("player", opp.ref, opp.x, opp.z, 1.0);
     return best;
   }
 
@@ -1189,10 +1740,28 @@ export class Game {
     const p = this.local;
     if (!p) return;
 
+    // Duel countdown 5 → 0
+    if (PvPService.duel?.state === "countdown") {
+      const tick = PvPService.tickCountdown(dt);
+      if (tick === "start") {
+        this.ui.showDuelCountdown?.(0, true);
+        this.ui.toast("Fight!");
+        audio.sfx("skill");
+        this.onDuelChange?.(PvPService.duel);
+      } else if (typeof tick === "number") {
+        this.ui.showDuelCountdown?.(tick, false);
+        audio.sfx("ui");
+      } else if (PvPService.duel.countdown === 5 && PvPService.duel.countdownAcc < dt + 0.01) {
+        this.ui.showDuelCountdown?.(5, false);
+      }
+    }
+
     this.updateAim();
 
     if (this.pendingDeath) {
       this.casts = [];
+      p.recoverUntil = 0;
+      p.attacking = 0;
       this.ui.updateHud(p, this.character);
       this.fx?.update(dt);
       return;
@@ -1215,7 +1784,10 @@ export class Game {
     if (this.keys.has("d") || this.keys.has("arrowright")) mx += 1;
     const stealth = this.time < p.stealthUntil;
     const casting = this.casts.length > 0;
-    const speed = p.speed * p.buffMul * (stealth ? 1.25 : 1) * (casting ? 0.35 : 1);
+    const recovering = this.time < (p.recoverUntil || 0);
+    // Metin2: heavy slow while casting, light slow in recovery
+    const moveMul = casting ? 0.22 : recovering ? 0.55 : 1;
+    const speed = p.speed * p.buffMul * (stealth ? 1.25 : 1) * moveMul;
     if (mx || mz) {
       const len = Math.hypot(mx, mz);
       p.x += (mx / len) * speed * dt;
@@ -1237,14 +1809,29 @@ export class Game {
       const half = MapService.current.half || MAP_HALF;
       p.x = clamp(p.x, -half + 1.2, half - 1.2);
       p.z = clamp(p.z, -half + 1.2, half - 1.2);
+      if (MapService.is("orc_valley")) {
+        const land = clampToOrcLand(p.x, p.z);
+        p.x = land.x;
+        p.z = land.z;
+      }
     }
     p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
 
-    // NPC / tower / portal proximity
-    const near =
-      MapService.isOverworld() && !DungeonService.isInside()
-        ? NpcService.near(p.x, p.z, 3.5)[0] || null
+    // NPC / tower / portal proximity (NPCs can live on any field map)
+    let near =
+      MapService.isField() && !DungeonService.isInside()
+        ? NpcService.near(p.x, p.z, 3.5, MapService.currentId)[0] || null
         : null;
+    // Infernal Blacksmith after floor 7
+    if (
+      !near &&
+      DungeonService.isInside() &&
+      DungeonService.run?.smithReady &&
+      this.towerSmithNpc &&
+      dist2(p.x, p.z, this.towerSmithNpc.x, this.towerSmithNpc.z) < 3.8
+    ) {
+      near = this.towerSmithNpc;
+    }
     this.nearNpc = near;
     this.nearTower =
       MapService.isOverworld() &&
@@ -1259,31 +1846,36 @@ export class Game {
         ? findPortalNear(MapService.currentId, p.x, p.z)
         : null;
 
-    // Standing on the portal pad auto-triggers (Metin-style)
-    if (this.nearPortal) {
+    // Standing on the portal pad auto-triggers (except final floor — forge first)
+    if (this.nearPortal && !DungeonService.isFinal()) {
       this.useDemonPortal();
-      this.ui.setNpcPrompt?.({
-        name: DungeonService.canAdvance() || !DungeonService.isInside()
-          ? "Portal — ascending…"
-          : "Portal — leaving…",
-      });
+      this.ui.setNpcPrompt?.({ name: "Portal — ascending…" });
     } else if (this.nearWorldPortal) {
       this.ui.setNpcPrompt?.({ name: `${this.nearWorldPortal.label} — walk in / E` });
       this.useWorldPortal(this.nearWorldPortal);
     } else if (DungeonService.isInside() && DungeonService.run?.cleared && portalDist < 8) {
       this.ui.setNpcPrompt?.({
-        name: DungeonService.canAdvance() ? "Blue portal — walk in / E" : "Exit portal — walk in / E",
+        name: DungeonService.isFinal()
+          ? "Exit to Shinsoo (E) · forge at the Infernal Smith"
+          : "Blue portal — walk in / E",
       });
+    } else if (near?.towerSmith) {
+      const left = DungeonService.smithUsesLeft(p.id);
+      this.ui.setNpcPrompt?.({ name: `Infernal Blacksmith — forge (E) · ${left} uses left` });
     } else if (this.nearTower) {
       this.ui.setNpcPrompt?.({ name: "Demon Tower — Enter (E)" });
     } else {
       this.ui.setNpcPrompt?.(near);
     }
 
-    // Pulse edge portal rings
-    for (const root of [this.overworld, this.valleyRoot]) {
-      const ep = root?.userData?.edgePortal;
-      if (ep?.userData?.ring) ep.userData.ring.rotation.z += dt * 1.2;
+    // Pulse edge portal rings + cozy chimney smoke
+    for (const root of [this.overworld, this.valleyRoot, this.orcRoot]) {
+      if (!root) continue;
+      for (const key of ["edgePortal", "edgePortalEast"]) {
+        const ep = root.userData?.[key];
+        if (ep?.userData?.ring) ep.userData.ring.rotation.z += dt * 1.2;
+      }
+      if (root.visible) animateWorldSmoke(root, this.time);
     }
 
     // Demon Tower floor clear check + VFX
@@ -1304,12 +1896,13 @@ export class Game {
       }
     }
 
-    // Attack (blocked while a cast is winding up)
-    if ((this.mouse.down || this.keys.has(" ")) && p.atkCd <= 0 && !this.casts.length) {
+    // Attack blocked during cast windup + recovery frames
+    const busy = this.casts.length > 0 || this.time < (p.recoverUntil || 0);
+    if ((this.mouse.down || this.keys.has(" ")) && p.atkCd <= 0 && !busy) {
       this.doAttack();
     }
     for (let i = 0; i < 4; i++) {
-      if (this.keys.has(String(i + 1)) && p.skillCd[i] <= 0 && !this.casts.length) {
+      if (this.keys.has(String(i + 1)) && p.skillCd[i] <= 0 && !busy) {
         this.keys.delete(String(i + 1));
         this.castSkill(i);
       }
@@ -1332,13 +1925,18 @@ export class Game {
     this.localMesh.visible = !stealth || Math.sin(this.time * 20) > -0.2;
     setNameplate(this.localMesh, p.name, p.hp / p.maxHp, p.level, p.classId);
     if (this.heroCtrl) {
-      // Run when buffed / moving quickly; otherwise walk clip
       const run = p.moving && (p.buffMul > 1.2 || p.speed >= 9);
-      this.heroCtrl.update(dt, { moving: p.moving, run, attacking: p.attacking });
+      this.heroCtrl.update(dt, {
+        moving: p.moving,
+        run,
+        attacking: p.attacking,
+        attackDur: p.attackDur,
+      });
     } else {
       animateCharacter(this.localMesh, dt, {
         moving: p.moving,
         attacking: p.attacking,
+        attackDur: p.attackDur,
         speed: p.buffMul,
       });
     }
@@ -1379,9 +1977,14 @@ export class Game {
         Math.hypot((t.x || 0) - (r._lx ?? t.x), (t.z || 0) - (r._lz ?? t.z)) > 0.02;
       r._lx = t.x;
       r._lz = t.z;
+      const atkOn = !!t.attacking;
+      const pulse = atkOn && !r._wasAtk;
+      r._wasAtk = atkOn;
       animateCharacter(r.mesh, dt, {
         moving: !!t.moving || moving,
-        attacking: t.attacking ? 0.22 : 0,
+        attackPulse: pulse,
+        attackDur: t.attackDur || 0.75,
+        attacking: 0,
         speed: 1,
       });
     }
@@ -1401,10 +2004,7 @@ export class Game {
       // clients still animate synced entities
       for (const [, m] of this.metins) {
         m.pulse = (m.pulse || 0) + dt * 2;
-        if (m.mesh?.userData.crystal) {
-          m.mesh.userData.crystal.rotation.y += dt * 1.4;
-          m.mesh.userData.crystal.position.y = 1.55 + Math.sin(m.pulse) * 0.12;
-        }
+        this._animateMetin(m, dt);
       }
       for (const [, mob] of this.mobs) {
         animateMob(mob.mesh, dt, true);
@@ -1446,6 +2046,7 @@ export class Game {
         kills: p.kills,
         stealth: stealth,
         attacking: p.attacking > 0,
+        attackDur: p.attackDur || 0,
         moving: p.moving,
         mapId: p.mapId || MapService.currentId,
         t: this.time,
@@ -1495,17 +2096,19 @@ export class Game {
           ? "Orc"
           : mob.kind === "elite_ork"
             ? "Orc Capt."
-            : mob.kind === "human" || mob.templateId === "bandit"
-              ? "Bandit"
-              : mob.templateId === "soldier"
-                ? "Soldier"
-                : "Wolf");
+            : mob.templateId === "rogue_chief"
+              ? "Rogue Chief"
+              : mob.kind === "human" || mob.templateId === "bandit"
+                ? "Bandit"
+                : mob.templateId === "soldier"
+                  ? "Soldier"
+                  : "Wolf");
       updateHpBar(mob.mesh, {
         name: label,
         hp: mob.hp,
         maxHp: mob.maxHp,
         level: tmpl?.level || (mob.kind === "ork" ? 12 : 3),
-        color: "#e23a2e",
+        color: mob.boss || mob.templateId === "rogue_chief" ? "#c43c2e" : "#e23a2e",
       });
       if (mob.mesh.userData.hpSprite) {
         mob.mesh.userData.hpSprite.visible = mob.hp < mob.maxHp * 0.999 || dist2(p.x, p.z, mob.x, mob.z) < 18;
@@ -1517,7 +2120,7 @@ export class Game {
         name: met.name || "Metin",
         hp: met.hp,
         maxHp: met.maxHp,
-        level: met.tier * 10,
+        level: met.level || METINS[met.templateId]?.level || met.tier * 10,
         color: "#c45cff",
       });
       if (met.mesh.userData.runes) met.mesh.userData.runes.rotation.z += dt * 0.6;
@@ -1577,12 +2180,24 @@ export class Game {
       mob.mesh.position.set(mob.x, 0, mob.z);
       animateMob(mob.mesh, dt, moving);
     }
+    for (const [, met] of this.metins) {
+      if (!met.dungeon) continue;
+      met.pulse = (met.pulse || 0) + dt * 2;
+      if (met.mesh?.userData.crystal) this._animateMetin(met, dt);
+    }
     for (const [id, m] of [...this.mobs]) {
       if (m.hp <= 0) {
         this.scene.remove(m.mesh);
         this.mobs.delete(id);
       }
     }
+    for (const [id, m] of [...this.metins]) {
+      if (m.dungeon && m.hp <= 0) {
+        this.scene.remove(m.mesh);
+        this.metins.delete(id);
+      }
+    }
+    this._checkDungeonClear();
   }
 
   updateHostWorld(dt) {
@@ -1594,34 +2209,30 @@ export class Game {
     const players = this.allCombatants();
     const fieldMobs = [...this.mobs.values()].filter((m) => !m.dungeon);
     const fieldMetins = [...this.metins.values()];
-    const half = MAP_HALF;
 
     for (const m of fieldMetins) {
       const mid = m.mapId || "overworld";
       m.pulse += dt * 2;
       m.spawnT -= dt;
       if (m.mesh?.userData.crystal && this._entityOnCurrentMap(m)) {
-        m.mesh.userData.crystal.rotation.y += dt * 1.4;
-        m.mesh.userData.crystal.position.y = 1.55 + Math.sin(m.pulse) * 0.12;
-        if (m.mesh.userData.shard) {
-          m.mesh.userData.shard.rotation.y -= dt * 2;
-          m.mesh.userData.shard.position.y = 1.2 + Math.cos(m.pulse) * 0.1;
-        }
+        this._animateMetin(m, dt);
       }
       if (m.spawnT <= 0) {
         m.spawnT = 6;
         const count = fieldMobs.filter((x) => (x.mapId || "overworld") === mid).length;
-        if (count < 35 && !inCity(m.x, m.z)) {
+        const blockedCity = mid !== "orc_valley" && inCity(m.x, m.z);
+        if (count < 38 && !blockedCity) {
           const a = rand(0, Math.PI * 2);
-          const kind =
-            mid === "valley"
-              ? Math.random() < 0.4
-                ? "soldier"
-                : "bandit"
-              : Math.random() < 0.4
-                ? "ork"
-                : "wolf";
-          this.spawnMob(m.x + Math.cos(a) * 4, m.z + Math.sin(a) * 4, kind, mid);
+          let sx = m.x + Math.cos(a) * 4;
+          let sz = m.z + Math.sin(a) * 4;
+          if (mid === "orc_valley") {
+            const land = clampToOrcLand(sx, sz);
+            sx = land.x;
+            sz = land.z;
+          }
+          const level = this.local?.level || 1;
+          const kind = SpawnService.pickKindAt(mid, sx, sz, level);
+          this.spawnMob(sx, sz, kind, mid, { fromMetin: true });
         }
       }
     }
@@ -1629,13 +2240,24 @@ export class Game {
     for (const mob of fieldMobs) {
       const mid = mob.mapId || "overworld";
       mob.atkT -= dt;
+      const aggroR = mob.aggro ?? 16;
+      const leashR = mob.leash ?? 28;
+      const homeX = mob.homeX ?? mob.x;
+      const homeZ = mob.homeZ ?? mob.z;
+
       let best = null;
       let bestD = 999;
       for (const pl of players) {
         if (pl.stealth) continue;
         if ((pl.mapId || "overworld") !== mid) continue;
-        // Mobs ignore players deep in the city
-        if (inCity(pl.x, pl.z) && dist2(pl.x, pl.z, 0, 0) < CITY_RADIUS - 3) continue;
+        // Mobs ignore players deep in the city (not on Orc Isles)
+        if (
+          mid !== "orc_valley" &&
+          inCity(pl.x, pl.z) &&
+          dist2(pl.x, pl.z, 0, 0) < CITY_RADIUS - 3
+        ) {
+          continue;
+        }
         const d = dist2(mob.x, mob.z, pl.x, pl.z);
         if (d < bestD) {
           bestD = d;
@@ -1643,8 +2265,15 @@ export class Game {
         }
       }
 
+      // Drop chase if past leash from spawn home
+      const homeD = dist2(mob.x, mob.z, homeX, homeZ);
+      if (best && (bestD > aggroR || homeD > leashR)) {
+        best = null;
+      }
+
       let moving = false;
-      if (best && bestD < 22) {
+      if (best && bestD < aggroR) {
+        mob.targetId = best.id;
         const ang = Math.atan2(best.x - mob.x, best.z - mob.z);
         if (bestD > 1.4) {
           mob.x += Math.sin(ang) * mob.speed * dt;
@@ -1655,56 +2284,114 @@ export class Game {
           this.applyDamageToPlayer(best.id, mob.atk, "mob");
         }
         mob.mesh.rotation.y = ang;
+      } else if (homeD > 1.2) {
+        // Return home when out of combat
+        mob.targetId = null;
+        const ang = Math.atan2(homeX - mob.x, homeZ - mob.z);
+        mob.x += Math.sin(ang) * mob.speed * 0.75 * dt;
+        mob.z += Math.cos(ang) * mob.speed * 0.75 * dt;
+        mob.mesh.rotation.y = ang;
+        moving = true;
+      } else {
+        mob.targetId = null;
       }
 
-      // Push mobs out if they wander into city core
-      const cd = dist2(mob.x, mob.z, 0, 0);
-      if (cd < CITY_RADIUS - 1) {
-        const push = (CITY_RADIUS - 1) / (cd || 1);
-        mob.x *= push;
-        mob.z *= push;
+      // Push mobs out if they wander into city core (Shinsoo / Seungryong only)
+      if (mid !== "orc_valley") {
+        const cd = dist2(mob.x, mob.z, 0, 0);
+        if (cd < CITY_RADIUS - 1) {
+          const push = (CITY_RADIUS - 1) / (cd || 1);
+          mob.x *= push;
+          mob.z *= push;
+        }
       }
 
+      const half = (MAPS[mid] || MAPS.overworld).half || MAP_HALF;
       mob.x = clamp(mob.x, -half + 1, half - 1);
       mob.z = clamp(mob.z, -half + 1, half - 1);
+      if (mid === "orc_valley") {
+        const land = clampToOrcLand(mob.x, mob.z);
+        mob.x = land.x;
+        mob.z = land.z;
+      }
       mob.mesh.position.set(mob.x, 0, mob.z);
       if (this._entityOnCurrentMap(mob)) animateMob(mob.mesh, dt, moving);
     }
 
-    this.waveTimer -= dt;
-    if (this.waveTimer <= 0) {
-      this.waveTimer = 14;
-      const activeMaps = new Set(players.map((p) => p.mapId || "overworld"));
+    // —— Timed respawns (wild groups / metins / rogue chief) ——
+    const activeMaps = new Set(players.map((p) => p.mapId || "overworld"));
+    const level = this.local?.level || 1;
+
+    // Wild packs: groups of 3 every 3–4 min (2–3 min if 3+ players on that map)
+    this.wildRespawnTimer -= dt;
+    if (this.wildRespawnTimer <= 0) {
+      let nextWild = 210;
       for (const mid of activeMaps) {
         if (!MapService.isField(mid)) continue;
-        const mapMobs = fieldMobs.filter((m) => (m.mapId || "overworld") === mid);
-        const mapMetins = fieldMetins.filter((m) => (m.mapId || "overworld") === mid);
-        if (mapMobs.length < 12) {
-          for (let i = 0; i < 6; i++) {
-            const p = wildPoint(CITY_RADIUS + 6, MAP_HALF - 7);
-            const kind =
-              mid === "valley"
-                ? Math.random() < 0.35
-                  ? "soldier"
-                  : "bandit"
-                : Math.random() < 0.35
-                  ? "ork"
-                  : "wolf";
-            this.spawnMob(p.x, p.z, kind, mid);
-          }
+        const nPlayers = this._playersOnMap(players, mid);
+        nextWild = Math.min(nextWild, SpawnService.wildRespawnInterval(nPlayers));
+        const mapMobs = fieldMobs.filter(
+          (m) => (m.mapId || "overworld") === mid && !m.camp && m.hp > 0
+        );
+        const cap = SpawnService.wildMobCap(mid);
+        if (mapMobs.length >= cap) continue;
+        // One group of 3; extra group if sparse or many players
+        this._spawnWildGroup(mid, level);
+        if (mapMobs.length < cap * 0.55 || nPlayers >= 3) {
+          if (mapMobs.length + 3 < cap) this._spawnWildGroup(mid, level);
         }
-        if (mapMetins.length < 3) {
-          const p = wildPoint(CITY_RADIUS + 10, MAP_HALF - 8);
-          this.spawnMetin(p.x, p.z, SpawnService.pickMetinTemplate().id, mid);
-          if (mid === MapService.currentId) {
-            this.net.sendEvent({ type: "toast", msg: "A new Metin rises beyond the walls", from: this.local.id });
-          }
+      }
+      this.wildRespawnTimer = nextWild;
+    }
+
+    // Rare metin refill (few stones, map-tiered)
+    this.metinRespawnTimer -= dt;
+    if (this.metinRespawnTimer <= 0) {
+      let nextMet = 360;
+      for (const mid of activeMaps) {
+        if (!MapService.isField(mid)) continue;
+        const nPlayers = this._playersOnMap(players, mid);
+        nextMet = Math.min(nextMet, SpawnService.metinRespawnInterval(nPlayers));
+        const mapMetins = fieldMetins.filter((m) => (m.mapId || "overworld") === mid && m.hp > 0);
+        if (mapMetins.length >= SpawnService.metinCap(mid)) continue;
+        const p =
+          mid === "orc_valley"
+            ? SpawnService.pointInZone(mid, "edge")
+            : wildPoint(CITY_RADIUS + 10, MAP_HALF - 8);
+        this.spawnMetin(p.x, p.z, SpawnService.pickMetinTemplate(mid).id, mid);
+        if (mid === MapService.currentId) {
+          this.net.sendEvent({
+            type: "toast",
+            msg: mid === "orc_valley" ? "A Metin rises on the isles" : "A new Metin rises beyond the walls",
+            from: this.local.id,
+          });
+        }
+      }
+      this.metinRespawnTimer = nextMet;
+    }
+
+    // Rogue Chief timer (starts when chief dies)
+    if (this.chiefRespawnTimer > 0) {
+      this.chiefRespawnTimer -= dt;
+      if (this.chiefRespawnTimer <= 0) {
+        const nPlayers = this._playersOnMap(players, BANDIT_CAMP.mapId);
+        const chiefAlive = fieldMobs.some(
+          (m) => m.templateId === "rogue_chief" && m.hp > 0 && m.mapId === BANDIT_CAMP.mapId
+        );
+        if (!chiefAlive && (activeMaps.has(BANDIT_CAMP.mapId) || MapService.is(BANDIT_CAMP.mapId))) {
+          this._respawnRogueChief(nPlayers);
+        } else {
+          this.chiefRespawnTimer = 0;
         }
       }
     }
 
     for (const [id, m] of [...this.mobs]) {
       if (m.hp <= 0) {
+        if (m.templateId === "rogue_chief" && this.chiefRespawnTimer <= 0) {
+          const nPlayers = Math.max(1, this._playersOnMap(players, BANDIT_CAMP.mapId));
+          this.chiefRespawnTimer = SpawnService.bossRespawnInterval(nPlayers);
+        }
         this.scene.remove(m.mesh);
         this.mobs.delete(id);
       }
@@ -1750,10 +2437,44 @@ export class Game {
         this.updateAim();
         p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
       }
+      // Keep telegraph glued to caster
+      if (c.telegraph && p) {
+        c.telegraph.position.set(p.x, 0, p.z);
+        c.telegraph.rotation.y = p.rot;
+      }
     }
     const done = this.casts.filter((c) => c.time <= 0);
     this.casts = this.casts.filter((c) => c.time > 0);
-    for (const c of done) this._resolveCast(c);
+    for (const c of done) {
+      c.telegraph = null; // FxSystem will expire the mesh
+      this._resolveCast(c);
+    }
+  }
+
+  _beginAttackAnim(totalDur) {
+    const p = this.local;
+    if (!p) return;
+    p.attackDur = Math.max(0.35, totalDur);
+    p.attacking = p.attackDur;
+  }
+
+  _beginRecover(recover) {
+    const p = this.local;
+    if (!p) return;
+    const r = Math.max(0.2, recover || 0.35);
+    p.recoverUntil = this.time + r;
+    // Keep attack pose through recovery
+    if (p.attacking < r) {
+      p.attacking = r;
+      p.attackDur = Math.max(p.attackDur || r, r);
+    }
+  }
+
+  _telegraphShape(skType) {
+    if (skType === "cone" || skType === "dash") return "cone";
+    if (skType === "aoe" || skType === "burst" || skType === "dot" || skType === "drain") return "aoe";
+    if (skType === "bolt") return "bolt";
+    return "feet";
   }
 
   _resolveCast(c) {
@@ -1771,26 +2492,38 @@ export class Game {
   doAttack() {
     const p = this.local;
     const cls = CLASSES[p.classId];
-    if (this.casts.length) return;
-    p.atkCd = Math.max(cls.cd, 0.55);
-    p.attacking = 0.52;
+    if (this.casts.length || this.time < (p.recoverUntil || 0)) return;
+
+    const ranged = cls.id === "shaman" || p.range > 4;
+    const windup = ranged ? 0.42 : 0.32;
+    const recover = ranged ? 0.38 : 0.42;
+    p.atkCd = Math.max(cls.cd, windup + recover + 0.05);
+    this._beginAttackAnim(windup + recover);
+
     this.updateAim();
     p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
 
-    const ranged = cls.id === "shaman" || p.range > 4;
     const reach = ranged ? Math.max(p.range, 12) : p.range + 0.95;
     const target = this.pickAimedTarget(p, reach);
-    const windup = ranged ? 0.28 : 0.18;
+    const color = ranged ? "#6ec8ff" : "#e8d48b";
 
-    // Short charge glint (not a red ground zone)
-    this.fx?.cast(p.x, p.z, ranged ? "#6ec8ff" : "#e8d48b", windup);
+    const telegraph = this.fx?.telegraph({
+      x: p.x,
+      z: p.z,
+      rot: p.rot,
+      color,
+      duration: windup,
+      shape: ranged ? "bolt" : "cone",
+      reach: Math.min(reach, 3.2),
+    });
     this.net.sendEvent({
       type: "fx",
       kind: "skill",
       skill: "cast",
       x: p.x,
       z: p.z,
-      color: ranged ? "#6ec8ff" : "#e8d48b",
+      rot: p.rot,
+      color,
       r: windup,
       from: p.id,
     });
@@ -1798,9 +2531,11 @@ export class Game {
     this.casts.push({
       kind: "basic",
       time: windup,
+      recover,
       faceAim: true,
       ranged,
       reach,
+      telegraph,
       targetId: target?.ref?.id || null,
       targetKind: target?.type || null,
     });
@@ -1809,11 +2544,15 @@ export class Game {
   _resolveBasicAttack(c) {
     const p = this.local;
     if (!p) return;
+    this._beginRecover(c.recover || 0.4);
     this.updateAim();
     p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
     let target = null;
     if (c.targetId) {
-      if (c.targetKind === "metin") {
+      if (c.targetKind === "player") {
+        const opp = this._duelOpponentTarget();
+        if (opp && opp.ref.id === c.targetId) target = opp;
+      } else if (c.targetKind === "metin") {
         const met = this.metins.get(c.targetId);
         if (met?.hp > 0) target = { type: "metin", ref: met, x: met.x, z: met.z };
       } else {
@@ -1886,99 +2625,143 @@ export class Game {
 
   castSkill(i) {
     const p = this.local;
-    if (this.casts.length) return;
-    const skills = SkillService.listFor(p.classId, this.character?.spec);
-    const sk = skills[i] || CLASSES[p.classId].skills[i];
-    if (!sk || p.sp < sk.sp) {
+    if (this.casts.length || this.time < (p.recoverUntil || 0)) return;
+    if (!SkillService.hasPath(this.character)) {
+      this.ui.toast(`Skills unlock at Lv.${SkillService.unlockLevel} — talk to the Skill Master`);
+      return;
+    }
+    const sk = SkillService.scaled(this.character, i);
+    if (!sk) return;
+    if (p.sp < sk.sp) {
       this.ui.toast("Not enough SP");
       return;
     }
     p.sp -= sk.sp;
     p.skillCd[i] = sk.cd;
 
-    const castTime =
-      {
-        cone: 0.42,
-        aoe: 0.7,
-        burst: 0.75,
-        bolt: 0.5,
-        heal: 0.6,
-        buff: 0.55,
-        dash: 0.22,
-        stealth: 0.4,
-        drain: 0.6,
-        dot: 0.6,
-      }[sk.type] || 0.45;
-
-    p.attacking = castTime + 0.35;
+    const { cast: castTime, recover } = SkillService.timing(sk);
+    this._beginAttackAnim(castTime + recover);
     this.updateAim();
     p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
 
     const castColor =
-      sk.type === "heal" ? "#4ecf8a" : sk.type === "bolt" || sk.type === "stealth" ? "#6ec8ff" : sk.type === "drain" || sk.type === "dot" ? "#8b3fd4" : "#e8d48b";
-    this.fx?.cast(p.x, p.z, castColor, castTime);
+      sk.color ||
+      (sk.type === "heal"
+        ? "#4ecf8a"
+        : sk.type === "bolt" || sk.type === "stealth"
+          ? "#6ec8ff"
+          : sk.type === "drain" || sk.type === "dot"
+            ? "#8b3fd4"
+            : "#e8d48b");
+    const shape = this._telegraphShape(sk.type);
+    const telegraph = this.fx?.telegraph({
+      x: p.x,
+      z: p.z,
+      rot: p.rot,
+      color: castColor,
+      duration: castTime,
+      shape,
+      radius: sk.radius || 4.5,
+      reach: sk.reach || p.range + 1.4,
+    });
     this.net.sendEvent({
       type: "fx",
       kind: "skill",
       skill: "cast",
       x: p.x,
       z: p.z,
+      rot: p.rot,
       color: castColor,
       r: castTime,
       from: p.id,
     });
     audio.sfx("skill");
 
-    const isMagic = !!sk.isMagic || (CLASSES[p.classId].id === "shaman" && sk.type !== "heal");
-    const roll = CombatService.rollHit({
-      attacker: p,
-      defender: { dex: 2, def: 2, mdef: 0 },
-      skillMul: (sk.mul || 1) * p.buffMul,
-      isMagic,
-    });
-    const dmg = roll.hit ? roll.damage : Math.floor(p.atk * (sk.mul || 1) * p.buffMul);
-
     this.casts.push({
       kind: "skill",
       time: castTime,
+      recover,
       faceAim: sk.type === "cone" || sk.type === "bolt" || sk.type === "dash",
       skType: sk.type,
-      dmg,
-      color: p.color,
+      skName: sk.name,
+      fxName: sk.fx || sk.type,
+      mul: sk.mul || 1,
+      isMagic: !!sk.isMagic || (CLASSES[p.classId].id === "shaman" && sk.type !== "heal"),
+      color: castColor,
+      radius: sk.radius || (sk.type === "burst" ? 3.8 : 4.8),
+      reach: sk.reach || p.range + 1.4,
       skillIndex: i,
+      telegraph,
     });
   }
 
   _resolveSkillCast(c) {
     const p = this.local;
     if (!p) return;
+    this._beginRecover(c.recover || 0.4);
     this.updateAim();
     if (c.faceAim) p.rot = Math.atan2(this.aim.x - p.x, this.aim.z - p.z);
-    const dmg = c.dmg;
-    const color = c.color;
+
+    // Roll damage at release (not at cast start)
+    const roll = CombatService.rollHit({
+      attacker: p,
+      defender: { dex: 2, def: 2, mdef: 0 },
+      skillMul: (c.mul || 1) * p.buffMul,
+      isMagic: c.isMagic,
+      forcedHit: true,
+    });
+    const dmg = roll.damage;
+    const color = c.color || p.color;
+    const radius = c.radius || 4.5;
+    const fxName = c.fxName || c.skType;
     const sfxMap = { heal: "heal", buff: "buff", aoe: "aoe", burst: "aoe", stealth: "skill", drain: "aoe", dot: "aoe" };
     audio.sfx(sfxMap[c.skType] || "skill");
 
+    const sendFx = (skill, extra = {}) => {
+      this.net.sendEvent({
+        type: "fx",
+        kind: "skill",
+        skill,
+        fx: fxName,
+        x: p.x,
+        z: p.z,
+        rot: p.rot,
+        color,
+        r: radius,
+        from: p.id,
+        ...extra,
+      });
+    };
+
     switch (c.skType) {
       case "cone": {
-        this.fx?.skill("cone", p.x, p.z, p.rot, "#e8d48b", 3.4);
-        this.meleeHit(p, dmg, 0.55, p.range + 1.2);
-        this.net.sendEvent({ type: "melee", from: p.id, x: p.x, z: p.z, rot: p.rot, dmg, cone: 0.55, range: p.range + 1.2 });
-        this.net.sendEvent({ type: "fx", kind: "skill", skill: "cone", x: p.x, z: p.z, rot: p.rot, color: "#e8d48b", from: p.id });
+        this.fx?.skill("cone", p.x, p.z, p.rot, color, c.reach || 3.4, fxName);
+        this.meleeHit(p, dmg, 0.55, c.reach || p.range + 1.2);
+        this.net.sendEvent({
+          type: "melee",
+          from: p.id,
+          x: p.x,
+          z: p.z,
+          rot: p.rot,
+          dmg,
+          cone: 0.55,
+          range: c.reach || p.range + 1.2,
+        });
+        sendFx(fxName);
         break;
       }
       case "aoe":
-        this.fx?.skill("aoe", p.x, p.z, p.rot, color, 5);
-        this.aoeHit(p.x, p.z, 5, dmg, p.id);
-        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 5, dmg });
-        this.net.sendEvent({ type: "fx", kind: "skill", skill: "aoe", x: p.x, z: p.z, r: 5, color, from: p.id });
+        this.fx?.skill("aoe", p.x, p.z, p.rot, color, radius, fxName);
+        this.aoeHit(p.x, p.z, radius, dmg, p.id);
+        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: radius, dmg });
+        sendFx(fxName);
         break;
       case "bolt": {
         const boltReach = Math.max(p.range, 14);
         const boltTarget = this.pickAimedTarget(p, boltReach);
         if (boltTarget) p.rot = Math.atan2(boltTarget.x - p.x, boltTarget.z - p.z);
-        this.fx?.skill("bolt", p.x, p.z, p.rot, "#6ec8ff");
-        this.fireBolt(p.id, p.x, p.z, p.rot, dmg, p.color, boltTarget);
+        this.fx?.skill("bolt", p.x, p.z, p.rot, color, radius, fxName);
+        this.fireBolt(p.id, p.x, p.z, p.rot, dmg, color, boltTarget);
         this.net.sendEvent({
           type: "bolt",
           from: p.id,
@@ -1986,56 +2769,84 @@ export class Game {
           z: p.z,
           rot: p.rot,
           dmg,
-          color: p.color,
+          color,
           targetId: boltTarget?.ref?.id,
           targetKind: boltTarget?.type,
         });
-        this.net.sendEvent({ type: "fx", kind: "skill", skill: "bolt", x: p.x, z: p.z, rot: p.rot, color: "#6ec8ff", from: p.id });
+        sendFx(fxName);
         break;
       }
-      case "buff":
-        this.fx?.skill("buff", p.x, p.z, p.rot, "#e8d48b");
-        p.buffMul = 1.45;
-        p.buffUntil = this.time + 8;
-        this.ui.toast("Power surges");
-        this.net.sendEvent({ type: "fx", kind: "skill", skill: "buff", x: p.x, z: p.z, color: "#e8d48b", from: p.id });
+      case "buff": {
+        this.fx?.skill("buff", p.x, p.z, p.rot, color, radius, fxName);
+        // Swiftness = speed; Strong Body / others = damage
+        if (fxName === "swift") {
+          p.buffMul = 1.35;
+          p.buffUntil = this.time + 10;
+          this.ui.toast("Swiftness");
+        } else if (fxName === "strongBody") {
+          p.buffMul = 1.25;
+          p.buffUntil = this.time + 10;
+          this.ui.toast("Strong Body");
+        } else {
+          p.buffMul = 1.45;
+          p.buffUntil = this.time + 9;
+          this.ui.toast(c.skName || "Power surges");
+        }
+        sendFx(fxName);
         break;
+      }
       case "dash": {
-        this.fx?.skill("dash", p.x, p.z, p.rot, color);
+        this.fx?.skill("dash", p.x, p.z, p.rot, color, radius, fxName);
         p.x += Math.sin(p.rot) * 7;
         p.z += Math.cos(p.rot) * 7;
-        p.x = clamp(p.x, -MAP_HALF + 1.2, MAP_HALF - 1.2);
-        p.z = clamp(p.z, -MAP_HALF + 1.2, MAP_HALF - 1.2);
-        p.invulnUntil = this.time + 0.3;
-        this.aoeHit(p.x, p.z, 2.8, dmg, p.id);
-        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 2.8, dmg });
-        this.net.sendEvent({ type: "fx", kind: "skill", skill: "dash", x: p.x, z: p.z, rot: p.rot, color, from: p.id });
+        {
+          const half = MapService.current.half || MAP_HALF;
+          p.x = clamp(p.x, -half + 1.2, half - 1.2);
+          p.z = clamp(p.z, -half + 1.2, half - 1.2);
+          if (MapService.is("orc_valley")) {
+            const land = clampToOrcLand(p.x, p.z);
+            p.x = land.x;
+            p.z = land.z;
+          }
+        }
+        p.invulnUntil = this.time + 0.35;
+        this.aoeHit(p.x, p.z, radius || 2.8, dmg, p.id);
+        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: radius || 2.8, dmg });
+        sendFx(fxName);
         break;
       }
       case "stealth":
-        this.fx?.skill("stealth", p.x, p.z, p.rot, "#3a9fd4");
+        this.fx?.skill("stealth", p.x, p.z, p.rot, color, radius, fxName);
         p.stealthUntil = this.time + 3.5;
         this.ui.toast("Vanished");
-        this.net.sendEvent({ type: "fx", kind: "skill", skill: "stealth", x: p.x, z: p.z, color: "#3a9fd4", from: p.id });
+        sendFx(fxName);
         break;
       case "burst":
-        this.fx?.skill("burst", p.x, p.z, p.rot, "#3a9fd4", 3.8);
-        this.aoeHit(p.x, p.z, 3.8, dmg, p.id);
-        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 3.8, dmg });
-        this.net.sendEvent({ type: "fx", kind: "skill", skill: "burst", x: p.x, z: p.z, r: 3.8, color: "#3a9fd4", from: p.id });
+        this.fx?.skill("burst", p.x, p.z, p.rot, color, radius, fxName);
+        this.aoeHit(p.x, p.z, radius, dmg, p.id);
+        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: radius, dmg });
+        sendFx(fxName);
         break;
       case "dot":
       case "drain":
-        this.fx?.skill(c.skType, p.x, p.z, p.rot, "#8b3fd4", 4.5);
-        this.aoeHit(p.x, p.z, 4.5, dmg, p.id, c.skType === "drain");
-        this.net.sendEvent({ type: "aoe", from: p.id, x: p.x, z: p.z, r: 4.5, dmg, drain: c.skType === "drain" });
-        this.net.sendEvent({ type: "fx", kind: "skill", skill: c.skType, x: p.x, z: p.z, r: 4.5, color: "#8b3fd4", from: p.id });
+        this.fx?.skill(c.skType, p.x, p.z, p.rot, color, radius, fxName);
+        this.aoeHit(p.x, p.z, radius, dmg, p.id, c.skType === "drain");
+        this.net.sendEvent({
+          type: "aoe",
+          from: p.id,
+          x: p.x,
+          z: p.z,
+          r: radius,
+          dmg,
+          drain: c.skType === "drain",
+        });
+        sendFx(fxName);
         break;
       case "heal":
-        this.fx?.skill("heal", p.x, p.z, p.rot, "#4ecf8a");
+        this.fx?.skill("heal", p.x, p.z, p.rot, color, radius, fxName);
         p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.4);
         this.ui.toast("Healed");
-        this.net.sendEvent({ type: "fx", kind: "skill", skill: "heal", x: p.x, z: p.z, from: p.id });
+        sendFx(fxName);
         break;
       default:
         break;
@@ -2044,9 +2855,16 @@ export class Game {
 
   /** Apply damage to the cursor-aimed target only (no wide cone spray). */
   meleeHitAimed(p, dmg, target) {
+    if (!target) return;
+    // PvP is client-applied via pdmg (both peers handle their own takeDamage)
+    if (target.type === "player" && target.ref?.id) {
+      if (PvPService.isOpponent(p.id, target.ref.id)) {
+        this.applyDamageToPlayer(target.ref.id, dmg, "duel");
+      }
+      return;
+    }
     const canApply = this.net.isHost || this.isDungeonAuthority();
     if (!canApply) return;
-    if (!target) return; // miss — swing toward cursor but nothing locked
     if (target.type === "mob" && target.ref?.hp > 0) this.damageMob(target.ref, dmg, p.id);
     else if (target.type === "metin" && target.ref?.hp > 0) this.damageMetin(target.ref, dmg, p.id);
   }
@@ -2061,9 +2879,9 @@ export class Game {
         this.damageMob(mob, dmg, p.id);
       }
     }
-    if (dungeonAuth) return;
     for (const [, met] of this.metins) {
-      if (!this._entityOnCurrentMap(met)) continue;
+      if (dungeonAuth && !met.dungeon) continue;
+      if (!dungeonAuth && (met.dungeon || !this._entityOnCurrentMap(met))) continue;
       if (this.inCone(p.x, p.z, p.rot, met.x, met.z, range + 1, cone)) {
         this.damageMetin(met, dmg, p.id);
       }
@@ -2071,6 +2889,13 @@ export class Game {
   }
 
   aoeHit(x, z, r, dmg, fromId, drain = false) {
+    // Duel opponent takes AoE from the local attacker
+    if (fromId === this.local?.id) {
+      const opp = this._duelOpponentTarget();
+      if (opp && dist2(x, z, opp.x, opp.z) <= r) {
+        this.applyDamageToPlayer(opp.ref.id, dmg, "duel");
+      }
+    }
     const dungeonAuth = this.isDungeonAuthority();
     if (!this.net.isHost && !dungeonAuth) return;
     let healed = 0;
@@ -2082,13 +2907,12 @@ export class Game {
         healed += dmg * 0.2;
       }
     }
-    if (!dungeonAuth) {
-      for (const [, met] of this.metins) {
-        if (!this._entityOnCurrentMap(met)) continue;
-        if (dist2(x, z, met.x, met.z) <= r) {
-          this.damageMetin(met, dmg, fromId);
-          healed += dmg * 0.15;
-        }
+    for (const [, met] of this.metins) {
+      if (dungeonAuth && !met.dungeon) continue;
+      if (!dungeonAuth && (met.dungeon || !this._entityOnCurrentMap(met))) continue;
+      if (dist2(x, z, met.x, met.z) <= r) {
+        this.damageMetin(met, dmg, fromId);
+        healed += dmg * 0.15;
       }
     }
     if (drain && fromId === this.local?.id) {
@@ -2127,13 +2951,24 @@ export class Game {
   resolveBolt(b) {
     const dungeonAuth = this.isDungeonAuthority() && b.owner === this.local?.id;
     // Visuals update for everyone; damage only on host / dungeon authority
-    const canDamage = this.net.isHost || dungeonAuth;
+    // Duel bolts: attacker applies pdmg locally
+    const pvpBolt =
+      b.targetKind === "player" &&
+      b.owner === this.local?.id &&
+      PvPService.isOpponent(this.local.id, b.targetId);
+    const canDamage = this.net.isHost || dungeonAuth || pvpBolt;
 
     // Soft-home toward locked target (all clients — looks right)
     if (b.targetId) {
       let tx = null;
       let tz = null;
-      if (b.targetKind === "metin") {
+      if (b.targetKind === "player") {
+        const r = this.remotes.get(b.targetId);
+        if (r) {
+          tx = r.target?.x ?? r.state.x;
+          tz = r.target?.z ?? r.state.z;
+        }
+      } else if (b.targetKind === "metin") {
         const met = this.metins.get(b.targetId);
         if (met && met.hp > 0) {
           tx = met.x;
@@ -2158,7 +2993,16 @@ export class Game {
 
     // Locked bolt: only the aimed enemy (no splash onto neighbors)
     if (b.targetId) {
-      if (b.targetKind === "metin") {
+      if (b.targetKind === "player") {
+        const r = this.remotes.get(b.targetId);
+        const x = r?.target?.x ?? r?.state?.x;
+        const z = r?.target?.z ?? r?.state?.z;
+        if (r && x != null && dist2(b.x, b.z, x, z) < 1.4) {
+          this.applyDamageToPlayer(b.targetId, b.dmg, "duel");
+          b.hit = true;
+          b.life = 0;
+        }
+      } else if (b.targetKind === "metin") {
         const met = this.metins.get(b.targetId);
         if (met && met.hp > 0 && dist2(b.x, b.z, met.x, met.z) < 1.45) {
           this.damageMetin(met, b.dmg, b.owner);
@@ -2185,8 +3029,9 @@ export class Game {
         return;
       }
     }
-    if (dungeonAuth) return;
     for (const [, met] of this.metins) {
+      if (dungeonAuth && !met.dungeon) continue;
+      if (!dungeonAuth && met.dungeon) continue;
       if (dist2(b.x, b.z, met.x, met.z) < 1.3) {
         this.damageMetin(met, b.dmg, b.owner);
         b.hit = true;
@@ -2202,16 +3047,11 @@ export class Game {
     mob.hp -= applied;
     this.net.sendEvent({ type: "fx", kind: "hit", x: mob.x, z: mob.z, dmg: Math.floor(applied), from: fromId });
     if (mob.hp <= 0) {
-      const gold = DropService.yangFor(mob.kind);
-      const xp = DropService.xpFor(mob.kind);
-      const killKind =
-        mob.templateId === "soldier"
-          ? "soldier"
-          : mob.templateId === "bandit" || mob.kind === "human"
-            ? "bandit"
-            : mob.kind === "ork" || mob.kind === "elite_ork"
-              ? "ork"
-              : "wolf";
+      const tmpl = MONSTERS[mob.templateId] || null;
+      const gold = DropService.yangFor(tmpl || mob.templateId || mob.kind);
+      const xp = DropService.xpFor(tmpl || mob.templateId || mob.kind);
+      // Prefer precise template id so quest aliases (black_ork, elite_ork, …) work
+      const killKind = mob.templateId || mob.kind || "wolf";
       this.net.sendEvent({
         type: "kill",
         from: fromId,
@@ -2223,7 +3063,7 @@ export class Game {
         xp,
       });
       if (this.net.isHost || (this.isDungeonAuthority() && fromId === this.local?.id)) {
-        this.spawnLootAt(mob.x, mob.z, mob.dropTable || mob.kind, 1, gold);
+        this.spawnLootAt(mob.x, mob.z, mob.dropTable || mob.templateId || mob.kind, 1, gold);
       }
       if (fromId === this.local?.id) this.rewardKill(xp, gold, killKind);
     }
@@ -2247,7 +3087,9 @@ export class Game {
         gold,
         xp,
       });
-      if (this.net.isHost) this.spawnLootAt(met.x, met.z, met.dropTable || "metin", met.tier, gold);
+      if (this.net.isHost || (this.isDungeonAuthority() && fromId === this.local?.id)) {
+        this.spawnLootAt(met.x, met.z, met.dropTable || "metin", met.tier, gold);
+      }
       if (fromId === this.local?.id) {
         this.local.metins += 1;
         this.character.metins = this.local.metins;
@@ -2263,7 +3105,15 @@ export class Game {
     this.character.kills = this.local.kills;
     this.local.gold += gold;
     this.character.gold = this.local.gold;
-    QuestService.onKill(this.character, kind === "metin" ? "metin" : kind);
+
+    const killKind = kind === "metin" ? "metin" : kind;
+    const questUpdates = QuestService.onKill(this.character, killKind);
+    for (const u of questUpdates) {
+      if (u.completed) this.ui.toast(`Quest complete: ${u.name} — turn in!`);
+      else this.ui.toast(`${u.name}: ${u.progress}/${u.count}`);
+    }
+
+    const prevLv = this.character.level;
     const ups = applyLevelUps(this.character, xp);
     this.local.level = this.character.level;
     if (ups) {
@@ -2271,6 +3121,13 @@ export class Game {
       this.local.hp = this.local.maxHp;
       this.local.sp = this.local.maxSp;
       this.ui.toast(ups > 1 ? `Level up ×${ups}!` : "Level up!");
+      if (
+        prevLv < SkillService.unlockLevel &&
+        this.character.level >= SkillService.unlockLevel &&
+        !SkillService.hasPath(this.character)
+      ) {
+        this.ui.toast("Skill Master awaits — choose your path in town!");
+      }
       this.fx?.buff(this.local.x, this.local.z);
       audio.sfx("level");
     }
@@ -2279,20 +3136,11 @@ export class Game {
   }
 
   spawnLootAt(x, z, kindOrTable, tier = 1, bonusGold = 0) {
-    const tableId =
-      kindOrTable === "metin" ||
-      kindOrTable === "ork" ||
-      kindOrTable === "wolf" ||
-      kindOrTable === "bandit" ||
-      kindOrTable === "human"
-        ? kindOrTable === "human"
-          ? "bandit"
-          : kindOrTable
-        : kindOrTable || "wolf";
-    const drops = DropService.roll(tableId, tableId === "metin" ? 1 + tier * 0.08 : 1);
-    // Ground yang bags were nearly guaranteed — match item scarcity (~50x rarer)
-    if (bonusGold > 0 && Math.random() < 0.9 / 50) {
-      this.createLoot(x + rand(-1, 1), z + rand(-1, 1), null, Math.max(20, Math.floor(bonusGold * 0.35)));
+    const tableId = kindOrTable || "wolf";
+    const drops = DropService.roll(tableId, tableId === "metin" || kindOrTable === "metin" ? 1 + tier * 0.1 : 1);
+    // Occasional ground yang bag (~1/14 of kills)
+    if (bonusGold > 0 && Math.random() < 0.07) {
+      this.createLoot(x + rand(-1, 1), z + rand(-1, 1), null, Math.max(20, Math.floor(bonusGold * 0.4)));
     }
     for (const drop of drops) {
       this.createLoot(x + rand(-1.4, 1.4), z + rand(-1.4, 1.4), drop, 0);
@@ -2405,13 +3253,23 @@ export class Game {
     if (broadcast) this.net.sendEvent({ type: "loot_taken", id, by: this.local.id });
   }
 
-  takeDamage(amount) {
+  takeDamage(amount, source = "mob") {
     const p = this.local;
     if (!p || this.pendingDeath || this.time < p.invulnUntil || this.time < p.stealthUntil) return;
     p.hp = CombatService.applyPlayerDamage(p.hp, Math.max(1, amount - (p.def || 0) * 0.55));
-    this.fx?.hitSparks(p.x, p.z, "#ff6655");
+    this.fx?.hitSparks(p.x, p.z, source === "duel" ? "#ffaa44" : "#ff6655");
     if (p.hp <= 0) {
       p.hp = 0;
+      // Duel loss — no death panel / yang loss; announce winner and stand up
+      if (source === "duel" && PvPService.duel) {
+        const winner = PvPService.opponentId(p.id);
+        audio.sfx("death");
+        this.endDuel("defeat", winner);
+        p.hp = Math.floor(p.maxHp * 0.4);
+        p.invulnUntil = this.time + 2;
+        this.ui.toast("You lost the duel");
+        return;
+      }
       this.pendingDeath = true;
       const loss = Math.floor(p.gold * 0.03);
       this._deathYangLoss = loss;
@@ -2451,9 +3309,15 @@ export class Game {
     this.onCharacterChange(this.character, this.local);
   }
 
-  applyDamageToPlayer(playerId, amount, source) {
-    this.net.sendEvent({ type: "pdmg", to: playerId, amount: Math.floor(amount), source });
-    if (playerId === this.local?.id) this.takeDamage(amount);
+  applyDamageToPlayer(playerId, amount, source = "mob") {
+    this.net.sendEvent({
+      type: "pdmg",
+      to: playerId,
+      amount: Math.floor(amount),
+      source,
+      from: this.local?.id,
+    });
+    if (playerId === this.local?.id) this.takeDamage(amount, source);
   }
 
   allocateStat(stat) {
@@ -2488,12 +3352,25 @@ export class Game {
   useItem(uid) {
     if (!this.character || !this.local) return;
     const err = useConsumable(this.character, uid, this.local);
-    if (err) this.ui.toast(err);
+    if (err && typeof err === "object" && err.skillBook) {
+      this.ui.openSkillsPanel?.(err);
+      return;
+    }
+    if (err) this.ui.toast(typeof err === "string" ? err : "Can't use");
     else {
       this.fx?.heal(this.local.x, this.local.z);
       this.ui.toast("Used");
       this.onCharacterChange(this.character, this.local);
     }
+  }
+
+  /** Read a skill book onto a path skill (Esc → Skills). */
+  upgradeSkillWithBook(skillId, bookUid) {
+    if (!this.character) return "No character";
+    const err = SkillService.useBookOnSkill(this.character, skillId, bookUid);
+    if (err) return err;
+    this.onCharacterChange(this.character, this.local);
+    return null;
   }
 
   /** Assign potion template to hotbar slot 0/1 (keys 5/6). Returns slot index or -1. */
@@ -2753,7 +3630,79 @@ export class Game {
     }
 
     if (e.type === "pdmg" && e.to === this.local?.id) {
-      this.takeDamage(e.amount);
+      this.takeDamage(e.amount, e.source || "mob");
+    }
+
+    // Duel
+    if (e.type === "duel_invite" && e.to === this.local?.id) {
+      PvPService.pendingChallenge = { from: e.from, fromName: e.fromName, to: e.to };
+      this.ui.showSocialInvite?.({
+        kind: "duel",
+        text: `${e.fromName} challenges you to a duel!`,
+      });
+      this.ui.toast(`${e.fromName} challenged you`);
+    }
+    if (e.type === "duel_decline" && e.to === this.local?.id) {
+      this.ui.toast("Challenge declined");
+    }
+    if (e.type === "duel_accept" && e.to === this.local?.id) {
+      PvPService.beginCountdown({
+        id: e.duelId || `duel_${Date.now().toString(36)}`,
+        a: this.local.id,
+        b: e.from,
+        aName: this.local.name,
+        bName: e.fromName,
+      });
+      this.ui.showDuelCountdown?.(5, false);
+      this.onDuelChange?.(PvPService.duel);
+      this.ui.toast(`Duel vs ${e.fromName} — get ready!`);
+    }
+    if (e.type === "duel_end" && PvPService.duel && (e.a === this.local?.id || e.b === this.local?.id)) {
+      if (e.from !== this.local?.id) {
+        const won = e.winnerId === this.local.id;
+        PvPService.end();
+        this.onDuelChange?.(null);
+        this.ui.hideDuelCountdown?.();
+        if (this.local.hp <= 0) this.local.hp = Math.floor(this.local.maxHp * 0.4);
+        this.ui.toast(won ? "Duel won!" : e.winnerId ? "Duel lost" : "Duel ended");
+      }
+    }
+
+    // Trade
+    if (e.type === "trade_invite" && e.to === this.local?.id) {
+      TradeService.pendingInvite = { from: e.from, fromName: e.fromName, to: e.to };
+      this.ui.showSocialInvite?.({
+        kind: "trade",
+        text: `${e.fromName} wants to trade`,
+      });
+      this.ui.toast(`${e.fromName} requested a trade`);
+    }
+    if (e.type === "trade_decline" && e.to === this.local?.id) {
+      this.ui.toast("Trade declined");
+    }
+    if (e.type === "trade_accept" && e.to === this.local?.id) {
+      TradeService.open(e.tradeId, e.from, e.fromName);
+      this.onTradeChange?.(TradeService.session);
+      this.ui.toast(`Trading with ${e.fromName}`);
+    }
+    if (e.type === "trade_offer" && TradeService.session?.id === e.tradeId && e.from !== this.local?.id) {
+      TradeService.applyTheirOffer(e.items, e.yang);
+      this.onTradeChange?.(TradeService.session);
+    }
+    if (e.type === "trade_lock" && TradeService.session?.id === e.tradeId && e.from !== this.local?.id) {
+      TradeService.setLock(false, !!e.locked);
+      this.onTradeChange?.(TradeService.session);
+    }
+    if (e.type === "trade_confirm" && TradeService.session?.id === e.tradeId && e.from !== this.local?.id) {
+      TradeService.setConfirm(false, true);
+      this.onTradeChange?.(TradeService.session);
+      if (TradeService.bothConfirmed()) this._finishTrade();
+    }
+    if (e.type === "trade_cancel" && TradeService.session?.id === e.tradeId && e.from !== this.local?.id) {
+      TradeService.cancelRestore(this.character);
+      this.onTradeChange?.(null);
+      this.onCharacterChange?.(this.character, this.local);
+      this.ui.toast("Trade cancelled");
     }
 
     if (e.type === "kill" && e.from === this.local?.id) {
@@ -2781,7 +3730,26 @@ export class Game {
 
     if (e.type === "fx" && e.from !== this.local?.id) {
       if (e.kind === "skill") {
-        this.fx?.skill(e.skill || "aoe", e.x, e.z, e.rot || 0, e.color || "#e8d48b", e.r || 4);
+        if (e.skill === "cast") {
+          this.fx?.telegraph({
+            x: e.x,
+            z: e.z,
+            rot: e.rot || 0,
+            color: e.color || "#6ec8ff",
+            duration: e.r || 0.7,
+            shape: "feet",
+          });
+        } else {
+          this.fx?.skill(
+            e.skill || "aoe",
+            e.x,
+            e.z,
+            e.rot || 0,
+            e.color || "#e8d48b",
+            e.r || 4,
+            e.fx || e.skill
+          );
+        }
       }
       if (e.kind === "slash") this.fx?.skill("slash", e.x, e.z, e.rot || 0, e.color || "#e8d48b");
       if (e.kind === "aoe") this.fx?.skill("aoe", e.x, e.z, 0, e.color || "#c43c2e", e.r || 3);
@@ -2844,6 +3812,12 @@ export class Game {
     }
     if (e.type === "dt_cleared" && DungeonService.isInside()) {
       DungeonService.markCleared();
+      if (e.smith) this._spawnTowerSmith();
+      this.onDungeonChange(DungeonService.run);
+    }
+    if (e.type === "dt_smith" && DungeonService.isInside() && e.from !== this.local?.id) {
+      DungeonService.enableSmith(e.members || []);
+      this._spawnTowerSmith();
       this.onDungeonChange(DungeonService.run);
     }
     if (
@@ -2856,11 +3830,12 @@ export class Game {
       this._clearDungeonMobs();
       DungeonService.exit();
       this.switchMap("overworld");
-      this.local.x = e.exit?.x ?? DEMON_TOWER.entrance.x - 5;
-      this.local.z = e.exit?.z ?? DEMON_TOWER.entrance.z + 5;
+      const exit = DEMON_TOWER.exitCity || { x: 0, z: 0 };
+      this.local.x = e.exit?.x ?? exit.x;
+      this.local.z = e.exit?.z ?? exit.z;
       this.local.mapId = "overworld";
       this.onDungeonChange(null);
-      this.ui.toast("Party left Demon Tower");
+      this.ui.toast("Demon Tower reset — returned to Shinsoo");
     }
   }
 }

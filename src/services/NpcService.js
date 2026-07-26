@@ -5,8 +5,11 @@ import { UpgradeService } from "./UpgradeService.js";
 
 export const NpcService = {
   list: NPCS,
-  near(x, z, maxDist = 4) {
-    return NPCS.filter((n) => Math.hypot(n.x - x, n.z - z) <= maxDist);
+  near(x, z, maxDist = 4, mapId = "overworld") {
+    return NPCS.filter(
+      (n) =>
+        (n.mapId || "overworld") === mapId && Math.hypot(n.x - x, n.z - z) <= maxDist
+    );
   },
   buy(ch, itemId) {
     const offer = SHOP_CATALOG.find((o) => o.id === itemId);
@@ -37,7 +40,7 @@ export const NpcService = {
     ch.gold += price;
     return null;
   },
-  upgrade(ch, uid) {
-    return UpgradeService.tryUpgrade(ch, uid);
+  upgrade(ch, uid, opts = {}) {
+    return UpgradeService.tryUpgrade(ch, uid, opts);
   },
 };

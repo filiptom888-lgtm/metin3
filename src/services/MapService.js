@@ -1,24 +1,34 @@
-/** Named maps — field kingdoms + instance dungeons */
+/** Named maps — one city field + Seungryong + Orc Isles + dungeon */
 export const MAPS = {
   overworld: {
     id: "overworld",
     name: "Shinsoo",
     kind: "field",
-    half: 60,
+    half: 180,
     background: "#7a9a68",
     fog: "#8aaa72",
-    fogNear: 50,
-    fogFar: 115,
+    fogNear: 70,
+    fogFar: 280,
   },
   valley: {
     id: "valley",
     name: "Seungryong",
     kind: "field",
-    half: 60,
+    half: 180,
     background: "#8a6a48",
     fog: "#9a7a52",
-    fogNear: 48,
-    fogFar: 112,
+    fogNear: 70,
+    fogFar: 280,
+  },
+  orc_valley: {
+    id: "orc_valley",
+    name: "Orc Isles",
+    kind: "field",
+    half: 80,
+    background: "#3a4a38",
+    fog: "#4a5a42",
+    fogNear: 55,
+    fogFar: 145,
   },
   demon_tower: {
     id: "demon_tower",

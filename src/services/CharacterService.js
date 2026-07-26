@@ -26,12 +26,13 @@ export const CharacterService = {
     const nameErr = validateName(opts.name);
     if (nameErr) throw new Error(nameErr);
     const spawn = villageSpawn(opts.kingdom);
-    const base = baseStatsFor(opts.classId, opts.spec);
+    const spec = opts.spec && opts.spec !== "none" ? opts.spec : "none";
+    const base = baseStatsFor(opts.classId, spec);
     const ch = {
       user_id: userId,
       name: opts.name.trim(),
       class_id: opts.classId,
-      spec: opts.spec,
+      spec,
       gender: opts.gender || "m",
       kingdom: opts.kingdom || 1,
       level: 1,
@@ -48,7 +49,7 @@ export const CharacterService = {
       respawn_z: spawn.z,
       delete_pin: opts.deletePin || "0000",
       inventory: starterInventory(opts.classId),
-      equipment: { __hotbarPotions: ["red_potion", "blue_potion"] },
+      equipment: { __hotbarPotions: ["red_potion", "blue_potion"], __skillLevels: {} },
       quests: {},
       playtime_sec: 0,
     };
@@ -60,10 +61,12 @@ export const CharacterService = {
         user_id: userId,
         xpNext: xpForLevel(1),
         hotbarPotions: defaultHotbar(),
+        skillLevels: {},
       };
       const client = toClient(local);
       client.inventory = starterInventory(opts.classId);
       client.hotbarPotions = defaultHotbar();
+      client.skillLevels = {};
       const list = await this.list(userId);
       list.push(client);
       localStorage.setItem("metin3_chars", JSON.stringify(list));
@@ -119,7 +122,6 @@ export const CharacterService = {
 };
 
 function starterInventory(classId) {
-  const wep = classId === "shaman" ? "spirit_staff" : classId === "ninja" ? "shadow_daggers" : "rusty_sword";
   const mk = (itemId, qty) => ({
     uid: `ii_${Math.random().toString(36).slice(2, 9)}`,
     itemId,
@@ -129,7 +131,23 @@ function starterInventory(classId) {
     sockets: [],
     bound: false,
   });
-  return [mk("red_potion", 5), mk("blue_potion", 3), mk(wep, 1), mk("cloth_vest", 1), mk("upgrade_ore", 2)];
+  let wep = "rusty_sword";
+  let armor = "scale_armor";
+  if (classId === "ninja") {
+    wep = "starter_daggers";
+    armor = "leather_armor";
+  } else if (classId === "shaman") {
+    wep = "starter_staff";
+    armor = "cloth_vest";
+  } else {
+    // warrior / sura — light starter, buy Recruit set at Lv.5
+    wep = "rusty_sword";
+    armor = null;
+  }
+  const bag = [mk("red_potion", 5), mk("blue_potion", 3), mk(wep, 1), mk("upgrade_ore", 2)];
+  if (armor) bag.push(mk(armor, 1));
+  if (classId === "warrior" || classId === "sura") bag.push(mk("wood_shield", 1));
+  return bag;
 }
 
 function fromRow(row) {
@@ -155,8 +173,9 @@ function fromRow(row) {
     respawnZ: row.respawn_z,
     deletePin: row.delete_pin,
     inventory: row.inventory || [],
-    equipment: stripHotbarMeta(row.equipment || {}),
+    equipment: stripEquipMeta(row.equipment || {}),
     hotbarPotions: readHotbar(row.equipment),
+    skillLevels: readSkillLevels(row.equipment),
     quests: row.quests || {},
     playtimeSec: row.playtime_sec || 0,
     metins: row.metins || 0,
@@ -175,17 +194,25 @@ function readHotbar(equipment) {
   return defaultHotbar();
 }
 
-function stripHotbarMeta(equipment) {
+function readSkillLevels(equipment) {
+  const sl = equipment?.__skillLevels;
+  if (sl && typeof sl === "object" && !Array.isArray(sl)) return { ...sl };
+  return {};
+}
+
+function stripEquipMeta(equipment) {
   if (!equipment || typeof equipment !== "object") return {};
-  const { __hotbarPotions, ...rest } = equipment;
+  const { __hotbarPotions, __skillLevels, ...rest } = equipment;
   return rest;
 }
 
 function withHotbarMeta(ch) {
-  const base = stripHotbarMeta(ch.equipment || {});
+  const base = stripEquipMeta(ch.equipment || {});
   return {
     ...base,
     __hotbarPotions: Array.isArray(ch.hotbarPotions) ? ch.hotbarPotions : defaultHotbar(),
+    __skillLevels:
+      ch.skillLevels && typeof ch.skillLevels === "object" ? ch.skillLevels : {},
   };
 }
 
@@ -213,8 +240,9 @@ function toClient(ch) {
     respawnZ: ch.respawnZ ?? ch.respawn_z ?? ch.z ?? 0,
     deletePin: ch.deletePin || ch.delete_pin || "0000",
     inventory: ch.inventory || [],
-    equipment: stripHotbarMeta(equip),
+    equipment: stripEquipMeta(equip),
     hotbarPotions: ch.hotbarPotions || readHotbar(equip),
+    skillLevels: ch.skillLevels || readSkillLevels(equip),
     quests: ch.quests || {},
     playtimeSec: ch.playtimeSec || ch.playtime_sec || 0,
     metins: ch.metins || 0,

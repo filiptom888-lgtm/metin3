@@ -104,10 +104,16 @@ function cloneHero(cache) {
     runAction,
     mode: "idle",
     ready: true,
-    /** @param {number} dt @param {{ moving?: boolean, run?: boolean, attacking?: number }} state */
+    _atkLean: 0,
+    /**
+     * @param {number} dt
+     * @param {{ moving?: boolean, run?: boolean, attacking?: number, attackDur?: number }} state
+     */
     update(dt, state = {}) {
-      const moving = !!state.moving;
-      const run = !!state.run;
+      const attacking = (state.attacking || 0) > 0;
+      // During cast/swing — freeze locomotion so the body doesn't walk through attacks
+      const moving = !!state.moving && !attacking;
+      const run = !!state.run && moving;
       const next = !moving ? "idle" : run ? "run" : "walk";
       if (next !== this.mode) this._setMode(next);
 
@@ -118,25 +124,44 @@ function cloneHero(cache) {
         this.runAction.setEffectiveTimeScale(1.05);
       }
 
+      // Subtle forward lean while attacking (no attack clip available)
+      const targetLean = attacking ? 0.18 : 0;
+      this._atkLean += (targetLean - this._atkLean) * Math.min(1, 10 * dt);
+      root.rotation.x = this._atkLean;
+      if (attacking) {
+        const dur = Math.max(0.35, state.attackDur || 0.7);
+        const t = 1 - Math.min(1, (state.attacking || 0) / dur);
+        root.position.y = Math.sin(t * Math.PI) * 0.06;
+      } else {
+        root.position.y *= 0.85;
+      }
+
       this.mixer.update(dt);
     },
     _setMode(mode) {
       this.mode = mode;
-      const fade = 0.18;
+      const fade = 0.14;
       if (mode === "idle") {
-        if (this.runAction) this.runAction.fadeOut(fade);
+        if (this.runAction) {
+          this.runAction.fadeOut(fade);
+          this.runAction.setEffectiveWeight(0);
+        }
         if (this.walkAction) {
-          this.walkAction.fadeIn(fade);
+          this.walkAction.stopFading?.();
+          this.walkAction.reset();
+          this.walkAction.setEffectiveWeight(1);
           this.walkAction.paused = true;
           this.walkAction.time = 0;
-          this.walkAction.setEffectiveWeight(1);
+          this.walkAction.play();
         }
       } else if (mode === "walk") {
         if (this.walkAction) {
           this.walkAction.paused = false;
           this.walkAction.reset().setEffectiveWeight(1).fadeIn(fade).play();
         }
-        if (this.runAction) this.runAction.fadeOut(fade);
+        if (this.runAction) {
+          this.runAction.fadeOut(fade);
+        }
       } else if (mode === "run") {
         if (this.runAction) {
           this.runAction.reset().setEffectiveWeight(1).fadeIn(fade).play();

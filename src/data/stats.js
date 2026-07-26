@@ -1,15 +1,26 @@
+/** Hard cap — gear sets go up to this level */
+export const MAX_LEVEL = 75;
+
 export function xpForLevel(level) {
-  return Math.floor(100 + level * 55 + level * level * 12);
+  const lv = Math.min(Math.max(1, level), MAX_LEVEL);
+  return Math.floor(100 + lv * 55 + lv * lv * 12);
 }
 
 export function baseStatsFor(classId, spec) {
+  const untrained = {
+    warrior: { str: 5, vit: 4, intel: 2, dex: 2 },
+    ninja: { str: 3, vit: 2, intel: 1, dex: 5 },
+    sura: { str: 4, vit: 3, intel: 3, dex: 2 },
+    shaman: { str: 2, vit: 3, intel: 5, dex: 2 },
+  };
   const map = {
     warrior: { body: { str: 6, vit: 5, intel: 1, dex: 2 }, mental: { str: 4, vit: 4, intel: 4, dex: 2 } },
     ninja: { blade: { str: 3, vit: 2, intel: 1, dex: 6 }, archery: { str: 2, vit: 2, intel: 2, dex: 6 } },
     sura: { weaponry: { str: 5, vit: 3, intel: 2, dex: 3 }, blackmagic: { str: 2, vit: 3, intel: 6, dex: 2 } },
     shaman: { dragon: { str: 2, vit: 2, intel: 6, dex: 2 }, healing: { str: 1, vit: 3, intel: 6, dex: 2 } },
   };
-  return map[classId]?.[spec] || { str: 4, vit: 3, intel: 2, dex: 3 };
+  if (!spec || spec === "none") return untrained[classId] || { str: 4, vit: 3, intel: 2, dex: 3 };
+  return map[classId]?.[spec] || untrained[classId] || { str: 4, vit: 3, intel: 2, dex: 3 };
 }
 
 export function deriveCombatStats(ch, equipBonus = {}) {

@@ -1,8 +1,13 @@
-export const MAP_SIZE = 120;
+/** Field maps (Shinsoo / Seungryong) — city stays ~22r; wilderness ~4× deeper */
+export const MAP_SIZE = 360;
 export const MAP_HALF = MAP_SIZE / 2;
 /** Safe zone — no wild mobs / metins inside */
 export const CITY_RADIUS = 22;
 export const CITY_GATE = 4.5;
+/** Edge travel portals sit this far from map center on the axis */
+export const EDGE_PORTAL = MAP_HALF - 3.5;
+/** Demon Tower sits in the SE / top-right wilderness corner */
+export const TOWER_CORNER = { x: MAP_HALF - 10, z: -(MAP_HALF - 10) };
 
 export const CLASSES = {
   warrior: {
@@ -106,8 +111,7 @@ export function wildPoint(minR = CITY_RADIUS + 6, maxR = MAP_HALF - 6) {
     const r = rand(minR, maxR);
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
-    // Entrance SE ~(54,-54)
-    if (Math.hypot(x - 54, z + 54) > 18) return { x, z };
+    if (Math.hypot(x - TOWER_CORNER.x, z - TOWER_CORNER.z) > 18) return { x, z };
   }
   return { x: CITY_RADIUS + 14, z: CITY_RADIUS + 14 };
 }

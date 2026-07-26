@@ -1,5 +1,6 @@
 import "./style.css";
-import { CLASSES, MAP_SIZE } from "./game/data.js";
+import { CLASSES, MAP_SIZE, CITY_RADIUS, EDGE_PORTAL } from "./game/data.js";
+import { BANDIT_CAMP } from "./data/banditCamp.js";
 import { Game } from "./game/Game.js";
 import { WorldNet } from "./net/world.js";
 import { hasSupabase, configHint } from "./net/supabase.js";
@@ -10,15 +11,17 @@ import { QuestService } from "./services/QuestService.js";
 import { NpcService } from "./services/NpcService.js";
 import { ItemService } from "./services/ItemService.js";
 import { PartyService } from "./services/PartyService.js";
+import { TradeService } from "./services/TradeService.js";
 import { DungeonService } from "./services/DungeonService.js";
-import { KINGDOMS, SPECS } from "./data/meta.js";
+import { WORLD_WARPS, SPECS, hasSkillPath } from "./data/meta.js";
 import { derivedStats, xpForLevel } from "./game/character.js";
 import { EQUIP_SLOTS as SLOTS, RARITY_COLOR, ITEM_TEMPLATES } from "./data/items.js";
 import { SHOP_CATALOG, SHOP_TABS } from "./data/npcs.js";
-import { UPGRADE_TABLE } from "./data/upgrades.js";
+import { getUpgradeRecipe } from "./data/upgrades.js";
 import { DEMON_TOWER, floorConfig } from "./data/demonTower.js";
 import { MapService } from "./services/MapService.js";
 import { audio } from "./audio/Audio.js";
+import { itemIconHtml } from "./ui/itemIcon.js";
 
 const $ = (s) => document.querySelector(s);
 
@@ -26,7 +29,6 @@ const DOLL_SLOTS = ["helmet", "weapon", "shield", "armor", "bracelet", "necklace
 const BAG_SIZE = 40;
 
 let selectedClass = "warrior";
-let selectedSpec = "body";
 let selectedGender = "m";
 let selectedKingdom = 1;
 let currentProfile = null;
@@ -43,19 +45,31 @@ const ui = {
     this.chat(`${p.name} entered the kingdom`, "sys");
   },
   renderHotbar(p, ch) {
-    const cls = CLASSES[p?.classId] || CLASSES.warrior;
-    const skills = SkillService.listFor(p.classId, ch?.spec).slice(0, 4);
-    const list = skills.length ? skills : cls.skills;
+    const skills = SkillService.listWithLevels(ch).slice(0, 4);
     const bar = $("#skill-bar");
     if (!bar) return;
     bar.innerHTML = "";
-    list.forEach((sk, i) => {
-      const el = document.createElement("div");
-      el.className = "skill-slot";
-      el.dataset.slot = String(i);
-      el.innerHTML = `<span class="k">${i + 1}</span><span class="sk-name">${sk.name}</span><div class="cd" hidden></div>`;
-      bar.appendChild(el);
-    });
+    if (!skills.length) {
+      for (let i = 0; i < 4; i++) {
+        const el = document.createElement("div");
+        el.className = "skill-slot locked";
+        el.dataset.slot = String(i);
+        el.title = `Visit the Skill Master at Lv.${SkillService.unlockLevel}`;
+        el.innerHTML = `<span class="k">${i + 1}</span><span class="sk-name">—</span><div class="cd" hidden></div>`;
+        bar.appendChild(el);
+      }
+    } else {
+      skills.forEach((sk, i) => {
+        const el = document.createElement("div");
+        el.className = "skill-slot";
+        el.dataset.slot = String(i);
+        const timing = SkillService.timing(sk);
+        const rank = sk.level || 1;
+        el.title = `${sk.name} M${rank} · ${sk.sp} SP · cast ${timing.cast.toFixed(1)}s · CD ${sk.cd}s`;
+        el.innerHTML = `<span class="k">${i + 1}</span><span class="sk-name">${sk.name}</span><span class="sk-rank">M${rank}</span><div class="cd" hidden></div>`;
+        bar.appendChild(el);
+      });
+    }
     const sep = document.createElement("div");
     sep.className = "hotbar-sep";
     sep.setAttribute("aria-hidden", "true");
@@ -75,7 +89,7 @@ const ui = {
       el.title = def ? `${def.name} (key ${i + 5}) — click use · right-click clear` : `Empty potion slot ${i + 5}`;
       el.innerHTML = `
         <span class="k">${i + 5}</span>
-        <span class="sk-ico">${def?.icon || "·"}</span>
+        ${def ? itemIconHtml(def, { cls: "sk-ico item-ico" }) : `<span class="sk-ico">·</span>`}
         ${def ? `<span class="sk-qty">×${qty}</span>` : `<span class="sk-name">Pot</span>`}
         <div class="cd" hidden></div>
       `;
@@ -96,7 +110,8 @@ const ui = {
   },
   updateHud(p, ch) {
     const cls = CLASSES[p.classId];
-    const spec = ch?.spec ? ` · ${ch.spec}` : "";
+    const path = SPECS[ch?.classId || p.classId]?.find((s) => s.id === ch?.spec);
+    const spec = path ? ` · ${path.name}` : !hasSkillPath(ch?.spec) ? " · No path" : "";
     $("#hud-level").textContent = `Lv.${p.level} ${cls?.name || ""}${spec}`;
     const hpR = Math.max(0, Math.min(1, p.hp / p.maxHp));
     const spR = Math.max(0, Math.min(1, p.sp / p.maxSp));
@@ -134,9 +149,22 @@ const ui = {
         const qty = itemId
           ? (ch.inventory || []).filter((s) => s.itemId === itemId).reduce((n, s) => n + (s.qty || 0), 0)
           : 0;
-        const ico = el.querySelector(".sk-ico");
+        const ico = el.querySelector(".sk-ico, .item-ico");
         const qEl = el.querySelector(".sk-qty");
-        if (ico) ico.textContent = def?.icon || "·";
+        if (ico) {
+          if (def) {
+            const wrap = document.createElement("div");
+            wrap.innerHTML = itemIconHtml(def, { cls: "sk-ico item-ico" });
+            ico.replaceWith(wrap.firstElementChild);
+          } else if (ico.tagName === "IMG") {
+            const span = document.createElement("span");
+            span.className = "sk-ico";
+            span.textContent = "·";
+            ico.replaceWith(span);
+          } else {
+            ico.textContent = "·";
+          }
+        }
         if (qEl) qEl.textContent = def ? `×${qty}` : "";
         el.classList.toggle("empty", !def);
         const cd = p.skillCd?.[4 + i] || 0;
@@ -192,6 +220,7 @@ const ui = {
     el.textContent = name || "Shinsoo";
     el.classList.toggle("dungeon", mapId === "demon_tower");
     el.classList.toggle("valley", mapId === "valley");
+    el.classList.toggle("orc", mapId === "orc_valley");
   },
   setHost(isHost) {
     const el = $("#host-chip");
@@ -242,31 +271,64 @@ const ui = {
     ctx.clip();
     const dungeon = MapService.is("demon_tower");
     const valley = MapService.is("valley");
-    ctx.fillStyle = dungeon ? "#1a0a0e" : valley ? "#2a1e12" : "#1a2e18";
+    const orc = MapService.is("orc_valley");
+    ctx.fillStyle = dungeon ? "#1a0a0e" : orc ? "#142018" : valley ? "#2a1e12" : "#1a2e18";
     ctx.fillRect(0, 0, w, h);
-    const mapSize = dungeon ? 40 : MAP_SIZE;
+    const mapSize = dungeon ? 40 : orc ? 160 : MAP_SIZE;
     const to = (x, z) => [((x + mapSize / 2) / mapSize) * w, ((z + mapSize / 2) / mapSize) * h];
     if (!dungeon) {
-      ctx.strokeStyle = valley ? "rgba(180,140,70,0.5)" : "rgba(201,162,39,0.45)";
-      ctx.beginPath();
-      const cr = (22 / MAP_SIZE) * w;
-      ctx.arc(w / 2, h / 2, cr, 0, Math.PI * 2);
-      ctx.stroke();
-      // Edge portal marker
-      const [px, py] = valley ? to(-56.5, 0) : to(56.5, 0);
-      ctx.fillStyle = valley ? "#e8b84a" : "#6ec8ff";
-      ctx.beginPath();
-      ctx.arc(px, py, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-      if (!valley) {
-        const [tx, ty] = to(DEMON_TOWER.entrance.x, DEMON_TOWER.entrance.z);
-        ctx.fillStyle = "#ff6a4a";
+      if (orc) {
+        // Main island + portal islet
+        ctx.strokeStyle = "rgba(90,140,70,0.55)";
         ctx.beginPath();
-        ctx.moveTo(tx, ty - 4);
-        ctx.lineTo(tx + 3.5, ty + 3);
-        ctx.lineTo(tx - 3.5, ty + 3);
-        ctx.closePath();
+        ctx.arc(w / 2, h / 2, (32 / mapSize) * w, 0, Math.PI * 2);
+        ctx.stroke();
+        const [opx, opy] = to(-68.5, 0);
+        ctx.fillStyle = "#c47a3a";
+        ctx.beginPath();
+        ctx.arc(opx, opy, 3.5, 0, Math.PI * 2);
         ctx.fill();
+        // War tower mark
+        ctx.fillStyle = "#c43c2e";
+        ctx.fillRect(w / 2 - 2, h / 2 - 5, 4, 8);
+        // Teleporter south of tower
+        const [tpx, tpy] = to(0, 14);
+        ctx.fillStyle = "#7dff9a";
+        ctx.beginPath();
+        ctx.arc(tpx, tpy, 3, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.strokeStyle = valley ? "rgba(180,140,70,0.5)" : "rgba(201,162,39,0.45)";
+        ctx.beginPath();
+        const cr = (CITY_RADIUS / MAP_SIZE) * w;
+        ctx.arc(w / 2, h / 2, cr, 0, Math.PI * 2);
+        ctx.stroke();
+        // Edge portal markers
+        const [px, py] = valley ? to(-EDGE_PORTAL, 0) : to(EDGE_PORTAL, 0);
+        ctx.fillStyle = valley ? "#e8b84a" : "#6ec8ff";
+        ctx.beginPath();
+        ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        if (valley) {
+          const [ex, ey] = to(EDGE_PORTAL, 0);
+          ctx.fillStyle = "#5a8a3a";
+          ctx.beginPath();
+          ctx.arc(ex, ey, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+          // Rogue camp NW
+          const [cx, cy] = to(BANDIT_CAMP.x, BANDIT_CAMP.z);
+          ctx.fillStyle = "#c43c2e";
+          ctx.fillRect(cx - 2.5, cy - 2.5, 5, 5);
+        } else {
+          const [tx, ty] = to(DEMON_TOWER.entrance.x, DEMON_TOWER.entrance.z);
+          ctx.fillStyle = "#ff6a4a";
+          ctx.beginPath();
+          ctx.moveTo(tx, ty - 4);
+          ctx.lineTo(tx + 3.5, ty + 3);
+          ctx.lineTo(tx - 3.5, ty + 3);
+          ctx.closePath();
+          ctx.fill();
+        }
       }
     } else {
       ctx.strokeStyle = "rgba(196,60,46,0.7)";
@@ -284,7 +346,7 @@ const ui = {
         ctx.fill();
       }
     }
-    ctx.fillStyle = dungeon ? "#e23a2e" : valley ? "#c47a3a" : "#6b8f3a";
+    ctx.fillStyle = dungeon ? "#e23a2e" : orc ? "#3a5a28" : valley ? "#c47a3a" : "#6b8f3a";
     for (const [, m] of mobs) {
       if (dungeon && !m.dungeon) continue;
       if (!dungeon && (m.mapId || "overworld") !== MapService.currentId) continue;
@@ -334,7 +396,7 @@ function renderDoll(container, ch, { unequip = true } = {}) {
     btn.style.borderColor = def ? RARITY_COLOR[def.rarity] : "";
     const up = ref?.upgrade ? `+${ref.upgrade}` : "";
     btn.innerHTML = `<span class="lbl">${s}</span>${
-      def ? `<span class="ico">${def.icon}</span><span class="up">${up}</span>` : `<span class="ico" style="opacity:.35">·</span>`
+      def ? `${itemIconHtml(def)}<span class="up">${up}</span>` : `<span class="ico empty-ico">·</span>`
     }`;
     btn.title = def ? ItemService.displayName(ref) : s;
     if (def && unequip) {
@@ -352,8 +414,8 @@ function renderDoll(container, ch, { unequip = true } = {}) {
 function renderCharacterPanel(ch) {
   if (!ch) return;
   const d = derivedStats(ch);
-  const kingdom = KINGDOMS.find((k) => k.id === ch.kingdom)?.name || "";
-  $("#char-title").textContent = `${ch.name} · Lv.${ch.level} ${CLASSES[ch.classId]?.name || ""} · ${ch.spec || ""} · ${kingdom}`;
+  const pathName = SPECS[ch.classId]?.find((s) => s.id === ch.spec)?.name || "No skill path";
+  $("#char-title").textContent = `${ch.name} · Lv.${ch.level} ${CLASSES[ch.classId]?.name || ""} · ${pathName}`;
   $("#stat-points").textContent = String(ch.statPoints);
   renderDoll($("#paperdoll"), ch);
 
@@ -442,22 +504,44 @@ function renderInventory(ch) {
     cell.className = "inv-cell";
     cell.style.borderColor = RARITY_COLOR[def.rarity] || "#666";
     const up = stack.upgrade ? `+${stack.upgrade}` : "";
-    cell.innerHTML = `${up ? `<span class="up-tag">${up}</span>` : ""}<span class="ico">${def.icon}</span><span class="qty">×${stack.qty}</span>`;
-    cell.title = isPotionItem(def)
-      ? `${ItemService.displayName(stack)} — click use · right-click hotbar`
-      : ItemService.displayName(stack);
+    cell.innerHTML = `${up ? `<span class="up-tag">${up}</span>` : ""}${itemIconHtml(def)}<span class="qty">×${stack.qty}</span>`;
+    cell.title = def.skillBook
+      ? `${ItemService.displayName(stack)} — click to open Skills`
+      : isPotionItem(def)
+        ? `${ItemService.displayName(stack)} — click use · right-click hotbar`
+        : ItemService.displayName(stack);
     cell.addEventListener("mouseenter", () => {
       if (!tip) return;
       const bons = (stack.bonuses || []).map((b) => `${b.stat}+${b.value}`).join(", ");
       tip.hidden = false;
+      const setLine = def.setName ? `<br><i style="color:#e8d48b">${def.setName}</i>` : "";
+      const req = [
+        def.levelReq ? `Lv.${def.levelReq}` : "",
+        def.classReq?.length ? def.classReq.join("/") : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
       tip.innerHTML = `<b style="color:${RARITY_COLOR[def.rarity]}">${ItemService.displayName(stack)}</b><br>${def.slot}${
         def.atk ? ` · ATK ${def.atk}` : ""
-      }${def.def ? ` · DEF ${def.def}` : ""}${bons ? `<br>${bons}` : ""}${
-        isPotionItem(def) ? "<br><i>Right-click → hotbar 5/6</i>" : ""
+      }${def.matk ? ` · MATK ${def.matk}` : ""}${def.def ? ` · DEF ${def.def}` : ""}${
+        def.mdef ? ` · MDEF ${def.mdef}` : ""
+      }${bons ? `<br>${bons}` : ""}${setLine}${req ? `<br>${req}` : ""}${
+        def.skillBook
+          ? "<br><i>Click → Skills panel · raise path skills</i>"
+          : isPotionItem(def)
+            ? "<br><i>Right-click → hotbar 5/6</i>"
+            : ""
       }`;
     });
     cell.addEventListener("click", () => {
       audio.sfx("ui");
+      // During trade: click adds item to your offer
+      if (TradeService.session && !$("#panel-trade")?.hidden) {
+        game.tradeOfferItem(stack.uid);
+        renderInventory(game.character);
+        renderTradePanel();
+        return;
+      }
       if (def.slot === "consumable") game.useItem(stack.uid);
       else game.equipItem(stack.uid);
       renderInventory(game.character);
@@ -482,50 +566,182 @@ function renderInventory(ch) {
   }
 }
 
-function renderQuests(ch) {
+/** Remember NPC filter so refreshes (accept / kill / HUD) keep the same view */
+let questPanelGiver = null;
+
+function renderQuests(ch = game.character, giver = questPanelGiver) {
   const body = $("#quest-body");
+  if (!body || !ch) return;
+  questPanelGiver = giver ?? null;
+  QuestService.ensure(ch);
   body.innerHTML = "";
+
+  const title = $("#panel-quests header h3");
+  if (title) {
+    title.textContent =
+      questPanelGiver === "biologist"
+        ? "Biologist — Research"
+        : questPanelGiver === "quest_elder"
+          ? "Village Elder — Quests"
+          : "Quest Log";
+  }
+
+  if (questPanelGiver === "biologist") {
+    const intro = document.createElement("p");
+    intro.className = "npc-flavor";
+    intro.textContent =
+      "Ah, a willing field assistant. Finish each study in order — my research builds on the last sample.";
+    body.appendChild(intro);
+  } else if (questPanelGiver === "quest_elder") {
+    const intro = document.createElement("p");
+    intro.className = "npc-flavor";
+    intro.textContent = "The kingdom needs brave hands. Accept a task, complete it in the field, then return for your reward.";
+    body.appendChild(intro);
+  }
+
   const list = document.createElement("div");
   list.className = "quest-list";
-  for (const q of QuestService.all) {
-    QuestService.ensure(ch);
+  const quests = QuestService.forGiver(questPanelGiver);
+
+  // Sort: turn-in → in progress → available → locked → finished
+  const rank = (q) => {
     const st = ch.quests[q.id];
+    if (st?.state === "completed") return 0;
+    if (st?.state === "accepted") return 1;
+    if (!QuestService.canAccept(ch, q)) {
+      if (st?.state === "claimed") return 4;
+      return 3;
+    }
+    return 2;
+  };
+  const sorted = [...quests].sort((a, b) => rank(a) - rank(b));
+
+  for (const q of sorted) {
+    const st = ch.quests[q.id];
+    const lockErr = !st ? QuestService.canAccept(ch, q) : null;
+    const state = st?.state || (lockErr ? "locked" : "available");
+    const prog = `${st?.progress || 0}/${q.count}`;
     const row = document.createElement("div");
-    row.className = "quest-line";
-    const state = st?.state || "available";
-    const prog = st ? `${st.progress || 0}/${q.count}` : `0/${q.count}`;
-    row.innerHTML = `<div><b>${q.name}</b><small style="display:block;color:var(--mist)">${q.desc} · ${prog} · ${state}</small></div>`;
+    row.className = `quest-line quest-${state}`;
+    const badge = QuestService.label(state);
+    const giverTag =
+      !questPanelGiver && q.giver === "biologist"
+        ? " · Biologist"
+        : !questPanelGiver && q.giver === "quest_elder"
+          ? " · Elder"
+          : "";
+    const rewardLine = QuestService.formatReward(q.reward);
+    row.innerHTML = `
+      <div class="quest-info">
+        <b>${q.name}</b>
+        <small>${q.desc}</small>
+        <small class="quest-meta">Lv.${q.levelReq} · ${prog} · ${badge}${giverTag}</small>
+        <small class="quest-reward">Reward: ${rewardLine}</small>
+      </div>`;
+
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn-mini";
-    if (!st) {
+
+    if (state === "available") {
       btn.textContent = "Accept";
       btn.onclick = () => {
-        const err = QuestService.accept(ch, q.id);
-        ui.toast(err || "Quest accepted");
-        renderQuests(ch);
-        game.refreshQuestMarkers?.();
+        const target = game.character;
+        const err = QuestService.accept(target, q.id);
+        if (err) {
+          ui.toast(err);
+          return;
+        }
+        audio.sfx("ui");
+        ui.toast(`Accepted: ${q.name}`);
+        refreshQuestUi();
+        ui.requestSave?.(false);
       };
-    } else if (st.state === "completed") {
+    } else if (state === "completed") {
       btn.textContent = "Claim";
+      btn.classList.add("btn-claim");
       btn.onclick = () => {
-        const err = QuestService.claim(ch, q.id);
-        if (!err) {
-          game.syncDerived();
-          ui.toast("Reward claimed");
-        } else ui.toast(err);
-        renderQuests(ch);
-        renderInventory(ch);
-        game.refreshQuestMarkers?.();
+        const target = game.character;
+        const err = QuestService.claim(target, q.id);
+        if (err) {
+          ui.toast(err);
+          return;
+        }
+        game.syncDerived();
+        game.local.gold = target.gold;
+        game.local.level = target.level;
+        audio.sfx("level");
+        const g = target._lastQuestGrants;
+        if (g?.items?.length) {
+          const names = g.items.map((i) => (i.qty > 1 ? `${i.name} ×${i.qty}` : i.name)).join(", ");
+          ui.toast(`Claimed ${g.name}: ${g.yang || 0} Yang · ${names}`);
+        } else {
+          ui.toast(`Reward claimed: ${q.name}`);
+        }
+        refreshQuestUi();
+        if (!$("#panel-inv").hidden) renderInventory(target);
+        if (!$("#panel-char").hidden) renderCharacterPanel(target);
+        ui.requestSave?.(false);
       };
-    } else {
-      btn.textContent = state;
+    } else if (state === "accepted") {
+      btn.textContent = `${prog}`;
       btn.disabled = true;
+      btn.title = "In progress — hunt, then return";
+    } else if (state === "claimed") {
+      btn.textContent = "Done";
+      btn.disabled = true;
+    } else {
+      btn.textContent = "Locked";
+      btn.disabled = true;
+      btn.title = lockErr || "Locked";
     }
+
     row.appendChild(btn);
     list.appendChild(row);
   }
-  body.appendChild(list);
+
+  if (!sorted.length) {
+    const empty = document.createElement("p");
+    empty.className = "sub";
+    empty.textContent = "No quests here.";
+    body.appendChild(empty);
+  } else {
+    body.appendChild(list);
+  }
+
+  renderQuestTracker(ch);
+}
+
+function refreshQuestUi() {
+  const ch = game.character;
+  if (!ch) return;
+  if (!$("#panel-quests").hidden) renderQuests(ch, questPanelGiver);
+  renderQuestTracker(ch);
+  game.refreshQuestMarkers?.();
+}
+
+function renderQuestTracker(ch = game.character) {
+  const box = $("#quest-tracker");
+  const list = $("#quest-tracker-list");
+  if (!box || !list || !ch) return;
+  QuestService.ensure(ch);
+  const active = QuestService.activeList(ch);
+  if (!active.length) {
+    box.hidden = true;
+    list.innerHTML = "";
+    return;
+  }
+  box.hidden = false;
+  list.innerHTML = active
+    .slice(0, 5)
+    .map((q) => {
+      const ready = q.state === "completed";
+      return `<div class="quest-track-row${ready ? " ready" : ""}">
+        <b>${ready ? "✓ " : ""}${q.name}</b>
+        <span>${q.progress}/${q.count}</span>
+      </div>`;
+    })
+    .join("");
 }
 
 let shopTab = "potions";
@@ -575,9 +791,7 @@ function appendNpcEquipDoll(parent, ch, npc, opts = {}) {
     btn.style.borderColor = def ? RARITY_COLOR[def.rarity] : "";
     const up = ref?.upgrade ? `+${ref.upgrade}` : "";
     btn.innerHTML = `<span class="lbl">${s}</span>${
-      def
-        ? `<span class="ico">${def.icon}</span><span class="up">${up}</span>`
-        : `<span class="ico" style="opacity:.35">·</span>`
+      def ? `${itemIconHtml(def)}<span class="up">${up}</span>` : `<span class="ico empty-ico">·</span>`
     }`;
     btn.title = def
       ? `${ItemService.displayName(ref)}${opts.hint ? ` — ${opts.hint}` : ""}`
@@ -606,15 +820,26 @@ function renderNpcPanel(npc) {
   } else if (npc.role === "teleport") {
     const wrap = document.createElement("div");
     wrap.className = "tele-grid";
-    for (const k of KINGDOMS) {
+    const intro = document.createElement("p");
+    intro.className = "npc-flavor";
+    intro.textContent =
+      npc.id === "orc_tele"
+        ? "The war tower's gate opens every road. Choose your destination."
+        : "Choose a destination across Shinsoo, Seungryong, and the Orc Isles.";
+    body.appendChild(intro);
+    const here = MapService.currentId;
+    for (const w of WORLD_WARPS) {
+      // Skip the pad you're already standing on
+      if (w.mapId === here && Math.hypot((game.local?.x || 0) - w.x, (game.local?.z || 0) - w.z) < 4) {
+        continue;
+      }
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "tele-card";
-      btn.innerHTML = `<b>${k.name}</b><span>Gate</span>`;
+      const region = w.mapId === "orc_valley" ? "Orc" : w.mapId === "valley" ? "Valley" : "City";
+      btn.innerHTML = `<b>${w.name}</b><span>${region}</span>`;
       btn.onclick = () => {
-        game.local.x = k.village.x;
-        game.local.z = k.village.z;
-        ui.toast(`Teleported to ${k.name}`);
+        game.teleportTo(w.mapId, w.x, w.z, w.name);
         $("#panel-npc").hidden = true;
       };
       wrap.appendChild(btn);
@@ -623,8 +848,79 @@ function renderNpcPanel(npc) {
   } else if (npc.role === "quest") {
     $("#panel-npc").hidden = true;
     $("#panel-quests").hidden = false;
-    renderQuests(ch);
+    questPanelGiver = "quest_elder";
+    renderQuests(ch, "quest_elder");
+  } else if (npc.role === "biologist") {
+    $("#panel-npc").hidden = true;
+    $("#panel-quests").hidden = false;
+    questPanelGiver = "biologist";
+    renderQuests(ch, "biologist");
+  } else if (npc.role === "skillmaster") {
+    renderSkillMasterUi(body, ch);
   }
+}
+
+function renderSkillMasterUi(body, ch) {
+  const intro = document.createElement("p");
+  intro.className = "npc-flavor";
+  const clsName = CLASSES[ch.classId]?.name || "Warrior";
+  const paths = SkillService.pathsFor(ch.classId);
+
+  if (SkillService.hasPath(ch)) {
+    const path = paths.find((p) => p.id === ch.spec);
+    intro.textContent = `You walk the ${path?.name || ch.spec} path, ${clsName}. Your skills are set — train them in battle.`;
+    body.appendChild(intro);
+    const skills = SkillService.listFor(ch.classId, ch.spec);
+    const list = document.createElement("div");
+    list.className = "skill-path-skills";
+    list.innerHTML = skills.map((s, i) => `<div class="skill-chip"><b>${i + 1}. ${s.name}</b><span>${s.sp} SP · ${s.cd}s</span></div>`).join("");
+    body.appendChild(list);
+    return;
+  }
+
+  const lockErr = SkillService.canChoose(ch);
+  if (lockErr) {
+    intro.textContent = `Return at Lv.${SkillService.unlockLevel}, young ${clsName}. Only then may you choose your skill path.`;
+    body.appendChild(intro);
+    const note = document.createElement("p");
+    note.className = "sub";
+    note.textContent = lockErr;
+    body.appendChild(note);
+    return;
+  }
+
+  intro.textContent = `You are ready, ${clsName}. Choose wisely — your skill path cannot be changed.`;
+  body.appendChild(intro);
+
+  const grid = document.createElement("div");
+  grid.className = "skill-path-grid";
+  for (const path of paths) {
+    const skills = SkillService.listFor(ch.classId, path.id);
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "skill-path-card";
+    card.innerHTML = `
+      <b>${path.name}</b>
+      <span class="blurb">${path.blurb}</span>
+      <ul>${skills.map((s) => `<li>${s.name}</li>`).join("")}</ul>
+      <em>Choose ${path.name}</em>
+    `;
+    card.onclick = () => {
+      const err = SkillService.choosePath(ch, path.id);
+      if (err) {
+        ui.toast(err);
+        return;
+      }
+      audio.sfx("level");
+      game.syncDerived();
+      ui.renderHotbar(game.local, ch);
+      ui.toast(`${path.name} path unlocked!`);
+      ui.requestSave?.(false);
+      renderNpcPanel({ id: "skill_master", name: "Skill Master", role: "skillmaster" });
+    };
+    grid.appendChild(card);
+  }
+  body.appendChild(grid);
 }
 
 function renderShopUi(body, npc, ch) {
@@ -695,7 +991,7 @@ function renderShopUi(body, npc, ch) {
       card.className = "shop-card sell" + (stack._equippedSlot ? " equipped" : "");
       card.style.borderColor = RARITY_COLOR[def.rarity] || "";
       card.innerHTML = `
-        <span class="ico">${def.icon || "·"}</span>
+        ${itemIconHtml(def)}
         <span class="nm">${def.name}${stack.upgrade ? ` +${stack.upgrade}` : ""}</span>
         <span class="pr">+${price}</span>
         ${stack._equippedSlot ? `<span class="eq-tag">EQ</span>` : ""}
@@ -730,7 +1026,7 @@ function renderShopUi(body, npc, ch) {
       const can = (ch.gold ?? 0) >= offer.price;
       if (!can) card.classList.add("cant");
       card.innerHTML = `
-        <span class="ico">${def?.icon || "·"}</span>
+        ${def ? itemIconHtml(def) : `<span class="ico">·</span>`}
         <span class="nm">${def?.name || offer.id}</span>
         <span class="pr">${offer.price}</span>
       `;
@@ -753,9 +1049,13 @@ function renderShopUi(body, npc, ch) {
 }
 
 function renderSmithUi(body, npc, ch) {
+  const blessed = !!npc?.towerSmith;
+  const usesLeft = blessed ? DungeonService.smithUsesLeft(game.local?.id) : null;
   const isUpgradable = (stack) => {
     const def = getItem(stack.itemId);
-    return def && def.slot !== "consumable" && (stack.upgrade || 0) < 9;
+    if (!def) return false;
+    if (def.slot === "consumable" || def.slot === "material") return false;
+    return (stack.upgrade || 0) < 9;
   };
   const equipped = listEquippedStacks(ch).filter(isUpgradable);
   const bag = (ch.inventory || []).filter(isUpgradable);
@@ -765,6 +1065,17 @@ function renderSmithUi(body, npc, ch) {
     smithSelectedUid = null;
   }
   if (!smithSelectedUid && gear[0]) smithSelectedUid = gear[0].uid;
+
+  if (blessed) {
+    const banner = document.createElement("p");
+    banner.className = "sub";
+    banner.style.color = "#e8b84a";
+    banner.textContent =
+      usesLeft > 0
+        ? `Infernal forge — ${usesLeft} blessed upgrade${usesLeft === 1 ? "" : "s"} left (safer & cheaper).`
+        : "No Infernal forge uses left — exit the portal to Shinsoo.";
+    body.appendChild(banner);
+  }
 
   const head = document.createElement("div");
   head.className = "npc-yang";
@@ -814,7 +1125,7 @@ function renderSmithUi(body, npc, ch) {
         (stack._equippedSlot ? " equipped" : "");
       cell.style.borderColor = RARITY_COLOR[def.rarity] || "";
       cell.innerHTML = `
-        <span class="ico">${def.icon || "·"}</span>
+        ${itemIconHtml(def)}
         <span class="up-tag">+${level}</span>
         ${stack._equippedSlot ? `<span class="eq-tag">EQ</span>` : ""}
       `;
@@ -834,38 +1145,55 @@ function renderSmithUi(body, npc, ch) {
   const selected = gear.find((g) => g.uid === smithSelectedUid);
   if (!selected) {
     forge.innerHTML = `<p class="sub">Select equipped or bag gear to raise +0…+9.</p>`;
+  } else if (blessed && usesLeft <= 0) {
+    forge.innerHTML = `<p class="sub">No forge uses left. Use the exit portal to return to Shinsoo.</p>`;
   } else {
     const def = getItem(selected.itemId);
     const level = selected.upgrade || 0;
-    const recipe = UPGRADE_TABLE[level];
+    const recipe = getUpgradeRecipe(level, { blessed });
     const chance = Math.floor((recipe?.chance || 0) * 100);
     const risk = [];
     if (recipe?.downgrade) risk.push("can drop");
     if (recipe?.destroyOnFail) risk.push("can break");
     forge.innerHTML = `
       <div class="forge-item" style="border-color:${RARITY_COLOR[def.rarity] || ""}">
-        <span class="ico">${def.icon || "·"}</span>
+        ${itemIconHtml(def)}
         <div>
           <b>${def.name}</b>
-          <span>+${level} → +${level + 1}${selected._equippedSlot ? " · worn" : ""}</span>
+          <span>+${level} → +${level + 1}${selected._equippedSlot ? " · worn" : ""}${blessed ? " · blessed" : ""}</span>
         </div>
       </div>
       <div class="forge-stats">
         <div><em>Success</em><b>${chance}%</b></div>
         <div><em>Cost</em><b>${recipe?.yang ?? 0}</b></div>
       </div>
-      ${risk.length ? `<p class="forge-risk">${risk.join(" · ")}</p>` : `<p class="forge-safe">Safe fail</p>`}
+      ${
+        blessed
+          ? `<p class="forge-safe">Infernal forge — no break / no drop</p>`
+          : risk.length
+            ? `<p class="forge-risk">${risk.join(" · ")}</p>`
+            : `<p class="forge-safe">Safe fail</p>`
+      }
     `;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn btn-primary forge-btn";
-    btn.textContent = `Upgrade (+${level + 1})`;
-    btn.disabled = (ch.gold ?? 0) < (recipe?.yang ?? 0);
+    btn.textContent = blessed ? `Blessed upgrade (+${level + 1})` : `Upgrade (+${level + 1})`;
+    btn.disabled = (ch.gold ?? 0) < (recipe?.yang ?? 0) || (blessed && usesLeft <= 0);
     btn.onclick = () => {
-      const res = NpcService.upgrade(ch, selected.uid);
+      if (blessed && DungeonService.smithUsesLeft(game.local?.id) <= 0) {
+        ui.toast("No Infernal forge uses left");
+        return;
+      }
+      const goldBefore = ch.gold ?? 0;
+      const res = NpcService.upgrade(ch, selected.uid, { blessed });
+      // Count a use only when the forge actually spent Yang
+      if (blessed && (ch.gold ?? 0) < goldBefore) {
+        DungeonService.consumeSmithUse(game.local?.id);
+      }
       game.local.gold = ch.gold;
       audio.sfx(res.ok ? "buff" : "ui");
-      ui.toast(res.msg);
+      ui.toast(res.msg + (blessed ? ` · ${DungeonService.smithUsesLeft(game.local?.id)} left` : ""));
       game.syncDerived();
       const still =
         ch.inventory.some((s) => s.uid === selected.uid) ||
@@ -885,6 +1213,7 @@ function showLobbyView(name) {
   $("#auth-view").hidden = name !== "auth";
   $("#chars-view").hidden = name !== "chars";
   $("#create-view").hidden = name !== "create";
+  $("#lobby").dataset.view = name;
 }
 
 function show(screen) {
@@ -892,32 +1221,283 @@ function show(screen) {
   $("#game-screen").classList.toggle("active", screen === "game");
 }
 
-function togglePanel(name) {
-  const map = {
-    char: "#panel-char",
-    inv: "#panel-inv",
-    menu: "#panel-menu",
-    npc: "#panel-npc",
-    quests: "#panel-quests",
-    party: "#panel-party",
-    tower: "#panel-tower",
-    dungeon: "#panel-dungeon",
-  };
-  const el = $(map[name]);
+const PANEL_MAP = {
+  char: "#panel-char",
+  inv: "#panel-inv",
+  skills: "#panel-skills",
+  menu: "#panel-menu",
+  npc: "#panel-npc",
+  quests: "#panel-quests",
+  party: "#panel-party",
+  tower: "#panel-tower",
+  dungeon: "#panel-dungeon",
+  trade: "#panel-trade",
+};
+
+/** Optional bookUid to highlight / prefer when opening from inventory */
+let skillsFocusBookUid = null;
+
+function renderSkillsPanel(ch = game.character) {
+  const list = $("#skills-list");
+  const title = $("#skills-path-title");
+  const booksEl = $("#skills-books");
+  if (!list || !ch) return;
+
+  const path = SPECS[ch.classId]?.find((s) => s.id === ch.spec);
+  if (!SkillService.hasPath(ch)) {
+    title.textContent = "No skill path";
+    booksEl.textContent = "";
+    list.innerHTML = `<p class="sub">Visit the Skill Master at Lv.${SkillService.unlockLevel} to choose a path. Metin stones drop books to raise your skills.</p>`;
+    return;
+  }
+
+  title.textContent = `${path?.name || ch.spec} path`;
+  const counts = SkillService.countBooks(ch);
+  booksEl.textContent = `Books: ${counts.normal} Skill · ${counts.grand} Grand Master`;
+
+  const skills = SkillService.listWithLevels(ch);
+  list.innerHTML = "";
+  if (!skills.length) {
+    list.innerHTML = `<p class="sub">No skills on this path.</p>`;
+    return;
+  }
+
+  for (const sk of skills) {
+    const row = document.createElement("div");
+    row.className = "skill-row";
+    const maxed = sk.level >= SkillService.maxLevel;
+    const needGrand = sk.level >= SkillService.bookSoftCap;
+    let bookUid = skillsFocusBookUid;
+    if (bookUid) {
+      const stack = ch.inventory.find((x) => x.uid === bookUid);
+      const def = stack ? ITEM_TEMPLATES[stack.itemId] : null;
+      if (!def?.skillBook) bookUid = null;
+      else if (needGrand && !def.grandMaster) bookUid = null;
+      else if (maxed) bookUid = null;
+    }
+    if (!bookUid) bookUid = SkillService.findBookFor(ch, sk.id);
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-mini";
+    if (maxed) {
+      btn.textContent = "Max";
+      btn.disabled = true;
+    } else if (!bookUid) {
+      btn.textContent = needGrand ? "Need Grand" : "Need book";
+      btn.disabled = true;
+    } else {
+      btn.textContent = "Read book";
+      btn.onclick = () => {
+        audio.sfx("ui");
+        const err = game.upgradeSkillWithBook(sk.id, bookUid);
+        if (err) ui.toast(err);
+        else {
+          ui.toast(`${sk.name} → M${SkillService.getLevel(game.character, sk.id)}`);
+          skillsFocusBookUid = null;
+          renderSkillsPanel(game.character);
+          ui.renderHotbar(game.local, game.character);
+          if (!$("#panel-inv").hidden) renderInventory(game.character);
+        }
+      };
+    }
+
+    const timing = SkillService.timing(sk);
+    row.innerHTML = `
+      <div class="skill-row-main">
+        <span class="skill-row-name">${sk.name}</span>
+        <span class="skill-row-rank">Rank M${sk.level}${maxed ? " (max)" : needGrand ? " · grand books" : ""}</span>
+        <span class="skill-row-meta">×${sk.mul.toFixed(2)} dmg · ${sk.sp} SP · CD ${sk.cd}s · cast ${timing.cast.toFixed(1)}s</span>
+      </div>
+    `;
+    row.appendChild(btn);
+    list.appendChild(row);
+  }
+}
+
+ui.openSkillsPanel = (bookInfo) => {
+  skillsFocusBookUid = bookInfo?.uid || null;
+  showPanel("skills");
+  if (bookInfo?.grand) ui.toast("Choose a skill to read the Grand Master Book");
+  else ui.toast("Choose a skill to read the Skill Book");
+};
+
+let _socialInviteKind = null;
+let _ctxPlayerId = null;
+
+ui.showPlayerContext = (info) => {
+  const el = $("#player-context");
+  if (!el || !info) return;
+  _ctxPlayerId = info.id;
+  $("#player-context-name").textContent = `${info.name || "Player"} · Lv.${info.level || 1}`;
+  el.hidden = false;
+  const x = Math.min(window.innerWidth - 180, Math.max(8, (info.x || 0) + 12));
+  const y = Math.min(window.innerHeight - 160, Math.max(8, (info.y || 0) + 12));
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+};
+ui.hidePlayerContext = () => {
+  const el = $("#player-context");
+  if (el) el.hidden = true;
+  _ctxPlayerId = null;
+};
+ui.showSocialInvite = ({ kind, text }) => {
+  _socialInviteKind = kind;
+  const banner = $("#social-invite-banner");
+  if (!banner) return;
+  banner.hidden = false;
+  $("#social-invite-text").textContent = text || "Request";
+};
+ui.hideSocialInvite = () => {
+  const banner = $("#social-invite-banner");
+  if (banner) banner.hidden = true;
+  _socialInviteKind = null;
+};
+ui.showDuelCountdown = (n, fight) => {
+  const el = $("#duel-countdown");
   if (!el) return;
-  const open = el.hidden;
-  Object.values(map).forEach((sel) => {
+  el.hidden = false;
+  const num = $("#duel-countdown-num");
+  const label = $("#duel-countdown-label");
+  if (fight || n <= 0) {
+    num.textContent = "FIGHT!";
+    label.textContent = "Duel started";
+    setTimeout(() => {
+      el.hidden = true;
+    }, 900);
+  } else {
+    num.textContent = String(n);
+    label.textContent = "Duel starts";
+  }
+};
+ui.hideDuelCountdown = () => {
+  const el = $("#duel-countdown");
+  if (el) el.hidden = true;
+};
+
+function renderTradeSlots(el, items, mine) {
+  if (!el) return;
+  el.innerHTML = "";
+  for (let i = 0; i < 8; i++) {
+    const inst = items[i];
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "trade-slot" + (inst ? "" : " empty");
+    if (!inst) {
+      cell.disabled = true;
+      el.appendChild(cell);
+      continue;
+    }
+    const def = ITEM_TEMPLATES[inst.itemId];
+    cell.style.borderColor = def ? RARITY_COLOR[def.rarity] : "";
+    cell.innerHTML = def
+      ? `${itemIconHtml(def)}<span class="qty">×${inst.qty || 1}</span>`
+      : "?";
+    cell.title = def ? ItemService.displayName(inst) : inst.itemId;
+    if (mine && !TradeService.session?.myLock) {
+      cell.onclick = () => {
+        game.tradeWithdrawItem(inst.uid);
+        renderTradePanel();
+        renderInventory(game.character);
+      };
+    }
+    el.appendChild(cell);
+  }
+}
+
+function renderTradePanel() {
+  const s = TradeService.session;
+  const panel = $("#panel-trade");
+  if (!panel) return;
+  if (!s) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  $("#trade-my-title").textContent = "Your offer";
+  $("#trade-their-title").textContent = s.withName || "Their offer";
+  renderTradeSlots($("#trade-my-slots"), s.myItems, true);
+  renderTradeSlots($("#trade-their-slots"), s.theirItems, false);
+  const yangInp = $("#trade-my-yang");
+  if (yangInp && document.activeElement !== yangInp) yangInp.value = String(s.myYang || 0);
+  $("#trade-their-yang").textContent = String(s.theirYang || 0);
+  $("#trade-my-flags").textContent = [
+    s.myLock ? "Locked" : "Unlocked",
+    s.myConfirm ? "· Confirmed" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  $("#trade-their-flags").textContent = [
+    s.theirLock ? "Locked" : "Unlocked",
+    s.theirConfirm ? "· Confirmed" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const lockBtn = $("#btn-trade-lock");
+  if (lockBtn) lockBtn.textContent = s.myLock ? "Unlock" : "Lock";
+  const confBtn = $("#btn-trade-confirm");
+  if (confBtn) {
+    confBtn.disabled = !(s.myLock && s.theirLock) || s.myConfirm;
+    confBtn.textContent = s.myConfirm ? "Waiting…" : "Confirm";
+  }
+}
+
+function closeAllPanels() {
+  Object.values(PANEL_MAP).forEach((sel) => {
     const node = $(sel);
     if (node) node.hidden = true;
   });
-  if (open) {
-    el.hidden = false;
-    if (name === "char") renderCharacterPanel(game.character);
-    if (name === "inv") renderInventory(game.character);
-    if (name === "quests") renderQuests(game.character);
-    if (name === "party") renderPartyPanel();
-    if (name === "tower") renderTowerPanel();
-    if (name === "dungeon") renderDungeonPanel();
+}
+
+/** Always open a panel (closes others first). */
+function showPanel(name) {
+  const el = $(PANEL_MAP[name]);
+  if (!el) return;
+  closeAllPanels();
+  el.hidden = false;
+  if (name === "char") renderCharacterPanel(game.character);
+  if (name === "inv") renderInventory(game.character);
+  if (name === "skills") renderSkillsPanel(game.character);
+  if (name === "quests") {
+    // Q / menu log shows all quests
+    questPanelGiver = null;
+    renderQuests(game.character, null);
+  }
+  if (name === "party") renderPartyPanel();
+  if (name === "tower") renderTowerPanel();
+  if (name === "dungeon") renderDungeonPanel();
+  if (name === "trade") renderTradePanel();
+}
+
+function togglePanel(name) {
+  const el = $(PANEL_MAP[name]);
+  if (!el) return;
+  if (!el.hidden) {
+    el.hidden = true;
+    return;
+  }
+  showPanel(name);
+}
+
+async function leaveWorld({ logout = false } = {}) {
+  try {
+    await ui.requestSave(false);
+  } catch {
+    /* still leave */
+  }
+  game.stop();
+  await net.leave();
+  closeAllPanels();
+  show("lobby");
+  if (logout) {
+    await AuthService.signOut();
+    sessionUser = null;
+    userId = null;
+    showLobbyView("auth");
+    ui.toast("Logged out");
+  } else {
+    showLobbyView(userId ? "chars" : "auth");
+    if (userId) refreshCharList();
   }
 }
 
@@ -1025,12 +1605,14 @@ function renderDungeonPanel() {
   if (status) {
     status.textContent = run.cleared
       ? run.floor >= 7
-        ? "Tower cleared! Use the portal or Finish tower."
+        ? "Crucible cleared! Forge at the Infernal Smith (3 uses), then exit to Shinsoo."
         : "Floor cleared — use the blue portal (E) or Next floor."
-      : "Defeat all demons on this floor.";
+      : run.floor >= 7
+        ? "Shatter all 6 Tower Metins with your party."
+        : "Defeat all demons on this floor.";
   }
   if (next) {
-    next.textContent = run.floor >= 7 && run.cleared ? "Finish tower" : "Next floor";
+    next.textContent = run.floor >= 7 && run.cleared ? "Exit to Shinsoo" : "Next floor";
     next.disabled = !run.cleared;
   }
   syncDungeonHudButtons(run);
@@ -1039,7 +1621,7 @@ function renderDungeonPanel() {
 function syncDungeonHudButtons(run) {
   const next = $("#btn-dt-hud-next");
   if (!next || !run) return;
-  next.textContent = run.floor >= 7 && run.cleared ? "Finish" : "Next floor";
+  next.textContent = run.floor >= 7 && run.cleared ? "Exit city" : "Next floor";
   next.disabled = !run.cleared;
 }
 
@@ -1055,28 +1637,12 @@ function updateDungeonHud(run) {
   $("#dungeon-hud-floor").textContent = cfg?.name || `Floor ${run.floor}`;
   $("#dungeon-hud-hint").textContent = run.cleared
     ? run.floor >= 7
-      ? "Walk onto exit portal"
+      ? "Forge (E) then exit portal → Shinsoo"
       : "Walk onto the blue portal"
-    : "Slay all demons";
+    : run.floor >= 7
+      ? "Destroy 6 Tower Metins"
+      : "Slay all demons";
   syncDungeonHudButtons(run);
-}
-
-function renderSpecRow() {
-  const row = $("#spec-row");
-  row.innerHTML = "";
-  const specs = SPECS[selectedClass] || [];
-  if (!specs.find((s) => s.id === selectedSpec)) selectedSpec = specs[0]?.id || "body";
-  for (const s of specs) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "opt-btn" + (s.id === selectedSpec ? " selected" : "");
-    btn.textContent = s.name;
-    btn.addEventListener("click", () => {
-      selectedSpec = s.id;
-      renderSpecRow();
-    });
-    row.appendChild(btn);
-  }
 }
 
 // Build create UI controls
@@ -1091,25 +1657,9 @@ Object.values(CLASSES).forEach((cls) => {
     selectedClass = cls.id;
     classRow.querySelectorAll(".class-btn").forEach((b) => b.classList.remove("selected"));
     btn.classList.add("selected");
-    renderSpecRow();
   });
   classRow.appendChild(btn);
 });
-
-const kingdomRow = $("#kingdom-row");
-for (const k of KINGDOMS) {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "opt-btn" + (k.id === selectedKingdom ? " selected" : "");
-  btn.style.borderColor = k.color;
-  btn.textContent = k.name;
-  btn.addEventListener("click", () => {
-    selectedKingdom = k.id;
-    kingdomRow.querySelectorAll(".opt-btn").forEach((b) => b.classList.remove("selected"));
-    btn.classList.add("selected");
-  });
-  kingdomRow.appendChild(btn);
-}
 
 $("#gender-row").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-gender]");
@@ -1119,7 +1669,6 @@ $("#gender-row").addEventListener("click", (e) => {
   btn.classList.add("selected");
 });
 
-renderSpecRow();
 $("#inp-name").value = `Hero${Math.floor(Math.random() * 90 + 10)}`;
 $("#config-hint").textContent = configHint();
 
@@ -1129,15 +1678,19 @@ const game = new Game($("#c"), ui, net);
 game.onCharacterChange = (ch) => {
   if (!$("#panel-char").hidden) renderCharacterPanel(ch);
   if (!$("#panel-inv").hidden) renderInventory(ch);
-  if (!$("#panel-quests").hidden) renderQuests(ch);
+  if (!$("#panel-skills").hidden) renderSkillsPanel(ch);
+  if (!$("#panel-quests").hidden) renderQuests(ch, questPanelGiver);
+  renderQuestTracker(ch);
 };
 
 game.onOpenNpc = (npc) => {
   $("#panel-char").hidden = true;
   $("#panel-inv").hidden = true;
+  $("#panel-skills").hidden = true;
   $("#panel-quests").hidden = true;
   $("#panel-tower").hidden = true;
   $("#panel-npc").hidden = false;
+  $("#panel-npc").classList.toggle("panel-npc-wide", npc.role === "skillmaster");
   renderNpcPanel(npc);
 };
 
@@ -1161,6 +1714,21 @@ game.onPartyChange = () => {
     // auto-show party panel on invite
     if ($("#panel-party").hidden) togglePanel("party");
   }
+};
+
+game.onTradeChange = () => {
+  renderTradePanel();
+  if (TradeService.session) {
+    // Keep inventory open so you can click items into the trade
+    if ($("#panel-inv").hidden) {
+      $("#panel-inv").hidden = false;
+      renderInventory(game.character);
+    }
+  }
+};
+
+game.onDuelChange = () => {
+  /* countdown HUD is driven by ui.showDuelCountdown */
 };
 
 game.onDungeonChange = (run) => {
@@ -1188,16 +1756,7 @@ ui.requestSave = async (toast = true) => {
 document.querySelectorAll("[data-close]").forEach((btn) => {
   btn.addEventListener("click", () => {
     const key = btn.getAttribute("data-close");
-    const map = {
-      char: "#panel-char",
-      inv: "#panel-inv",
-      npc: "#panel-npc",
-      quests: "#panel-quests",
-      party: "#panel-party",
-      tower: "#panel-tower",
-      dungeon: "#panel-dungeon",
-    };
-    if (map[key]) $(map[key]).hidden = true;
+    if (PANEL_MAP[key]) $(PANEL_MAP[key]).hidden = true;
   });
 });
 
@@ -1207,10 +1766,11 @@ window.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   if (k === "c") togglePanel("char");
   if (k === "i") togglePanel("inv");
+  if (k === "k") togglePanel("skills");
   if (k === "q") togglePanel("quests");
   if (k === "p") togglePanel("party");
   if (k === "escape") {
-    // Keep dungeon HUD-only; Esc opens game menu even inside the tower
+    e.preventDefault();
     $("#panel-dungeon").hidden = true;
     togglePanel("menu");
   }
@@ -1231,6 +1791,18 @@ $("#btn-hud-char")?.addEventListener("click", () => {
 $("#btn-hud-quests")?.addEventListener("click", () => {
   audio.sfx("ui");
   togglePanel("quests");
+});
+$("#btn-hud-menu")?.addEventListener("click", () => {
+  audio.sfx("ui");
+  togglePanel("menu");
+});
+
+document.querySelectorAll("[data-menu-panel]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    audio.sfx("ui");
+    const panel = btn.getAttribute("data-menu-panel");
+    showPanel(panel);
+  });
 });
 
 $("#btn-dt-solo")?.addEventListener("click", () => {
@@ -1259,6 +1831,53 @@ $("#btn-party-decline")?.addEventListener("click", () => {
   game.declinePartyInvite();
   renderPartyPanel();
 });
+
+$("#btn-ctx-challenge")?.addEventListener("click", () => {
+  if (_ctxPlayerId) game.challengePlayer(_ctxPlayerId);
+  ui.hidePlayerContext();
+});
+$("#btn-ctx-trade")?.addEventListener("click", () => {
+  if (_ctxPlayerId) game.inviteTrade(_ctxPlayerId);
+  ui.hidePlayerContext();
+});
+$("#btn-ctx-party")?.addEventListener("click", () => {
+  if (_ctxPlayerId) game.inviteToParty(_ctxPlayerId);
+  ui.hidePlayerContext();
+});
+$("#btn-ctx-close")?.addEventListener("click", () => ui.hidePlayerContext());
+
+$("#btn-social-accept")?.addEventListener("click", () => {
+  if (_socialInviteKind === "duel") game.acceptDuel();
+  else if (_socialInviteKind === "trade") game.acceptTrade();
+  ui.hideSocialInvite();
+});
+$("#btn-social-decline")?.addEventListener("click", () => {
+  if (_socialInviteKind === "duel") game.declineDuel();
+  else if (_socialInviteKind === "trade") game.declineTrade();
+  ui.hideSocialInvite();
+});
+
+$("#btn-trade-lock")?.addEventListener("click", () => {
+  game.tradeToggleLock();
+  renderTradePanel();
+});
+$("#btn-trade-confirm")?.addEventListener("click", () => {
+  game.tradeConfirm();
+  renderTradePanel();
+});
+$("#btn-trade-cancel")?.addEventListener("click", () => {
+  game.tradeCancel();
+  renderTradePanel();
+  renderInventory(game.character);
+});
+$("#trade-my-yang")?.addEventListener("change", (e) => {
+  game.tradeSetYang(e.target.value);
+  renderTradePanel();
+});
+document.querySelector('[data-close="trade"]')?.addEventListener("click", () => {
+  if (TradeService.session) game.tradeCancel();
+});
+
 window.addEventListener("keyup", (e) => {
   if (e.key === "Tab") ui.setScoreboard(false);
 });
@@ -1291,8 +1910,8 @@ async function refreshCharList() {
     for (const ch of list) {
       const card = document.createElement("div");
       card.className = "char-card";
-      const k = KINGDOMS.find((x) => x.id === ch.kingdom)?.name || "";
-      card.innerHTML = `<div><b>${ch.name}</b><small>Lv.${ch.level} ${CLASSES[ch.classId]?.name || ""} · ${ch.spec || ""} · ${k}</small></div>`;
+      const pathLabel = SPECS[ch.classId]?.find((s) => s.id === ch.spec)?.name || "No path";
+      card.innerHTML = `<div><b>${ch.name}</b><small>Lv.${ch.level} ${CLASSES[ch.classId]?.name || ""} · ${pathLabel}</small></div>`;
       const del = document.createElement("button");
       del.type = "button";
       del.className = "btn-mini del";
@@ -1348,6 +1967,8 @@ async function enterWorld(character) {
 
   show("game");
   game.start(currentProfile, character);
+  questPanelGiver = null;
+  renderQuestTracker(character);
   ui.toast(hasSupabase ? "Entered the open world" : "Solo offline");
   ui.requestSave(false);
 }
@@ -1429,17 +2050,16 @@ $("#btn-create").addEventListener("click", async () => {
   err.hidden = true;
   try {
     const name = ($("#inp-name").value || "").trim();
-    const pin = ($("#inp-pin").value || "0000").trim() || "0000";
     const nameErr = CharacterService.validateName(name);
     if (nameErr) throw new Error(nameErr);
     if (!userId) throw new Error("Not signed in");
     const ch = await CharacterService.create(userId, {
       name,
       classId: selectedClass,
-      spec: selectedSpec,
+      spec: "none",
       gender: selectedGender,
       kingdom: selectedKingdom,
-      deletePin: pin,
+      deletePin: "0000",
     });
     await enterWorld(ch);
   } catch (e) {
@@ -1448,15 +2068,14 @@ $("#btn-create").addEventListener("click", async () => {
   }
 });
 
-$("#btn-save").addEventListener("click", () => ui.requestSave(true));
-$("#btn-leave").addEventListener("click", async () => {
-  await ui.requestSave(true);
-  game.stop();
-  await net.leave();
-  $("#panel-menu").hidden = true;
-  show("lobby");
-  showLobbyView(userId ? "chars" : "auth");
-  if (userId) refreshCharList();
+$("#btn-chars")?.addEventListener("click", async () => {
+  audio.sfx("ui");
+  await leaveWorld({ logout: false });
+});
+
+$("#btn-logout-game")?.addEventListener("click", async () => {
+  audio.sfx("ui");
+  await leaveWorld({ logout: true });
 });
 
 $("#btn-respawn-town").addEventListener("click", () => game.respawn("town"));

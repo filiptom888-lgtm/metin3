@@ -21,6 +21,9 @@ models/*.glb
 playwright-report
 test-results
 
+# Downloaded icon sources (built sprites live in public/icons/)
+tmp-assets/
+
 
 # Editor directories and files
 .vscode/*

@@ -1,7 +1,7 @@
 import { CLASSES } from "./data.js";
 import { InventoryService } from "../services/InventoryService.js";
 import { CombatService } from "../services/CombatService.js";
-import { xpForLevel, baseStatsFor } from "../data/stats.js";
+import { xpForLevel, baseStatsFor, MAX_LEVEL } from "../data/stats.js";
 import { villageSpawn } from "../data/meta.js";
 import { ItemService } from "../services/ItemService.js";
 
@@ -9,7 +9,8 @@ export { xpForLevel };
 
 export function createNewCharacter(name, classId, opts = {}) {
   const cls = CLASSES[classId] || CLASSES.warrior;
-  const spec = opts.spec || defaultSpec(classId);
+  // Skill path is chosen later at the Skill Master (Lv.5+) — Metin2 style
+  const spec = opts.spec && opts.spec !== "none" ? opts.spec : "none";
   const kingdom = opts.kingdom || 1;
   const spawn = villageSpawn(kingdom);
   const base = baseStatsFor(cls.id, spec);
@@ -48,14 +49,13 @@ export function createNewCharacter(name, classId, opts = {}) {
   return ch;
 }
 
-function defaultSpec(classId) {
-  const map = { warrior: "body", ninja: "blade", sura: "weaponry", shaman: "dragon" };
-  return map[classId] || "body";
+function defaultSpec(_classId) {
+  return "none";
 }
 
 function starterWeapon(classId) {
-  if (classId === "shaman") return "spirit_staff";
-  if (classId === "ninja") return "shadow_daggers";
+  if (classId === "shaman") return "starter_staff";
+  if (classId === "ninja") return "starter_daggers";
   return "rusty_sword";
 }
 
@@ -77,12 +77,16 @@ export function applyLevelUps(ch, gainedXp) {
   ch.xp += gainedXp;
   ch.xpNext = xpForLevel(ch.level);
   let ups = 0;
-  while (ch.xp >= ch.xpNext && ch.level < 99) {
+  while (ch.xp >= ch.xpNext && ch.level < MAX_LEVEL) {
     ch.xp -= ch.xpNext;
     ch.level += 1;
     ups += 1;
     ch.statPoints += 3;
     ch.xpNext = xpForLevel(ch.level);
+  }
+  if (ch.level >= MAX_LEVEL) {
+    ch.level = MAX_LEVEL;
+    ch.xp = Math.min(ch.xp, ch.xpNext - 1);
   }
   return ups;
 }
@@ -126,7 +130,7 @@ export function fromDbRow(row) {
     dbId: row.id,
     name: row.name,
     classId: row.class_id,
-    spec: row.spec || defaultSpec(row.class_id),
+    spec: row.spec || "none",
     gender: row.gender || "m",
     kingdom: row.kingdom || 1,
     level: row.level,

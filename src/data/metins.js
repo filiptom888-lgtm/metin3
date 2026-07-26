@@ -1,9 +1,113 @@
+/**
+ * Metin stones — tiered by field map:
+ *   Shinsoo (overworld)  Lv.1–25
+ *   Seungryong (valley)  Lv.25–40
+ *   Orc Isles            Lv.40+
+ */
 export const METINS = {
-  battle: { id: "battle", name: "Metin of Battle", level: 10, tier: 1, hp: 800, color: "#8b1e1e", drop_table: "metin", wave: 3 },
-  greed: { id: "greed", name: "Metin of Greed", level: 20, tier: 2, hp: 1400, color: "#8b6b1e", drop_table: "metin", wave: 4 },
-  black: { id: "black", name: "Metin of Black", level: 30, tier: 3, hp: 2200, color: "#1a1a1a", drop_table: "metin", wave: 4 },
-  darkness: { id: "darkness", name: "Metin of Darkness", level: 40, tier: 4, hp: 3200, color: "#1e4a8b", drop_table: "metin", wave: 5 },
-  shadow: { id: "shadow", name: "Metin of Shadow", level: 50, tier: 5, hp: 4500, color: "#6b1e8b", drop_table: "metin", wave: 5 },
-  soul: { id: "soul", name: "Metin of Soul", level: 60, tier: 6, hp: 6000, color: "#1e8b4a", drop_table: "metin", wave: 6 },
-  murder: { id: "murder", name: "Metin of Murder", level: 75, tier: 7, hp: 9000, color: "#a81828", drop_table: "metin", wave: 7 },
+  battle: {
+    id: "battle",
+    name: "Metin of Battle",
+    level: 10,
+    tier: 1,
+    hp: 800,
+    color: "#8b1e1e",
+    drop_table: "metin",
+    wave: 3,
+    maps: ["overworld"],
+  },
+  greed: {
+    id: "greed",
+    name: "Metin of Greed",
+    level: 20,
+    tier: 2,
+    hp: 1400,
+    color: "#8b6b1e",
+    drop_table: "metin",
+    wave: 4,
+    maps: ["overworld"],
+  },
+  desert: {
+    id: "desert",
+    name: "Metin of Desert",
+    level: 25,
+    tier: 3,
+    hp: 1800,
+    color: "#a07840",
+    drop_table: "metin",
+    wave: 4,
+    maps: ["valley"],
+  },
+  black: {
+    id: "black",
+    name: "Metin of Black",
+    level: 32,
+    tier: 4,
+    hp: 2400,
+    color: "#1a1a1a",
+    drop_table: "metin",
+    wave: 4,
+    maps: ["valley"],
+  },
+  darkness: {
+    id: "darkness",
+    name: "Metin of Darkness",
+    level: 40,
+    tier: 5,
+    hp: 3200,
+    color: "#1e4a8b",
+    drop_table: "metin",
+    wave: 5,
+    maps: ["valley"],
+  },
+  shadow: {
+    id: "shadow",
+    name: "Metin of Shadow",
+    level: 50,
+    tier: 6,
+    hp: 4500,
+    color: "#6b1e8b",
+    drop_table: "metin",
+    wave: 5,
+    maps: ["orc_valley"],
+  },
+  soul: {
+    id: "soul",
+    name: "Metin of Soul",
+    level: 60,
+    tier: 7,
+    hp: 6000,
+    color: "#1e8b4a",
+    drop_table: "metin",
+    wave: 6,
+    maps: ["orc_valley"],
+  },
+  murder: {
+    id: "murder",
+    name: "Metin of Murder",
+    level: 75,
+    tier: 8,
+    hp: 9000,
+    color: "#a81828",
+    drop_table: "metin",
+    wave: 7,
+    maps: ["orc_valley"],
+  },
+  /** Demon Tower floor 7 — six of these form the crucible */
+  tower: {
+    id: "tower",
+    name: "Tower Metin",
+    level: 55,
+    tier: 7,
+    hp: 5200,
+    color: "#c43c2e",
+    drop_table: "metin",
+    wave: 0,
+    maps: ["demon_tower"],
+  },
 };
+
+/** Metins allowed on a field map */
+export function metinsForMap(mapId = "overworld") {
+  return Object.values(METINS).filter((t) => !t.maps || t.maps.includes(mapId));
+}

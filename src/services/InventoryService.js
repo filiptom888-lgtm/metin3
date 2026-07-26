@@ -1,5 +1,6 @@
 import { ItemService } from "./ItemService.js";
 import { ITEM_TEMPLATES } from "../data/items.js";
+import { setBonusForCount } from "../data/gearSets.js";
 
 export const InventoryService = {
   add(ch, templateId, qty = 1) {
@@ -52,6 +53,10 @@ export const InventoryService = {
     if (!stack) return "Missing";
     const t = ITEM_TEMPLATES[stack.itemId];
     if (!t || t.slot !== "consumable") return "Not usable";
+    // Skill books are applied from the Skills panel (Esc → Skills)
+    if (t.skillBook) {
+      return { skillBook: true, uid, itemId: stack.itemId, grand: !!t.grandMaster };
+    }
     if (t.heal) local.hp = Math.min(local.maxHp, local.hp + t.heal);
     if (t.mana) local.sp = Math.min(local.maxSp, local.sp + t.mana);
     this.remove(ch, uid, 1);
@@ -59,6 +64,7 @@ export const InventoryService = {
   },
   equipBonuses(ch) {
     const b = { atk: 0, matk: 0, def: 0, mdef: 0, str: 0, vit: 0, intel: 0, dex: 0, mspd: 0 };
+    const setCounts = Object.create(null);
     for (const ref of Object.values(ch.equipment || {})) {
       if (!ref) continue;
       const id = ref.itemId || ref;
@@ -73,10 +79,21 @@ export const InventoryService = {
       b.vit += t.vit || 0;
       b.intel += t.intel || 0;
       b.dex += t.dex || 0;
+      if (t.mspd) b.mspd += t.mspd;
       for (const bon of ref.bonuses || []) {
         if (b[bon.stat] != null) b[bon.stat] += bon.value;
         else if (bon.stat === "maxHp") b.vit += Math.floor(bon.value / 18);
       }
+      if (t.setId) setCounts[t.setId] = (setCounts[t.setId] || 0) + 1;
+    }
+    // Best matching set bonus (2+ pieces)
+    let best = {};
+    for (const n of Object.values(setCounts)) {
+      const bonus = setBonusForCount(n);
+      if ((bonus.atk || 0) + (bonus.def || 0) > (best.atk || 0) + (best.def || 0)) best = bonus;
+    }
+    for (const [k, v] of Object.entries(best)) {
+      if (b[k] != null) b[k] += v;
     }
     return b;
   },

@@ -1,4 +1,28 @@
+/**
+ * Field monsters.
+ * zone (overworld rings from city center):
+ *   near  — just outside walls (dogs / young wolves)
+ *   mid   — open wilderness (wolves)
+ *   edge  — map rim (orcs / captains)
+ */
 export const MONSTERS = {
+  dog: {
+    id: "dog",
+    name: "Wild Dog",
+    level: 1,
+    rank: "normal",
+    hp: 32,
+    atk: 6,
+    def: 1,
+    exp: 12,
+    yang: 20,
+    speed: 4.6,
+    aggro: 12,
+    leash: 22,
+    drop_table: "dog",
+    kind: "dog",
+    zone: "near",
+  },
   wolf: {
     id: "wolf",
     name: "Wild Wolf",
@@ -10,9 +34,28 @@ export const MONSTERS = {
     exp: 22,
     yang: 40,
     speed: 4.2,
-    aggro: 18,
+    aggro: 16,
+    leash: 28,
     drop_table: "wolf",
     kind: "wolf",
+    zone: "mid",
+  },
+  alpha_wolf: {
+    id: "alpha_wolf",
+    name: "Alpha Wolf",
+    level: 8,
+    rank: "strong",
+    hp: 95,
+    atk: 13,
+    def: 4,
+    exp: 38,
+    yang: 70,
+    speed: 4.4,
+    aggro: 18,
+    leash: 30,
+    drop_table: "wolf",
+    kind: "wolf",
+    zone: "mid",
   },
   ork: {
     id: "ork",
@@ -26,8 +69,10 @@ export const MONSTERS = {
     yang: 110,
     speed: 3.4,
     aggro: 20,
+    leash: 34,
     drop_table: "ork",
     kind: "ork",
+    zone: "edge",
   },
   elite_ork: {
     id: "elite_ork",
@@ -41,8 +86,65 @@ export const MONSTERS = {
     yang: 280,
     speed: 3.6,
     aggro: 24,
-    drop_table: "ork",
+    leash: 38,
+    drop_table: "elite_ork",
     kind: "ork",
+    zone: "edge",
+  },
+  // Orc Isles — black / brute variants
+  black_ork: {
+    id: "black_ork",
+    name: "Black Orc",
+    level: 22,
+    rank: "strong",
+    hp: 260,
+    atk: 22,
+    def: 10,
+    exp: 72,
+    yang: 180,
+    speed: 3.3,
+    aggro: 22,
+    leash: 36,
+    drop_table: "black_ork",
+    kind: "ork",
+    maps: ["orc_valley"],
+    zone: "near",
+  },
+  black_ork_brute: {
+    id: "black_ork_brute",
+    name: "Black Orc Brute",
+    level: 32,
+    rank: "elite",
+    hp: 520,
+    atk: 32,
+    def: 14,
+    exp: 140,
+    yang: 320,
+    speed: 2.9,
+    aggro: 26,
+    leash: 40,
+    drop_table: "elite_ork",
+    kind: "ork",
+    maps: ["orc_valley"],
+    zone: "mid",
+  },
+  orc_chief: {
+    id: "orc_chief",
+    name: "Orc War Chief",
+    level: 40,
+    rank: "elite",
+    hp: 780,
+    atk: 40,
+    def: 18,
+    exp: 220,
+    yang: 480,
+    speed: 3.1,
+    aggro: 28,
+    leash: 44,
+    drop_table: "orc_chief",
+    kind: "ork",
+    maps: ["orc_valley"],
+    zone: "edge",
   },
   // Seungryong / second map — human enemies
   bandit: {
@@ -56,10 +158,12 @@ export const MONSTERS = {
     exp: 36,
     yang: 85,
     speed: 4.0,
-    aggro: 19,
+    aggro: 16,
+    leash: 28,
     drop_table: "bandit",
     kind: "human",
     maps: ["valley"],
+    zone: "near",
   },
   soldier: {
     id: "soldier",
@@ -72,9 +176,56 @@ export const MONSTERS = {
     exp: 58,
     yang: 140,
     speed: 3.5,
-    aggro: 21,
+    aggro: 19,
+    leash: 32,
     drop_table: "bandit",
     kind: "human",
     maps: ["valley"],
+    zone: "edge",
+  },
+  /** Miniboss of the NW rogue hamlet on Seungryong */
+  rogue_chief: {
+    id: "rogue_chief",
+    name: "Rogue Chief",
+    level: 24,
+    rank: "boss",
+    hp: 780,
+    atk: 34,
+    def: 14,
+    exp: 220,
+    yang: 620,
+    speed: 3.4,
+    aggro: 24,
+    leash: 40,
+    drop_table: "rogue_chief",
+    kind: "human",
+    maps: ["valley"],
+    zone: "camp",
   },
 };
+
+/** Overworld / valley spawn rings (distance from map origin). Orc Isles use island tiers. */
+export const SPAWN_ZONES = {
+  overworld: {
+    near: { minR: 24, maxR: 55 },
+    mid: { minR: 55, maxR: 110 },
+    edge: { minR: 110, maxR: 174 },
+  },
+  valley: {
+    near: { minR: 24, maxR: 55 },
+    mid: { minR: 55, maxR: 110 },
+    edge: { minR: 110, maxR: 174 },
+  },
+  orc_valley: {
+    near: { minR: 12, maxR: 28 },
+    mid: { minR: 28, maxR: 48 },
+    edge: { minR: 48, maxR: 72 },
+  },
+};
+
+export function zoneAtDistance(mapId, dist) {
+  const rings = SPAWN_ZONES[mapId] || SPAWN_ZONES.overworld;
+  if (dist < rings.mid.minR) return "near";
+  if (dist < rings.edge.minR) return "mid";
+  return "edge";
+}
