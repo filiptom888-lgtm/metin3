@@ -2038,8 +2038,8 @@ export function makeDungeonMapRoot() {
 }
 
 export function createCamera() {
-  const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 420);
-  camera.position.set(0, 28, 28);
+  const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 420);
+  camera.position.set(0, 5.5, -11);
   return camera;
 }
 

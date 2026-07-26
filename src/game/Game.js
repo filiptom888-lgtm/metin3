@@ -134,11 +134,12 @@ export class Game {
     this.towerMesh = null;
     this._dtFloorMobs = 0;
 
-    this.camDist = 19;
-    this.camDistTarget = 19;
-    this.camYaw = 0.0;
-    this.camPitch = 0.78; // slightly steeper when closer
-    this.camOffset = new THREE.Vector3(0, 14, 13);
+    // Metin2-style third person: behind + slightly above, not isometric
+    this.camDist = 11.5;
+    this.camDistTarget = 11.5;
+    this.camYaw = Math.PI; // behind character facing +Z
+    this.camPitch = 0.42; // ~24° elevation
+    this.camOffset = new THREE.Vector3(0, 5, -10);
     this.time = 0;
     this.sendAcc = 0;
     this.worldAcc = 0;
@@ -181,8 +182,8 @@ export class Game {
         const dy = e.clientY - this._lastOrbitY;
         this._lastOrbitX = e.clientX;
         this._lastOrbitY = e.clientY;
-        this.camYaw -= dx * 0.005;
-        this.camPitch = clamp(this.camPitch + dy * 0.003, 0.35, 1.15);
+        this.camYaw -= dx * 0.0055;
+        this.camPitch = clamp(this.camPitch + dy * 0.0035, 0.16, 0.72);
       }
     };
     this._onDown = (e) => {
@@ -211,7 +212,7 @@ export class Game {
       if (!this.running) return;
       e.preventDefault();
       const dir = Math.sign(e.deltaY);
-      this.camDistTarget = clamp(this.camDistTarget + dir * 2.2, 8, 32);
+      this.camDistTarget = clamp(this.camDistTarget + dir * 1.6, 5.5, 20);
     };
     this._onResize = () => this.resize();
 
@@ -312,6 +313,24 @@ export class Game {
     this.localMesh = makePlayerMesh(character.classId, true);
     setNameplate(this.localMesh, character.name, 1, character.level, character.classId);
     this.scene.add(this.localMesh);
+    // Snap third-person cam behind the hero on spawn
+    this.camYaw = this.local.rot + Math.PI;
+    this.camPitch = 0.42;
+    this.camDist = 11.5;
+    this.camDistTarget = 11.5;
+    {
+      const flat = Math.cos(this.camPitch) * this.camDist;
+      const height = Math.sin(this.camPitch) * this.camDist;
+      const gy0 = this.groundY(this.local.x, this.local.z);
+      this.camera.position.set(
+        this.local.x + Math.sin(this.camYaw) * flat,
+        gy0 + height,
+        this.local.z + Math.cos(this.camYaw) * flat
+      );
+      this.camera.lookAt(this.local.x, gy0 + 1.35, this.local.z);
+      this.camera.fov = 50;
+      this.camera.updateProjectionMatrix();
+    }
     this.spawnDemonTower();
     this.spawnNpcs();
 
@@ -1879,13 +1898,13 @@ export class Game {
     if (this.time > p.buffUntil) p.buffMul = 1;
     this._updateCasts(dt);
 
-    // Move — skills slow hard; basic auto-attacks stay mobile
-    let mx = 0;
-    let mz = 0;
-    if (this.keys.has("w") || this.keys.has("arrowup")) mz -= 1;
-    if (this.keys.has("s") || this.keys.has("arrowdown")) mz += 1;
-    if (this.keys.has("a") || this.keys.has("arrowleft")) mx -= 1;
-    if (this.keys.has("d") || this.keys.has("arrowright")) mx += 1;
+    // Move — WASD relative to camera (W = into the world, Metin2-style)
+    let ix = 0;
+    let iz = 0;
+    if (this.keys.has("w") || this.keys.has("arrowup")) iz += 1;
+    if (this.keys.has("s") || this.keys.has("arrowdown")) iz -= 1;
+    if (this.keys.has("a") || this.keys.has("arrowleft")) ix -= 1;
+    if (this.keys.has("d") || this.keys.has("arrowright")) ix += 1;
     const stealth = this.time < p.stealthUntil;
     const castingSkill = this.casts.some((c) => c.kind === "skill");
     const castingBasic = this.casts.some((c) => c.kind === "basic");
@@ -1895,10 +1914,17 @@ export class Game {
     else if (castingBasic) moveMul = 0.88;
     else if (recovering) moveMul = p.recoverIsBasic ? 0.94 : 0.62;
     const speed = p.speed * p.buffMul * (stealth ? 1.25 : 1) * moveMul;
-    if (mx || mz) {
-      const len = Math.hypot(mx, mz);
-      p.x += (mx / len) * speed * dt;
-      p.z += (mz / len) * speed * dt;
+    if (ix || iz) {
+      const len = Math.hypot(ix, iz) || 1;
+      ix /= len;
+      iz /= len;
+      const yaw = this.camYaw;
+      const fx = -Math.sin(yaw);
+      const fz = -Math.cos(yaw);
+      const rx = Math.cos(yaw);
+      const rz = -Math.sin(yaw);
+      p.x += (fx * iz + rx * ix) * speed * dt;
+      p.z += (fz * iz + rz * ix) * speed * dt;
       p.moving = true;
     } else {
       p.moving = false;
@@ -2049,20 +2075,28 @@ export class Game {
     // Day / night (field maps) — road torches glow after dusk
     applyDayNight(this.scene, this.sun, this.hemi, this.worldTime, this._collectTorchLights());
 
-    // Camera follow — ~50% closer default, scroll zoom + RMB/MMB orbit
-    this.camDist += (this.camDistTarget - this.camDist) * Math.min(1, 8 * dt);
+    // Stay behind while moving; free orbit when idle / RMB drag
+    if (!this._orbiting && p.moving) {
+      const behind = p.rot + Math.PI;
+      this.camYaw = dampAngle(this.camYaw, behind, 3.4, dt);
+    }
+    this.camDist += (this.camDistTarget - this.camDist) * Math.min(1, 9 * dt);
     const dist = this.camDist;
-    const height = dist * (0.38 + this.camPitch * 0.55);
-    const flat = dist * (0.52 + (1.2 - this.camPitch) * 0.25);
+    const pitch = this.camPitch;
+    const flat = Math.cos(pitch) * dist;
+    const height = Math.sin(pitch) * dist;
     this.camOffset.set(
       Math.sin(this.camYaw) * flat,
       height,
       Math.cos(this.camYaw) * flat
     );
     const desired = new THREE.Vector3(p.x, gy, p.z).add(this.camOffset);
-    this.camera.position.lerp(desired, 1 - Math.pow(0.0015, dt));
-    this.camera.lookAt(p.x, gy + 1.15, p.z);
-    const wantFov = THREE.MathUtils.lerp(46, 34, clamp((32 - dist) / 24, 0, 1));
+    this.camera.position.lerp(desired, 1 - Math.pow(0.0008, dt));
+    // Look slightly ahead so the hero sits lower-center like Metin2
+    const lookX = p.x - Math.sin(this.camYaw) * 0.55;
+    const lookZ = p.z - Math.cos(this.camYaw) * 0.55;
+    this.camera.lookAt(lookX, gy + 1.35, lookZ);
+    const wantFov = THREE.MathUtils.lerp(54, 42, clamp((20 - dist) / 14, 0, 1));
     this.camera.fov += (wantFov - this.camera.fov) * Math.min(1, 6 * dt);
     this.camera.updateProjectionMatrix();
 
