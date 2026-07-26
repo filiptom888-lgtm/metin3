@@ -249,12 +249,14 @@ export const AssetKit = {
           o.receiveShadow = true;
         }
       });
-      return g;
+      return this._seatOnGround(g);
     }
     // Share materials across instances (big FPS win)
-    const g = entry.clone(true);
-    g.scale.setScalar(scale);
-    return g;
+    const model = entry.clone(true);
+    // Drop template ground offset — scale would otherwise bury the mesh
+    model.position.set(0, 0, 0);
+    model.scale.setScalar(scale);
+    return this._seatOnGround(model);
   },
 
   clonePropToHeight(key, targetHeight) {
@@ -264,6 +266,21 @@ export const AssetKit = {
       ? entry.baseHeight || entry.template?.userData?.baseHeight || 1
       : entry.userData?.baseHeight || 1;
     return this.cloneProp(key, Math.max(0.02, targetHeight / base));
+  },
+
+  /**
+   * Wrap a scaled prop so callers can `position.set(x, 0, z)` with feet on the ground.
+   * (Scaling a pre-grounded template leaves min.y < 0; wiping y to 0 buries the mesh.)
+   */
+  _seatOnGround(model) {
+    const wrapper = new THREE.Group();
+    wrapper.name = model.name || "prop";
+    wrapper.add(model);
+    wrapper.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(wrapper);
+    if (Number.isFinite(box.min.y)) model.position.y -= box.min.y;
+    wrapper.userData.seated = true;
+    return wrapper;
   },
 
   enemyBody(enemyKey, targetHeight, kindLabel) {
