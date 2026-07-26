@@ -635,19 +635,42 @@ function addCityWalls(scene) {
     lantern.position.set(gx * 0.96, 4.1, gz * 0.96);
     scene.add(lantern);
 
-    // Decorative wooden gate arches (taller than the player)
-    const gateArch = AssetKit.clonePropToHeight("wooden_gate", 5.6);
-    if (gateArch) {
-      gateArch.position.set(gx * 1.015, 0, gz * 1.015);
-      if (across) gateArch.rotation.y = gx > 0 ? Math.PI / 2 : -Math.PI / 2;
-      else gateArch.rotation.y = gz > 0 ? 0 : Math.PI;
-      gateArch.traverse((o) => {
-        if (o.isMesh) {
-          o.castShadow = false;
-          o.receiveShadow = true;
-        }
-      });
-      scene.add(gateArch);
+    // Simple timber doors in the stone arch (no Japanese GLB — wrong scale/style here)
+    const timber = mat("#5a3a22", { roughness: 0.88 });
+    const iron = mat("#3a3830", { roughness: 0.55, metalness: 0.4 });
+    const doorH = 3.55;
+    const doorW = CITY_GATE * 0.42;
+    const doorT = 0.18;
+    const leafL = new THREE.Mesh(new THREE.BoxGeometry(across ? doorT : doorW, doorH, across ? doorW : doorT), timber);
+    const leafR = leafL.clone();
+    const hinge = CITY_GATE * 0.22;
+    if (across) {
+      leafL.position.set(gx * 1.01, doorH * 0.5, gz - hinge);
+      leafR.position.set(gx * 1.01, doorH * 0.5, gz + hinge);
+      leafL.rotation.y = 0.35;
+      leafR.rotation.y = -0.35;
+    } else {
+      leafL.position.set(gx - hinge, doorH * 0.5, gz * 1.01);
+      leafR.position.set(gx + hinge, doorH * 0.5, gz * 1.01);
+      leafL.rotation.y = -0.35;
+      leafR.rotation.y = 0.35;
+    }
+    leafL.castShadow = true;
+    leafR.castShadow = true;
+    scene.add(leafL, leafR);
+    // Cross brace strips
+    for (const leaf of [leafL, leafR]) {
+      const band = new THREE.Mesh(
+        new THREE.BoxGeometry(across ? doorT * 1.2 : doorW * 0.9, 0.12, across ? doorW * 0.9 : doorT * 1.2),
+        iron
+      );
+      band.position.copy(leaf.position);
+      band.position.y = 1.15;
+      band.rotation.y = leaf.rotation.y;
+      scene.add(band);
+      const band2 = band.clone();
+      band2.position.y = 2.45;
+      scene.add(band2);
     }
   }
 }

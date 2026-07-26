@@ -16,7 +16,6 @@ const CLASS_FILES = {
 /** Block world enter — cheap city props only */
 const CRITICAL_PROPS = {
   house_small: "/models/props/house_small.glb",
-  wooden_gate: "/models/props/wooden_gate.glb",
 };
 
 /** Background — other classes only (no heavy scenery/enemies at boot) */
